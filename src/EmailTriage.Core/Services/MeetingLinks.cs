@@ -29,7 +29,9 @@ public static partial class MeetingLinks
         var host = uri.Host.ToLowerInvariant();
         var path = uri.AbsolutePath.ToLowerInvariant();
 
-        return (host == "teams.microsoft.com" && path.StartsWith("/l/meetup-join", StringComparison.Ordinal))
+        // Teams writes both the long meetup-join links and, newer, short /meet/<id> ones.
+        return (host == "teams.microsoft.com"
+                && (path.StartsWith("/l/meetup-join", StringComparison.Ordinal) || path.StartsWith("/meet/", StringComparison.Ordinal)))
             || (host == "teams.live.com" && path.StartsWith("/meet", StringComparison.Ordinal))
             || ((host == "zoom.us" || host.EndsWith(".zoom.us", StringComparison.Ordinal))
                 && (path.StartsWith("/j/", StringComparison.Ordinal) || path.StartsWith("/my/", StringComparison.Ordinal) || path.StartsWith("/w/", StringComparison.Ordinal)))

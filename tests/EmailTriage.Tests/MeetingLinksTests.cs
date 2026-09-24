@@ -8,6 +8,7 @@ public class MeetingLinksTests
 {
     [Theory]
     [InlineData("https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%22Tid%22%7d")]
+    [InlineData("https://teams.microsoft.com/meet/286012961380218?p=dCUuvYNuRCwXdXTFnO")]
     [InlineData("https://acme.zoom.us/j/1234567890?pwd=abc")]
     [InlineData("https://meet.google.com/abc-defg-hij")]
     [InlineData("https://acme.webex.com/meet/jdoe")]
@@ -23,6 +24,15 @@ public class MeetingLinksTests
         var body = "Agenda: https://sharepoint.example.com/doc.docx\n"
                  + "Join: https://teams.microsoft.com/l/meetup-join/19%3ameeting_x/0 .";
         Assert.Equal("https://teams.microsoft.com/l/meetup-join/19%3ameeting_x/0", MeetingLinks.Find(body));
+    }
+
+    [Fact]
+    public void The_short_join_link_wins_over_the_system_reference_below_it()
+    {
+        // How a current Teams invitation body reads.
+        var body = "Join: https://teams.microsoft.com/meet/286012961380218?p=dCUuvYNuRCwXdXTFnO\n"
+                 + "System reference <https://teams.microsoft.com/l/meetup-join/19%3ameeting_x/0>";
+        Assert.Equal("https://teams.microsoft.com/meet/286012961380218?p=dCUuvYNuRCwXdXTFnO", MeetingLinks.Find(body));
     }
 
     [Fact]

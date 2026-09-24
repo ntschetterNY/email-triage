@@ -120,10 +120,19 @@ public sealed partial class OutlookMailStore : ICalendarStore
                 var body = ComUtil.Str(() => item!.Body);
                 var location = ComUtil.Str(() => item!.Location);
 
+                // The organizer is in the list with no response of their own; mark them by name.
+                var organizer = ComUtil.Str(() => item!.Organizer);
+                var attendees = ReadAttendees((object)item!)
+                    .Select(a => organizer.Length > 0 && a.Response == MeetingResponse.None
+                                 && string.Equals(a.Name, organizer, StringComparison.OrdinalIgnoreCase)
+                        ? a with { Response = MeetingResponse.Organized }
+                        : a)
+                    .ToList();
+
                 return new CalendarEventDetail
                 {
                     Body = body.Trim(),
-                    Attendees = ReadAttendees((object)item!),
+                    Attendees = attendees,
                     JoinUrl = MeetingLinks.Find(location + "\n" + body)
                               ?? MeetingLinks.Find(ComUtil.MapiString((object)item!, PropTeamsUrl)),
                 };
