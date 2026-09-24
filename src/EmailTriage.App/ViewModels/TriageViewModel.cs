@@ -29,6 +29,13 @@ public sealed partial class TriageViewModel : ObservableObject
     private FolderRef? _sent;
     private readonly Stack<UndoStep> _undo = new();
     private CancellationTokenSource? _bodyLoad;
+    private CancellationTokenSource? _prefetch;
+
+    // Bodies by EntryId and finished thread pages by their message list. Tasks
+    // rather than values, so the reading pane and the prefetcher share one
+    // fetch when both want the same message. UI thread only.
+    private readonly LruCache<string, Task<MailBody>> _bodies = new(120, StringComparer.Ordinal);
+    private readonly LruCache<string, Task<string>> _pages = new(24, StringComparer.Ordinal);
     private IReadOnlyList<SnoozeOption> _snoozePresets = Array.Empty<SnoozeOption>();
 
     public ObservableCollection<MailRowViewModel> Rows { get; } = new();
@@ -240,6 +247,7 @@ public sealed partial class TriageViewModel : ObservableObject
         // Task.Delay still holds the token, and disposing under it raises
         // ObjectDisposedException instead of the cancellation we want.
         _bodyLoad?.Cancel();
+        _prefetch?.Cancel();
 
         if (row is null)
         {
@@ -254,22 +262,18 @@ public sealed partial class TriageViewModel : ObservableObject
 
         try
         {
-            // Every message in the conversation, yours included, newest first.
-            var bodies = new List<MailBody>();
-            foreach (var message in row.Thread.Messages.Take(Math.Max(1, _settings.ThreadMessageLimit)))
-            {
-                try { bodies.Add(await _store.GetBodyAsync(message.Ref, cts.Token).ConfigureAwait(true)); }
-                catch (Exception) when (!cts.IsCancellationRequested && bodies.Count > 0) { /* skip one that moved */ }
-                if (cts.IsCancellationRequested) return;
-            }
+            var (bodies, html) = await LoadThreadAsync(row.Thread).ConfigureAwait(true);
+            if (cts.IsCancellationRequested) return;
 
             OpenBody = bodies[0];
             ThreadAttachments = bodies
                 .SelectMany(b => b.Attachments)
                 .DistinctBy(a => (a.Name.ToLowerInvariant(), a.Size))
                 .ToList();
-            BodyHtml = HtmlPresenter.RenderThread(bodies, _settings.BlockRemoteImages,
-                hiddenOlder: row.Thread.Count - bodies.Count);
+            BodyHtml = html;
+
+            // With this one on screen, get the next few ready while the user reads.
+            StartPrefetch(row);
 
             await MarkReadAfterDwellAsync(row, cts.Token).ConfigureAwait(true);
         }
@@ -277,6 +281,82 @@ public sealed partial class TriageViewModel : ObservableObject
         catch (Exception ex)
         {
             if (!cts.IsCancellationRequested) Status = $"Could not open that message: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Every message in the conversation (yours included, newest first) and
+    /// the rendered page, from cache where possible. Bodies are fetched without
+    /// a cancellation token: a fetch is shared through the cache, so one
+    /// caller moving on must not cancel it for another.
+    /// </summary>
+    private async Task<(List<MailBody> Bodies, string Html)> LoadThreadAsync(ConversationThread thread)
+    {
+        var messages = thread.Messages.Take(Math.Max(1, _settings.ThreadMessageLimit)).ToList();
+
+        var bodies = new List<MailBody>(messages.Count);
+        foreach (var message in messages)
+        {
+            var task = _bodies.GetOrAdd(message.Ref.EntryId, _ => _store.GetBodyAsync(message.Ref));
+            try { bodies.Add(await task.ConfigureAwait(true)); }
+            catch (Exception) when (bodies.Count > 0 || message != messages[^1])
+            {
+                // A message that moved or vanished: forget the failure and
+                // carry on with the rest of the thread.
+                _bodies.Remove(message.Ref.EntryId);
+            }
+            catch
+            {
+                _bodies.Remove(message.Ref.EntryId);
+                throw;
+            }
+        }
+
+        if (bodies.Count == 0) throw new InvalidOperationException("None of this conversation's messages could be read.");
+
+        // The page is keyed by exactly which bodies it holds, so a new reply
+        // in the thread gives a new page rather than a stale one.
+        var pageKey = string.Join('|', bodies.Select(b => b.Ref.EntryId)) + "#" + thread.Count;
+        var hiddenOlder = thread.Count - bodies.Count;
+        var blockRemote = _settings.BlockRemoteImages;
+
+        // Rendering (colour adaptation of big HTML mail) runs off the UI thread.
+        var page = _pages.GetOrAdd(pageKey, _ => Task.Run(() =>
+            HtmlPresenter.RenderThread(bodies, blockRemote, hiddenOlder)));
+
+        try { return (bodies, await page.ConfigureAwait(true)); }
+        catch { _pages.Remove(pageKey); throw; }
+    }
+
+    /// <summary>
+    /// Loads the next few conversations below the selected one, and the one
+    /// above, into the caches. One message at a time, so a move or reply the
+    /// user makes meanwhile waits for at most a single body read.
+    /// </summary>
+    private void StartPrefetch(MailRowViewModel from)
+    {
+        _prefetch?.Cancel();
+        if (_settings.PrefetchAhead <= 0) return;
+
+        var cts = new CancellationTokenSource();
+        _prefetch = cts;
+
+        var index = Rows.IndexOf(from);
+        if (index < 0) return;
+
+        var targets = Rows.Skip(index + 1).Take(_settings.PrefetchAhead).ToList();
+        if (index > 0) targets.Add(Rows[index - 1]);
+
+        _ = PrefetchAsync(targets.Select(r => r.Thread).ToList(), cts.Token);
+    }
+
+    private async Task PrefetchAsync(IReadOnlyList<ConversationThread> threads, CancellationToken ct)
+    {
+        foreach (var thread in threads)
+        {
+            if (ct.IsCancellationRequested) return;
+            try { await LoadThreadAsync(thread).ConfigureAwait(true); }
+            catch { /* only a head start; the real open will report any problem */ }
         }
     }
 
@@ -395,7 +475,7 @@ public sealed partial class TriageViewModel : ObservableObject
         }
     }
 
-    // ---- move palette (k) -------------------------------------------------
+    // ---- move palette (v) -------------------------------------------------
 
     public async Task OpenFolderPaletteAsync()
     {
@@ -621,7 +701,7 @@ public sealed partial class TriageViewModel : ObservableObject
         }
     }
 
-    // ---- snooze palette (g) ----------------------------------------------
+    // ---- snooze palette (h) ----------------------------------------------
 
     public void OpenSnoozePalette()
     {
@@ -781,6 +861,20 @@ public sealed partial class TriageViewModel : ObservableObject
         {
             Status = $"Archive failed: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Archives the conversation holding <paramref name="mail"/>, for send &amp;
+    /// mark done. Found by message rather than trusting the selection, which a
+    /// live refresh may have moved since the reply was opened.
+    /// </summary>
+    public async Task ArchiveConversationOfAsync(MailRef mail)
+    {
+        var row = Rows.FirstOrDefault(r => r.InboxMessages.Any(m => m.Ref.EntryId == mail.EntryId));
+        if (row is null) return;
+
+        Selected = row;
+        await ArchiveAsync().ConfigureAwait(true);
     }
 
     public async Task UndoAsync()

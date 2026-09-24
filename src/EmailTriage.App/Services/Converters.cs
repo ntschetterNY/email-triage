@@ -140,6 +140,7 @@ public sealed class EditorPrimaryLabelConverter : IValueConverter
         EditorMode.Note => "Notes",
         EditorMode.Blocker => "What is blocking it",
         EditorMode.Assignment => "Who  (e.g. Alice Smith <alice@corp.com>)",
+        EditorMode.Due => "Due",
         _ => "",
     };
 

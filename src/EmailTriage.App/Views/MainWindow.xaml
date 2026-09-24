@@ -364,169 +364,330 @@
                 </Grid>
             </Grid>
 
-            <!-- ========== ACTION ITEMS ========== -->
-            <ContentControl Content="{Binding Actions}"
-                            Visibility="{Binding Section, Converter={StaticResource SectionVis}, ConverterParameter=Actions}">
-                <ContentControl.ContentTemplate>
-                    <DataTemplate>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="400" MinWidth="280" />
-                                <ColumnDefinition Width="4" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
+            <!-- ========== ACTION BOARD ========== -->
+            <!-- A plain Grid rather than a templated ContentControl, so the code-behind
+                 can reach the email view inside it. -->
+            <Grid DataContext="{Binding Actions}"
+                  Visibility="{Binding DataContext.Section, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource SectionVis}, ConverterParameter=Actions}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="5*" MinHeight="160" />
+                    <RowDefinition Height="4" />
+                    <RowDefinition Height="4*" MinHeight="140" />
+                </Grid.RowDefinitions>
 
-                            <Border Grid.Column="0" Background="{StaticResource Panel}">
-                                <ListBox ItemsSource="{Binding Items}"
-                                         SelectedItem="{Binding Selected, Mode=TwoWay}"
-                                         ItemContainerStyle="{StaticResource RowContainer}"
-                                         Background="Transparent" BorderThickness="0" Focusable="False">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid Margin="10,7">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="3" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
+                <!-- summary strip: counts, and who everything is waiting on -->
+                <Border Grid.Row="0" Background="{StaticResource Panel}" Padding="16,10"
+                        BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
+                    <DockPanel>
+                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                            <TextBlock FontSize="13" FontWeight="SemiBold">
+                                <Run Text="{Binding OpenCount, Mode=OneWay}" /><Run Text=" open" />
+                            </TextBlock>
+                            <TextBlock FontSize="13" Margin="14,0,0,0" Foreground="{StaticResource Accent}">
+                                <Run Text="{Binding WaitingCount, Mode=OneWay}" /><Run Text=" waiting" />
+                            </TextBlock>
+                            <TextBlock FontSize="13" Margin="14,0,0,0" Foreground="{StaticResource Danger}"
+                                       Visibility="{Binding OverdueCount, Converter={StaticResource CountVis}}">
+                                <Run Text="{Binding OverdueCount, Mode=OneWay}" /><Run Text=" overdue" />
+                            </TextBlock>
+                            <TextBlock Text="WAITING ON" FontSize="10" FontWeight="Bold" Margin="24,0,8,0"
+                                       VerticalAlignment="Center" Foreground="{StaticResource Muted}"
+                                       Visibility="{Binding WaitingOnPeople.Count, Converter={StaticResource CountVis}}" />
+                        </StackPanel>
 
-                                                <Border Grid.Column="0" Width="3" CornerRadius="2"
-                                                        Background="{Binding Priority, Converter={StaticResource PriorityBrush}}" />
+                        <Border DockPanel.Dock="Right" Background="#33E0AF68" CornerRadius="4" Padding="8,2"
+                                VerticalAlignment="Center" Margin="10,0,0,0"
+                                Visibility="{Binding HasFilter, Converter={StaticResource BoolVis}}">
+                            <TextBlock FontSize="11.5" Foreground="{StaticResource Warn}">
+                                <Run Text="Showing only" />
+                                <Run Text="{Binding PersonFilter, Mode=OneWay}" FontWeight="SemiBold" />
+                                <Run Text="· Esc shows all" />
+                            </TextBlock>
+                        </Border>
 
-                                                <StackPanel Grid.Column="1" Margin="10,0,0,0">
-                                                    <TextBlock Text="{Binding Subject}" FontSize="13"
-                                                               TextTrimming="CharacterEllipsis" />
-                                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                                        <TextBlock Text="{Binding SenderName}" FontSize="11"
-                                                                   Foreground="{StaticResource Muted}" />
-
-                                                        <Border Background="#33E06C75" CornerRadius="3"
-                                                                Padding="5,0" Margin="8,0,0,0"
-                                                                Visibility="{Binding IsBlocked, Converter={StaticResource BoolVis}}">
-                                                            <TextBlock Text="BLOCKED" FontSize="9" FontWeight="Bold"
-                                                                       Foreground="{StaticResource Danger}" />
-                                                        </Border>
-
-                                                        <Border Background="#337AA2F7" CornerRadius="3"
-                                                                Padding="5,0" Margin="6,0,0,0"
-                                                                Visibility="{Binding OpenAssignmentCount, Converter={StaticResource CountVis}}">
-                                                            <TextBlock FontSize="9" FontWeight="Bold"
-                                                                       Foreground="{StaticResource Accent}">
-                                                                <Run Text="{Binding OpenAssignmentCount, Mode=OneWay}" />
-                                                                <Run Text="ASSIGNED" />
-                                                            </TextBlock>
-                                                        </Border>
-                                                    </StackPanel>
-                                                </StackPanel>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </Border>
-
-                            <GridSplitter Grid.Column="1" Width="4" Background="{StaticResource Border}"
-                                          HorizontalAlignment="Stretch" />
-
-                            <ScrollViewer Grid.Column="2" Padding="22,18"
-                                          VerticalScrollBarVisibility="Auto"
-                                          Visibility="{Binding Selected, Converter={StaticResource NullVis}}">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding Selected.Subject}" FontSize="17"
-                                               FontWeight="SemiBold" TextWrapping="Wrap" />
-                                    <TextBlock Margin="0,6,0,0" FontSize="12" Foreground="{StaticResource Muted}">
-                                        <Run Text="{Binding Selected.SenderName, Mode=OneWay}" />
-                                        <Run Text="·" />
-                                        <Run Text="{Binding Selected.Priority, Mode=OneWay}" />
-                                    </TextBlock>
-
-                                    <!-- notes -->
-                                    <TextBlock Text="NOTES" FontSize="10" FontWeight="Bold"
-                                               Foreground="{StaticResource Muted}" Margin="0,22,0,6" />
-                                    <Border Background="{StaticResource Panel}" CornerRadius="5" Padding="12,10">
-                                        <TextBlock Text="{Binding Selected.Notes}" TextWrapping="Wrap"
-                                                   FontSize="13" MinHeight="18" />
-                                    </Border>
-
-                                    <!-- blockers -->
-                                    <TextBlock Text="BLOCKED BY" FontSize="10" FontWeight="Bold"
-                                               Foreground="{StaticResource Muted}" Margin="0,20,0,6" />
-                                    <ItemsControl ItemsSource="{Binding Selected.Blockers}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Border Background="{StaticResource Panel}" CornerRadius="5"
-                                                        Padding="12,9" Margin="0,0,0,5">
-                                                    <StackPanel>
-                                                        <TextBlock Text="{Binding Description}" FontSize="13"
-                                                                   TextWrapping="Wrap" />
-                                                        <TextBlock FontSize="11" Margin="0,4,0,0"
-                                                                   Foreground="{StaticResource Muted}">
-                                                            <Run Text="waiting on" />
-                                                            <Run Text="{Binding WaitingOn, Mode=OneWay}" />
-                                                        </TextBlock>
-                                                    </StackPanel>
+                        <!-- click a person to see only what is waiting on them -->
+                        <ItemsControl ItemsSource="{Binding WaitingOnPeople}" VerticalAlignment="Center">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Click="OnWaitingChipClick" Tag="{Binding Person}" Cursor="Hand"
+                                            Focusable="False" Margin="0,2,6,2"
+                                            ToolTip="Show only what is waiting on this person">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="Chip" CornerRadius="10" Padding="9,2" BorderThickness="1"
+                                                        Background="{StaticResource Raised}" BorderBrush="{StaticResource Border}">
+                                                    <ContentPresenter />
                                                 </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                    <TextBlock Text="Nothing blocking" FontSize="12" Foreground="{StaticResource Muted}"
-                                               Visibility="{Binding Selected.Blockers.Count, Converter={StaticResource CountVisInv}}" />
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource Accent}" />
+                                                    </Trigger>
+                                                    <DataTrigger Binding="{Binding AnyOverdue}" Value="True">
+                                                        <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource Danger}" />
+                                                    </DataTrigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                        <TextBlock Text="{Binding Label}" FontSize="11.5" Foreground="{StaticResource Text}" />
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </DockPanel>
+                </Border>
 
-                                    <!-- assignments -->
-                                    <TextBlock Text="ASSIGNED TO OTHERS" FontSize="10" FontWeight="Bold"
-                                               Foreground="{StaticResource Muted}" Margin="0,20,0,6" />
-                                    <ItemsControl ItemsSource="{Binding Selected.Assignments}">
-                                        <ItemsControl.ItemTemplate>
+                <!-- the board -->
+                <ItemsControl Grid.Row="1" ItemsSource="{Binding Columns}" Margin="8,8,8,4">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border x:Name="ColumnFrame" Margin="4,0" CornerRadius="7" BorderThickness="1"
+                                    Background="{StaticResource Panel}" BorderBrush="{StaticResource Border}">
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="12,9,12,6">
+                                        <TextBlock x:Name="ColumnTitle" Text="{Binding Title}" FontSize="10.5" FontWeight="Bold"
+                                                   Foreground="{StaticResource Muted}" />
+                                        <TextBlock Text="{Binding Count}" FontSize="10.5" Margin="8,0,0,0"
+                                                   Foreground="{StaticResource Muted}" />
+                                    </StackPanel>
+
+                                    <ListBox ItemsSource="{Binding Items}"
+                                             SelectedItem="{Binding DataContext.Selected, RelativeSource={RelativeSource AncestorType=ItemsControl}, Mode=OneWay}"
+                                             Background="Transparent" BorderThickness="0" Focusable="False"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem" BasedOn="{StaticResource MailRowContainer}">
+                                                <Setter Property="Margin" Value="0,0,0,5" />
+                                                <EventSetter Event="PreviewMouseLeftButtonUp" Handler="OnBoardCardClick" />
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
                                             <DataTemplate>
-                                                <Border Background="{StaticResource Panel}" CornerRadius="5"
-                                                        Padding="12,9" Margin="0,0,0,5">
-                                                    <StackPanel>
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Text="{Binding PersonName}" FontSize="13"
-                                                                       FontWeight="SemiBold" />
-                                                            <Border Background="#3398C379" CornerRadius="3"
-                                                                    Padding="5,0" Margin="8,0,0,0"
-                                                                    Visibility="{Binding HasBeenDrafted, Converter={StaticResource BoolVis}}">
-                                                                <TextBlock Text="DRAFTED" FontSize="9" FontWeight="Bold"
-                                                                           Foreground="{StaticResource Ok}" />
-                                                            </Border>
+                                                <Border x:Name="Card" BorderThickness="1" CornerRadius="5" Padding="10,8"
+                                                        Background="{StaticResource Raised}" BorderBrush="{StaticResource Border}">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="3" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Border Grid.Column="0" CornerRadius="2"
+                                                                Background="{Binding Priority, Converter={StaticResource PriorityBrush}}" />
+                                                        <StackPanel Grid.Column="1" Margin="9,0,0,0">
+                                                            <TextBlock x:Name="CardSubject" Text="{Binding Subject}" FontSize="12.5"
+                                                                       TextWrapping="Wrap" MaxHeight="36" TextTrimming="CharacterEllipsis"
+                                                                       Foreground="{StaticResource Text}" />
+                                                            <TextBlock x:Name="CardSender" Text="{Binding SenderName}" FontSize="11" Margin="0,3,0,0"
+                                                                       Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis" />
+
+                                                            <!-- what it is waiting on -->
+                                                            <TextBlock x:Name="CardWaiting" Text="{Binding WaitingLine}" FontSize="11" Margin="0,4,0,0"
+                                                                       TextWrapping="Wrap" Foreground="{StaticResource Warn}"
+                                                                       Visibility="{Binding IsWaiting, Converter={StaticResource BoolVis}}" />
+
+                                                            <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                                                <Border x:Name="DueChip" CornerRadius="3" Padding="5,0" Background="#22858C9A"
+                                                                        Visibility="{Binding DueDisplay, Converter={StaticResource NullVis}}">
+                                                                    <TextBlock x:Name="DueText" FontSize="10" Foreground="{StaticResource Muted}">
+                                                                        <Run Text="due" /><Run Text=" " /><Run Text="{Binding DueDisplay, Mode=OneWay}" />
+                                                                    </TextBlock>
+                                                                </Border>
+                                                                <TextBlock x:Name="NotesMark" Text="✎ notes" FontSize="10" Margin="8,0,0,0"
+                                                                           Foreground="{StaticResource Muted}"
+                                                                           Visibility="{Binding Notes, Converter={StaticResource NullVis}}" />
+                                                            </StackPanel>
                                                         </StackPanel>
-                                                        <TextBlock Text="{Binding Task}" FontSize="12"
-                                                                   TextWrapping="Wrap" Margin="0,4,0,0"
-                                                                   Foreground="{StaticResource Muted}" />
-                                                    </StackPanel>
+                                                    </Grid>
                                                 </Border>
+                                                <DataTemplate.Triggers>
+                                                    <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                                        <Setter TargetName="Card" Property="BorderBrush" Value="{StaticResource Danger}" />
+                                                        <Setter TargetName="DueChip" Property="Background" Value="#33E06C75" />
+                                                        <Setter TargetName="DueText" Property="Foreground" Value="{StaticResource Danger}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                                        <Setter TargetName="Card" Property="Background" Value="{StaticResource SelectedRow}" />
+                                                        <Setter TargetName="CardSubject" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                                        <Setter TargetName="CardSender" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                                        <Setter TargetName="CardWaiting" Property="Foreground" Value="#8A5A00" />
+                                                        <Setter TargetName="DueText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                                        <Setter TargetName="NotesMark" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                                    </DataTrigger>
+                                                </DataTemplate.Triggers>
                                             </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                    <TextBlock Text="Nobody assigned" FontSize="12" Foreground="{StaticResource Muted}"
-                                               Visibility="{Binding Selected.Assignments.Count, Converter={StaticResource CountVisInv}}" />
-                                </StackPanel>
-                            </ScrollViewer>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+                            </Border>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                    <Setter TargetName="ColumnFrame" Property="BorderBrush" Value="{StaticResource Accent}" />
+                                    <Setter TargetName="ColumnTitle" Property="Foreground" Value="{StaticResource Accent}" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
 
-                            <TextBlock Grid.Column="2" Text="Nothing needs action"
-                                       Foreground="{StaticResource Muted}" FontSize="13"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Visibility="{Binding Selected, Converter={StaticResource NullVisInv}}" />
-                        </Grid>
-                    </DataTemplate>
-                </ContentControl.ContentTemplate>
-            </ContentControl>
+                <GridSplitter Grid.Row="2" Height="4" HorizontalAlignment="Stretch" Background="{StaticResource Border}" />
+
+                <!-- selected card: the working details on the left, the email itself on the right -->
+                <Grid Grid.Row="3">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="400" MinWidth="280" />
+                        <ColumnDefinition Width="4" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <ScrollViewer Grid.Column="0" Padding="18,14" VerticalScrollBarVisibility="Auto"
+                                  Background="{StaticResource Panel}"
+                                  Visibility="{Binding Selected, Converter={StaticResource NullVis}}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Selected.Subject}" FontSize="15"
+                                       FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock Margin="0,5,0,0" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap">
+                                <Run Text="{Binding Selected.SenderName, Mode=OneWay}" />
+                                <Run Text="·" />
+                                <Run Text="{Binding Selected.Stage, Mode=OneWay}" />
+                                <Run Text="·" />
+                                <Run Text="{Binding Selected.Priority, Mode=OneWay}" />
+                                <Run Text="priority" />
+                            </TextBlock>
+                            <TextBlock FontSize="12" Margin="0,3,0,0" Foreground="{StaticResource Muted}"
+                                       Visibility="{Binding Selected.DueDisplay, Converter={StaticResource NullVis}}">
+                                <Run Text="Next due" />
+                                <Run Text="{Binding Selected.DueDisplay, Mode=OneWay}" FontWeight="SemiBold" />
+                            </TextBlock>
+
+                            <!-- blocked by -->
+                            <TextBlock Text="BLOCKED BY  (b adds · w clears)" FontSize="10" FontWeight="Bold"
+                                       Foreground="{StaticResource Muted}" Margin="0,18,0,6" />
+                            <ItemsControl ItemsSource="{Binding Selected.Blockers}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border x:Name="Row" Background="{StaticResource Raised}" CornerRadius="5"
+                                                Padding="10,8" Margin="0,0,0,5">
+                                            <DockPanel>
+                                                <CheckBox DockPanel.Dock="Left" VerticalAlignment="Top" Margin="0,2,8,0"
+                                                          IsChecked="{Binding IsResolved, Mode=OneWay}" Focusable="False"
+                                                          Click="OnBlockerCheck" Tag="{Binding}"
+                                                          ToolTip="Tick when it is no longer blocking" />
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Description}" FontSize="12.5" TextWrapping="Wrap" />
+                                                    <TextBlock FontSize="11" Margin="0,3,0,0" Foreground="{StaticResource Muted}">
+                                                        <Run Text="waiting on" />
+                                                        <Run Text="{Binding WaitingOn, Mode=OneWay}" FontWeight="SemiBold" />
+                                                        <Run Text="{Binding DueUtc, Mode=OneWay, StringFormat='· due {0:ddd d MMM}'}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </Border>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsResolved}" Value="True">
+                                                <Setter TargetName="Row" Property="Opacity" Value="0.45" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                                <Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource Danger}" />
+                                                <Setter TargetName="Row" Property="BorderThickness" Value="1" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="Nothing blocking" FontSize="12" Foreground="{StaticResource Muted}"
+                                       Visibility="{Binding Selected.Blockers.Count, Converter={StaticResource CountVisInv}}" />
+
+                            <!-- assigned to others -->
+                            <TextBlock Text="ASSIGNED TO OTHERS  (Shift+A adds · c chases)" FontSize="10" FontWeight="Bold"
+                                       Foreground="{StaticResource Muted}" Margin="0,18,0,6" />
+                            <ItemsControl ItemsSource="{Binding Selected.Assignments}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border x:Name="Row" Background="{StaticResource Raised}" CornerRadius="5"
+                                                Padding="10,8" Margin="0,0,0,5">
+                                            <DockPanel>
+                                                <CheckBox DockPanel.Dock="Left" VerticalAlignment="Top" Margin="0,2,8,0"
+                                                          IsChecked="{Binding IsDone, Mode=OneWay}" Focusable="False"
+                                                          Click="OnAssignmentCheck" Tag="{Binding}"
+                                                          ToolTip="Tick when they have delivered" />
+                                                <StackPanel>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding PersonName}" FontSize="12.5" FontWeight="SemiBold" />
+                                                        <Border Background="#3398C379" CornerRadius="3" Padding="5,0" Margin="8,0,0,0"
+                                                                Visibility="{Binding HasBeenDrafted, Converter={StaticResource BoolVis}}">
+                                                            <TextBlock Text="CHASED" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Ok}" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding Task}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0"
+                                                               Foreground="{StaticResource Muted}" />
+                                                    <TextBlock Text="{Binding DueUtc, StringFormat='due {0:ddd d MMM}'}" FontSize="11"
+                                                               Margin="0,2,0,0" Foreground="{StaticResource Muted}"
+                                                               Visibility="{Binding DueUtc, Converter={StaticResource NullVis}}" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </Border>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsDone}" Value="True">
+                                                <Setter TargetName="Row" Property="Opacity" Value="0.45" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                                <Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource Danger}" />
+                                                <Setter TargetName="Row" Property="BorderThickness" Value="1" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="Nobody assigned" FontSize="12" Foreground="{StaticResource Muted}"
+                                       Visibility="{Binding Selected.Assignments.Count, Converter={StaticResource CountVisInv}}" />
+
+                            <!-- notes -->
+                            <TextBlock Text="NOTES  (t edits)" FontSize="10" FontWeight="Bold"
+                                       Foreground="{StaticResource Muted}" Margin="0,18,0,6" />
+                            <Border Background="{StaticResource Raised}" CornerRadius="5" Padding="10,8">
+                                <TextBlock Text="{Binding Selected.Notes}" TextWrapping="Wrap" FontSize="12.5" MinHeight="16" />
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <TextBlock Grid.Column="0" Text="Nothing selected" Foreground="{StaticResource Muted}" FontSize="13"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="{Binding Selected, Converter={StaticResource NullVisInv}}" />
+
+                    <GridSplitter Grid.Column="1" Width="4" Background="{StaticResource Border}" HorizontalAlignment="Stretch" />
+
+                    <!-- the email behind the card -->
+                    <Image Grid.Column="2" x:Name="ActionBodySnapshot" Stretch="Fill" />
+                    <wv2:WebView2 Grid.Column="2" x:Name="ActionBodyView" DefaultBackgroundColor="#16181D" />
+                </Grid>
+            </Grid>
         </Grid>
 
         <!-- ================= status bar ================= -->
         <Border Grid.Row="2" Background="{StaticResource Panel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="14,7">
             <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" MinWidth="160" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
                 <TextBlock Text="{Binding StatusText}" FontSize="11.5"
                            Foreground="{StaticResource Muted}" VerticalAlignment="Center"
-                           TextTrimming="CharacterEllipsis" />
+                           TextTrimming="CharacterEllipsis" Margin="0,0,16,0" />
 
-                <ItemsControl HorizontalAlignment="Right" x:Name="HintStrip">
+                <ItemsControl Grid.Column="1" HorizontalAlignment="Right" x:Name="HintStrip">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel Orientation="Horizontal" Margin="0,0,14,0">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,11,0">
                                 <Border Style="{StaticResource KeyCap}">
                                     <TextBlock Text="{Binding Key}" Style="{StaticResource KeyCapText}" />
                                 </Border>
@@ -541,7 +702,7 @@
 
         <!-- ================= overlays ================= -->
 
-        <!-- move (k) / snooze (g) palette -->
+        <!-- move (v) / snooze (h) palette -->
         <Grid Grid.RowSpan="3" Background="#B0000000"
               Visibility="{Binding Triage.Palette.IsOpen, Converter={StaticResource BoolVis}}">
             <Border Width="620" MaxHeight="480" VerticalAlignment="Top" Margin="0,110,0,0"
@@ -669,8 +830,9 @@
                              VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
                              Text="{Binding Triage.Composer.BodyText, UpdateSourceTrigger=PropertyChanged}" />
 
-                    <!-- contact suggestions, dropped over the top of the message -->
-                    <Border Grid.Row="1" Margin="52,0,18,0" VerticalAlignment="Top" Panel.ZIndex="1"
+                    <!-- contact suggestions, dropped over the top of the message, or
+                         beside the caret for an @mention (placed from code-behind) -->
+                    <Border Grid.Row="1" x:Name="SuggestionPopup" Margin="52,0,18,0" VerticalAlignment="Top" Panel.ZIndex="1"
                             Background="{StaticResource Raised}" CornerRadius="0,0,6,6"
                             BorderBrush="{StaticResource Border}" BorderThickness="1"
                             Visibility="{Binding Triage.Composer.HasSuggestions, Converter={StaticResource BoolVis}}">
@@ -705,7 +867,7 @@
                     <Border Grid.Row="2" Background="{StaticResource Raised}"
                             CornerRadius="0,0,9,9" Padding="18,10">
                         <StackPanel>
-                            <!-- send later (Ctrl+Shift+Enter) -->
+                            <!-- send later (Ctrl+Shift+L) -->
                             <DockPanel Margin="0,0,0,10"
                                        Visibility="{Binding Triage.Composer.IsScheduling, Converter={StaticResource BoolVis}}">
                                 <TextBlock Text="Send at" FontSize="12" VerticalAlignment="Center" Width="52"
@@ -721,7 +883,7 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send later · Esc discard · ↑↓ Enter/Tab picks a contact" />
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+Shift+L later · Esc discard · @ mentions · ↑↓ Enter/Tab picks" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"
                                        Background="{StaticResource Raised}" />

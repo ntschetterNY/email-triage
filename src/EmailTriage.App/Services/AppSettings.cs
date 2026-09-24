@@ -22,6 +22,9 @@ public sealed class AppSettings
     /// <summary>Most messages shown stacked in the reading pane for one conversation.</summary>
     public int ThreadMessageLimit { get; set; } = 12;
 
+    /// <summary>Conversations below the selected one to load ahead, so moving down is instant.</summary>
+    public int PrefetchAhead { get; set; } = 5;
+
     /// <summary>
     /// Remote images are shown by default, since logos and pictures in mail
     /// are content people expect to see. Invisible tracking pixels are

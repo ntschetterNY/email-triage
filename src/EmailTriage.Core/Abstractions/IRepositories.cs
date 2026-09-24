@@ -13,6 +13,11 @@ public interface IActionItemRepository
     Task UpdateNotesAsync(long id, string notes, CancellationToken ct = default);
     Task UpdatePriorityAsync(long id, ActionPriority priority, CancellationToken ct = default);
 
+    /// <summary>Moves an item on the board. Done also marks it complete; any other stage reopens it.</summary>
+    Task UpdateStageAsync(long id, ActionStage stage, CancellationToken ct = default);
+
+    Task UpdateDueAsync(long id, DateTimeOffset? dueUtc, CancellationToken ct = default);
+
     Task<BlockingTask> AddBlockerAsync(BlockingTask blocker, CancellationToken ct = default);
     Task SetBlockerResolvedAsync(long blockerId, bool resolved, CancellationToken ct = default);
     Task DeleteBlockerAsync(long blockerId, CancellationToken ct = default);

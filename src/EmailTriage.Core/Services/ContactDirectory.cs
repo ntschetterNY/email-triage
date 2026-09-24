@@ -80,6 +80,16 @@ public sealed class ContactDirectory
             .ToList();
     }
 
+    /// <summary>The people corresponded with most, for a bare "@" with nothing typed yet.</summary>
+    public IReadOnlyList<ContactEntry> Frequent(int limit = 8) =>
+        _snapshot
+            .Where(e => e.Contact.Weight > 0)
+            .OrderByDescending(e => e.Contact.Weight)
+            .ThenBy(e => e.Contact.Display, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .Select(e => e.Contact)
+            .ToList();
+
     private static int Score(Indexed e, string query, string[] tokens)
     {
         foreach (var t in tokens)

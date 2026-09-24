@@ -127,6 +127,8 @@ public sealed class FakeMailStore : IMailStore
         return Task.CompletedTask;
     }
 
+    public Task ShowItemAsync(MailRef mail, CancellationToken ct = default) => Task.CompletedTask;
+
     public Task ShowSavedDraftAsync(DraftRef saved, CancellationToken ct = default)
     {
         ShownDrafts.Add(saved.EntryId);

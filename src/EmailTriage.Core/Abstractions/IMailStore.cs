@@ -70,6 +70,9 @@ public interface IMailStore : IAsyncDisposable
 
     Task SendSavedDraftAsync(DraftRef saved, CancellationToken ct = default);
 
+    /// <summary>Opens any mail item in its own Outlook window.</summary>
+    Task ShowItemAsync(MailRef mail, CancellationToken ct = default);
+
     /// <summary>Opens a saved draft in Outlook for the user to review.</summary>
     Task ShowSavedDraftAsync(DraftRef saved, CancellationToken ct = default);
 

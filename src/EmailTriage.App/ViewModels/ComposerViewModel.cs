@@ -7,7 +7,11 @@ using EmailTriage.Core.Services;
 
 namespace EmailTriage.App.ViewModels;
 
-public enum RecipientField { None, To, Cc, Bcc }
+/// <summary>A message away or scheduled: the status line, what it answered, and whether to archive that.</summary>
+public sealed record SentEventArgs(string Message, MailRef InReplyTo, bool MarkDone);
+
+/// <summary>Where suggestions are showing: a recipient line, or an @mention in the message.</summary>
+public enum RecipientField { None, To, Cc, Bcc, Body }
 
 /// <summary>
 /// The inline reply and forward box. Outlook builds the draft - quoted history,
@@ -32,7 +36,7 @@ public sealed partial class ComposerViewModel : ObservableObject
     [ObservableProperty] private bool _isSending;
     [ObservableProperty] private ReplyDraft? _draft;
 
-    // "Send later" row (Ctrl+Shift+Enter).
+    // "Send later" row (Ctrl+Shift+L).
     [ObservableProperty] private bool _isScheduling;
     [ObservableProperty] private string _scheduleText = "";
     [ObservableProperty] private bool _holdIfReplied = true;
@@ -47,6 +51,11 @@ public sealed partial class ComposerViewModel : ObservableObject
     // Set while lines are filled in programmatically, so that is not taken as
     // the user typing a search.
     private bool _settingLines;
+
+    // People @mentioned in the message so far, and the "@jan" being typed.
+    private readonly List<ContactEntry> _mentions = new();
+    private MentionText.Query? _mentionQuery;
+    private int _mentionCaret;
 
     public ComposerViewModel(
         IMailStore store, ContactDirectory contacts,
@@ -100,7 +109,22 @@ public sealed partial class ComposerViewModel : ObservableObject
     public string Subject => Draft?.Subject ?? "";
 
     /// <summary>Raised once a message is away or scheduled, with a line for the status bar.</summary>
-    public event EventHandler<string>? Sent;
+    public event EventHandler<SentEventArgs>? Sent;
+
+    /// <summary>Raised for Ctrl+Shift+O/C/B/M, so the view can move the caret there.</summary>
+    public event EventHandler<RecipientField>? FocusRequested;
+
+    public void RequestFocus(RecipientField field)
+    {
+        CloseSuggestions();
+        FocusRequested?.Invoke(this, field);
+    }
+
+    /// <summary>Where the '@' of the mention being typed sits, so the view can drop suggestions beside it.</summary>
+    public int MentionStart => _mentionQuery?.Start ?? 0;
+
+    /// <summary>Where the caret belongs in the message after a mention is taken.</summary>
+    public int BodyCaret { get; private set; }
 
     /// <summary>Raised after a suggestion is taken, so the view can put the caret at the end.</summary>
     public event EventHandler<RecipientField>? SuggestionAccepted;
@@ -119,6 +143,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         CcLine = _initialCc = RecipientLine.Format(draft.Cc);
         BccLine = _initialBcc = "";
         _settingLines = false;
+        _mentions.Clear();
         CloseSuggestions();
 
         OnPropertyChanged(nameof(Header));
@@ -139,8 +164,33 @@ public sealed partial class ComposerViewModel : ObservableObject
     {
         if (_settingLines) return;
 
-        var matches = _contacts.Search(RecipientLine.CurrentToken(line));
+        ShowSuggestions(field, _contacts.Search(RecipientLine.CurrentToken(line)));
+    }
 
+    /// <summary>
+    /// Called as the message text or caret changes: an "@" starting a word
+    /// searches contacts, the way Outlook's @mentions do.
+    /// </summary>
+    public void UpdateMentionSearch(string text, int caret)
+    {
+        if (_settingLines) return;
+
+        var query = MentionText.Find(text, caret, _mentions);
+        if (query is not { } q)
+        {
+            _mentionQuery = null;
+            if (SuggestingFor == RecipientField.Body) CloseSuggestions();
+            return;
+        }
+
+        _mentionQuery = q;
+        _mentionCaret = caret;
+        ShowSuggestions(RecipientField.Body, q.Text.Length == 0 ? _contacts.Frequent() : _contacts.Search(q.Text));
+        OnPropertyChanged(nameof(MentionStart));
+    }
+
+    private void ShowSuggestions(RecipientField field, IReadOnlyList<ContactEntry> matches)
+    {
         Suggestions.Clear();
         foreach (var m in matches) Suggestions.Add(m);
 
@@ -169,11 +219,33 @@ public sealed partial class ComposerViewModel : ObservableObject
             case RecipientField.To: ToLine = RecipientLine.Accept(ToLine, pick); break;
             case RecipientField.Cc: CcLine = RecipientLine.Accept(CcLine, pick); break;
             case RecipientField.Bcc: BccLine = RecipientLine.Accept(BccLine, pick); break;
+            case RecipientField.Body: AcceptMention(pick); break;
         }
         _settingLines = false;
 
         CloseSuggestions();
         SuggestionAccepted?.Invoke(this, field);
+    }
+
+    /// <summary>
+    /// Writes "@Jane Smith" into the message and, as Outlook does, puts her on
+    /// the To line if she is not already getting it.
+    /// </summary>
+    private void AcceptMention(ContactEntry pick)
+    {
+        if (_mentionQuery is not { } query) return;
+
+        (BodyText, BodyCaret) = MentionText.Insert(BodyText, query, _mentionCaret, pick);
+        _mentionQuery = null;
+
+        if (!_mentions.Any(m => string.Equals(m.Address, pick.Address, StringComparison.OrdinalIgnoreCase)))
+            _mentions.Add(pick);
+
+        if (!RecipientLine.Contains(ToLine, pick) && !RecipientLine.Contains(CcLine, pick) && !RecipientLine.Contains(BccLine, pick))
+        {
+            ToLine = RecipientLine.Append(ToLine, pick);
+            Status = $"Added {pick.Display} to To";
+        }
     }
 
     public void CloseSuggestions()
@@ -186,7 +258,11 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     // ---- send / discard -------------------------------------------------------
 
-    public async Task SendAsync()
+    /// <summary>
+    /// Sends now, or at the time in the "send later" row when that is open.
+    /// With <paramref name="markDone"/> the conversation is archived afterwards.
+    /// </summary>
+    public async Task SendAsync(bool markDone = false)
     {
         if (Draft is null || IsSending) return;
 
@@ -215,7 +291,7 @@ public sealed partial class ComposerViewModel : ObservableObject
             sendAt = ScheduleAt;
             if (sendAt is null)
             {
-                Status = "When should it go? Type a time like \"tomorrow 9am\", or Ctrl+Shift+Enter to send now.";
+                Status = "When should it go? Type a time like \"tomorrow 9am\", or Ctrl+Shift+L to close this and send now.";
                 return;
             }
         }
@@ -235,7 +311,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         {
             var html = string.IsNullOrWhiteSpace(BodyText)
                 ? ""
-                : HtmlPresenter.ComposeReplyFragment(BodyText);
+                : HtmlPresenter.ComposeReplyFragment(BodyText, _mentions);
 
             string done;
             if (sendAt is { } when)
@@ -260,8 +336,9 @@ public sealed partial class ComposerViewModel : ObservableObject
                 done = "Sent";
             }
 
+            var inReplyTo = Draft.InReplyTo;
             Reset();
-            Sent?.Invoke(this, done);
+            Sent?.Invoke(this, new SentEventArgs(done, inReplyTo, markDone));
         }
         catch (Exception ex)
         {
@@ -296,6 +373,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         _settingLines = true;
         ToLine = CcLine = BccLine = "";
         _settingLines = false;
+        _mentions.Clear();
         CloseSuggestions();
     }
 }

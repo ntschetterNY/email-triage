@@ -27,36 +27,39 @@ public sealed class KeyMap
     }
 
     /// <summary>
-    /// The shipped bindings. The four the brief pinned down - k, g, r, Shift+R -
-    /// are fixed points; the rest follow mutt/gmail convention.
+    /// The shipped bindings, following Superhuman's layout wherever the app has
+    /// the same command: j/k to move, e done, h remind me, v move, r reply,
+    /// Enter reply all (handled as Confirm in the list), z undo. Commands
+    /// Superhuman has no equivalent for keep their own letters.
     /// </summary>
     public static readonly (string Stroke, TriageAction Action)[] DefaultSpec =
     {
-        // Movement. `k` is unavailable for "previous" because the brief assigns
-        // it to the move command, so Up and `p` cover that instead.
+        // Movement
         ("j",           TriageAction.NextMail),
         ("down",        TriageAction.NextMail),
-        ("p",           TriageAction.PrevMail),
+        ("k",           TriageAction.PrevMail),
         ("up",          TriageAction.PrevMail),
         ("home",        TriageAction.FirstMail),
+        ("ctrl+up",     TriageAction.FirstMail),
         ("end",         TriageAction.LastMail),
+        ("ctrl+down",   TriageAction.LastMail),
         ("pagedown",    TriageAction.PageDown),
         ("pageup",      TriageAction.PageUp),
 
         // Triage decisions
         ("a",           TriageAction.MarkActionRequired),
         ("n",           TriageAction.MarkNoAction),
-        ("k",           TriageAction.MoveToFolder),
-        ("g",           TriageAction.Snooze),
+        ("v",           TriageAction.MoveToFolder),
+        ("h",           TriageAction.Snooze),
         ("e",           TriageAction.Archive),
         ("u",           TriageAction.ToggleRead),
+        ("shift+3",     TriageAction.Delete),
         ("delete",      TriageAction.Delete),
 
-        // Replying
-        ("r",           TriageAction.ReplyAll),
-        ("shift+r",     TriageAction.ReplySender),
+        // Replying. Reply all is Enter, which is Confirm everywhere else.
+        ("r",           TriageAction.ReplySender),
         ("f",           TriageAction.Forward),
-        ("v",           TriageAction.OpenAttachment),
+        ("ctrl+o",      TriageAction.OpenAttachment),
 
         // Action list
         ("t",           TriageAction.AddNote),
@@ -66,15 +69,60 @@ public sealed class KeyMap
         ("shift+p",     TriageAction.CyclePriority),
         ("o",           TriageAction.OpenInOutlook),
 
+        // Action board: arrows between columns, [ ] or Shift+arrows move the card
+        ("left",        TriageAction.PrevColumn),
+        ("right",       TriageAction.NextColumn),
+        ("oem4",        TriageAction.StageBack),
+        ("shift+left",  TriageAction.StageBack),
+        ("oem6",        TriageAction.StageForward),
+        ("shift+right", TriageAction.StageForward),
+        ("d",           TriageAction.SetDue),
+        ("w",           TriageAction.ClearWait),
+        ("c",           TriageAction.Chase),
+
         // Shell
         ("tab",         TriageAction.SwitchSection),
         ("/",           TriageAction.Search),
         ("f5",          TriageAction.Refresh),
         ("shift+oem2",  TriageAction.ShowHelp),
+        ("z",           TriageAction.Undo),
         ("ctrl+z",      TriageAction.Undo),
         ("escape",      TriageAction.Cancel),
         ("enter",       TriageAction.Confirm),
     };
+
+    /// <summary>
+    /// The layout shipped before the Superhuman one. Config files from then
+    /// hold a full copy of it, which would otherwise pin the old keys.
+    /// </summary>
+    private static readonly (string Stroke, TriageAction Action)[] LegacySpec =
+    {
+        ("j", TriageAction.NextMail), ("down", TriageAction.NextMail),
+        ("p", TriageAction.PrevMail), ("up", TriageAction.PrevMail),
+        ("home", TriageAction.FirstMail), ("end", TriageAction.LastMail),
+        ("pagedown", TriageAction.PageDown), ("pageup", TriageAction.PageUp),
+        ("a", TriageAction.MarkActionRequired), ("n", TriageAction.MarkNoAction),
+        ("k", TriageAction.MoveToFolder), ("g", TriageAction.Snooze),
+        ("e", TriageAction.Archive), ("u", TriageAction.ToggleRead),
+        ("delete", TriageAction.Delete),
+        ("r", TriageAction.ReplyAll), ("shift+r", TriageAction.ReplySender),
+        ("f", TriageAction.Forward), ("v", TriageAction.OpenAttachment),
+        ("t", TriageAction.AddNote), ("b", TriageAction.AddBlocker),
+        ("shift+a", TriageAction.AddAssignment), ("x", TriageAction.ToggleComplete),
+        ("shift+p", TriageAction.CyclePriority), ("o", TriageAction.OpenInOutlook),
+        ("left", TriageAction.PrevColumn), ("h", TriageAction.PrevColumn),
+        ("right", TriageAction.NextColumn), ("l", TriageAction.NextColumn),
+        ("oem4", TriageAction.StageBack), ("shift+left", TriageAction.StageBack),
+        ("oem6", TriageAction.StageForward), ("shift+right", TriageAction.StageForward),
+        ("d", TriageAction.SetDue), ("w", TriageAction.ClearWait), ("c", TriageAction.Chase),
+        ("tab", TriageAction.SwitchSection), ("/", TriageAction.Search),
+        ("f5", TriageAction.Refresh), ("shift+oem2", TriageAction.ShowHelp),
+        ("z", TriageAction.Undo), ("ctrl+z", TriageAction.Undo),
+        ("escape", TriageAction.Cancel), ("enter", TriageAction.Confirm),
+    };
+
+    /// <summary>Bumped when the defaults change in a way old config files would mask.</summary>
+    private const int ConfigVersion = 2;
 
     private static IEnumerable<(KeyStroke, TriageAction)> Defaults =>
         DefaultSpec
@@ -84,6 +132,11 @@ public sealed class KeyMap
     public void Bind(KeyStroke stroke, TriageAction action)
     {
         if (stroke.IsEmpty || action == TriageAction.None) return;
+
+        // A stroke does one thing: rebinding it takes it off the old action,
+        // so help and hints stop showing it there.
+        if (_bindings.TryGetValue(stroke, out var previous) && _reverse.TryGetValue(previous, out var old))
+            old.Remove(stroke);
 
         _bindings[stroke] = action;
 
@@ -128,7 +181,14 @@ public sealed class KeyMap
             var config = JsonSerializer.Deserialize<KeyBindingFile>(json, JsonOptions);
             if (config?.Bindings is null) return map;
 
-            foreach (var (strokeText, actionText) in config.Bindings)
+            var bindings = config.Bindings;
+            if (config.Version < ConfigVersion)
+            {
+                bindings = UserChanges(bindings);
+                Upgrade(path, bindings);
+            }
+
+            foreach (var (strokeText, actionText) in bindings)
             {
                 var stroke = KeyStroke.Parse(strokeText);
                 if (stroke.IsEmpty) continue;
@@ -145,21 +205,63 @@ public sealed class KeyMap
         return map;
     }
 
+    /// <summary>
+    /// The entries of an old file the user actually chose: anything that is
+    /// not simply a copy of the old defaults.
+    /// </summary>
+    private static Dictionary<string, string> UserChanges(Dictionary<string, string> bindings) =>
+        bindings
+            .Where(b =>
+            {
+                var stroke = KeyStroke.Parse(b.Key);
+                return !LegacySpec.Any(l =>
+                    KeyStroke.Parse(l.Stroke).Equals(stroke) &&
+                    string.Equals(l.Action.ToString(), b.Value, StringComparison.OrdinalIgnoreCase));
+            })
+            .ToDictionary(b => b.Key, b => b.Value);
+
+    /// <summary>
+    /// Rewrites an old file as the current defaults plus the user's own
+    /// changes, keeping the original beside it.
+    /// </summary>
+    private static void Upgrade(string path, Dictionary<string, string> userChanges)
+    {
+        try
+        {
+            File.Copy(path, Path.ChangeExtension(path, ".v1.json"), overwrite: true);
+
+            var bindings = DefaultSpec.ToDictionary(d => d.Stroke, d => d.Action.ToString());
+            foreach (var (stroke, action) in userChanges) bindings[stroke] = action;
+
+            WriteConfig(path, bindings);
+        }
+        catch
+        {
+            // The upgrade is applied in memory either way; it is retried next start.
+        }
+    }
+
     /// <summary>Writes the current defaults out as a starting point for editing.</summary>
     public static void WriteDefaultConfig(string? path = null)
     {
         path ??= DefaultConfigPath;
+        if (File.Exists(path)) return;
+
+        WriteConfig(path, DefaultSpec.ToDictionary(d => d.Stroke, d => d.Action.ToString()));
+    }
+
+    private static void WriteConfig(string path, Dictionary<string, string> bindings)
+    {
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-
-        if (File.Exists(path)) return;
 
         var file = new KeyBindingFile
         {
             Comment = "Edit to rebind. Format: \"chord\": \"ActionName\". "
                     + "Chords look like \"k\", \"shift+r\", \"ctrl+enter\". "
                     + "Action names come from TriageAction.",
-            Bindings = DefaultSpec.ToDictionary(d => d.Stroke, d => d.Action.ToString()),
+            Version = ConfigVersion,
+            Bindings = bindings,
         };
 
         File.WriteAllText(path, JsonSerializer.Serialize(file, JsonOptions));
@@ -176,6 +278,9 @@ public sealed class KeyMap
     {
         [JsonPropertyName("_comment")]
         public string? Comment { get; set; }
+
+        [JsonPropertyName("version")]
+        public int Version { get; set; }
 
         [JsonPropertyName("bindings")]
         public Dictionary<string, string>? Bindings { get; set; }

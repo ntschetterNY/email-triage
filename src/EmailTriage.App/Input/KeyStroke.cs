@@ -94,6 +94,7 @@ public readonly record struct KeyStroke(Key Key, ModifierKeys Modifiers)
     public override string ToString()
     {
         if (IsEmpty) return "";
+        if (Key == Key.D3 && Modifiers == ModifierKeys.Shift) return "#";
 
         var sb = new StringBuilder();
         if (Modifiers.HasFlag(ModifierKeys.Control)) sb.Append("Ctrl+");
@@ -103,6 +104,10 @@ public readonly record struct KeyStroke(Key Key, ModifierKeys Modifiers)
         sb.Append(Key switch
         {
             Key.Oem2 => "/",
+            Key.Oem4 => "[",
+            Key.Oem6 => "]",
+            Key.Left => "←",
+            Key.Right => "→",
             Key.OemPeriod => ".",
             Key.OemComma => ",",
             Key.Return => "Enter",

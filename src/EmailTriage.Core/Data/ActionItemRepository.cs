@@ -28,7 +28,9 @@ public sealed class ActionItemRepository : IActionItemRepository
                created_utc         AS CreatedUtc,
                completed_utc       AS CompletedUtc,
                priority            AS Priority,
-               notes               AS Notes
+               notes               AS Notes,
+               stage               AS Stage,
+               due_utc             AS DueUtc
         FROM action_items
         """;
 
@@ -119,7 +121,8 @@ public sealed class ActionItemRepository : IActionItemRepository
                 subject       = excluded.subject,
                 sender_name   = excluded.sender_name,
                 sender_address= excluded.sender_address,
-                completed_utc = NULL
+                completed_utc = NULL,
+                stage         = CASE WHEN stage = 3 THEN 0 ELSE stage END
             RETURNING id;
             """, item, cancellationToken: ct)).ConfigureAwait(false);
 
@@ -139,9 +142,30 @@ public sealed class ActionItemRepository : IActionItemRepository
     {
         await using var conn = _db.Open();
         await conn.ExecuteAsync(new CommandDefinition(
-            "UPDATE action_items SET completed_utc = @when WHERE id = @id",
-            new { id, when = complete ? (DateTimeOffset?)_clock.UtcNow : null },
+            // Completion and the Done column are one fact, so they move together.
+            // Reopening lands in Doing: it was being worked on before.
+            "UPDATE action_items SET completed_utc = @when, stage = @stage WHERE id = @id",
+            new { id, when = complete ? (DateTimeOffset?)_clock.UtcNow : null, stage = complete ? 3 : 1 },
             cancellationToken: ct)).ConfigureAwait(false);
+    }
+
+    public async Task UpdateStageAsync(long id, ActionStage stage, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        await conn.ExecuteAsync(new CommandDefinition("""
+            UPDATE action_items
+            SET stage = @stage,
+                completed_utc = CASE WHEN @stage = 3 THEN COALESCE(completed_utc, @now) ELSE NULL END
+            WHERE id = @id
+            """, new { id, stage = (int)stage, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
+    }
+
+    public async Task UpdateDueAsync(long id, DateTimeOffset? dueUtc, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        await conn.ExecuteAsync(new CommandDefinition(
+            "UPDATE action_items SET due_utc = @dueUtc WHERE id = @id",
+            new { id, dueUtc }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task UpdateNotesAsync(long id, string notes, CancellationToken ct = default)

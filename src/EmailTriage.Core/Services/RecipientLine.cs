@@ -22,12 +22,21 @@ public static class RecipientLine
     }
 
     /// <summary>Swaps the partly typed entry for the chosen contact and readies the next one.</summary>
-    public static string Accept(string line, ContactEntry contact)
+    public static string Accept(string line, ContactEntry contact) => Append(line[..TokenStart(line)], contact);
+
+    /// <summary>Adds a contact after whatever the line already holds, partial entry included.</summary>
+    public static string Append(string line, ContactEntry contact)
     {
-        var head = line[..TokenStart(line)].TrimEnd();
+        var head = line.TrimEnd();
         var prefix = head.Length == 0 ? "" : head.EndsWith(';') || head.EndsWith(',') ? head + " " : head + "; ";
         return $"{prefix}{contact.LineText}; ";
     }
+
+    /// <summary>Whether the line already names this contact, by address or by name.</summary>
+    public static bool Contains(string line, ContactEntry contact) =>
+        Parse(line).Any(p =>
+            string.Equals(p, contact.Address, StringComparison.OrdinalIgnoreCase) ||
+            (contact.Name.Length > 0 && string.Equals(p, contact.Name, StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>
     /// Splits a line into what Outlook should resolve: the bare address where

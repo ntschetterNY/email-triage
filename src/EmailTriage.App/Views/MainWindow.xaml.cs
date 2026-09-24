@@ -19,6 +19,10 @@ public partial class MainWindow : Window
     private bool _webViewReady;
     private string _pendingHtml = "";
 
+    // The action board's email view: a second WebView2 on the same browser profile.
+    private bool _actionViewReady;
+    private string _pendingActionHtml = "";
+
     public MainWindow(MainViewModel viewModel)
     {
         ViewModel = viewModel;
@@ -37,26 +41,74 @@ public partial class MainWindow : Window
         viewModel.Triage.Palette.PropertyChanged += OnPaletteChanged;
         viewModel.Triage.Composer.PropertyChanged += OnComposerChanged;
         viewModel.Triage.Composer.SuggestionAccepted += OnSuggestionAccepted;
+        viewModel.Triage.Composer.FocusRequested += (_, field) => FocusLater(field switch
+        {
+            RecipientField.To => ToBox,
+            RecipientField.Cc => CcBox,
+            RecipientField.Bcc => BccBox,
+            _ => ComposerBox,
+        });
 
         // Suggestions belong to the line being typed in; moving elsewhere drops them.
         foreach (var box in new[] { ToBox, CcBox, BccBox, ComposerBox })
             box.GotKeyboardFocus += (_, _) => viewModel.Triage.Composer.CloseSuggestions();
+
+        // "@" in the message searches contacts. Text and caret both matter:
+        // clicking or arrowing away from a mention ends the search.
+        ComposerBox.TextChanged += (_, _) => UpdateMentionSearch();
+        ComposerBox.SelectionChanged += (_, _) => UpdateMentionSearch();
         viewModel.Actions.PropertyChanged += OnActionsChanged;
 
         Loaded += async (_, _) => await InitialiseWebViewAsync();
     }
 
+    /// <summary>
+    /// The key hints in the status bar, for whichever tab is showing. Read
+    /// from the keymap, so a rebinding in keybindings.json shows up here too.
+    /// </summary>
     private IReadOnlyList<object> BuildHints()
     {
         var keys = ViewModel.Keys;
-        return new object[]
+        object Hint(string label, params TriageAction[] actions) => new
         {
-            new { Key = keys.Describe(TriageAction.MarkActionRequired), Label = "action" },
-            new { Key = keys.Describe(TriageAction.MoveToFolder), Label = "move" },
-            new { Key = keys.Describe(TriageAction.Snooze), Label = "later" },
-            new { Key = keys.Describe(TriageAction.ReplyAll), Label = "reply all" },
-            new { Key = keys.Describe(TriageAction.ShowHelp), Label = "help" },
+            Key = string.Join(" ", actions.Select(keys.Describe).Where(k => k.Length > 0)),
+            Label = label,
         };
+
+        return ViewModel.Section == Section.Triage
+            ? new[]
+            {
+                Hint("next/prev", TriageAction.NextMail, TriageAction.PrevMail),
+                Hint("action", TriageAction.MarkActionRequired),
+                Hint("no action", TriageAction.MarkNoAction),
+                Hint("move", TriageAction.MoveToFolder),
+                Hint("archive", TriageAction.Archive),
+                Hint("later", TriageAction.Snooze),
+                Hint("reply all", TriageAction.ReplyAll),
+                Hint("reply", TriageAction.ReplySender),
+                Hint("forward", TriageAction.Forward),
+                Hint("attachment", TriageAction.OpenAttachment),
+                Hint("read", TriageAction.ToggleRead),
+                Hint("search", TriageAction.Search),
+                Hint("undo", TriageAction.Undo),
+                Hint("help", TriageAction.ShowHelp),
+            }
+            : new[]
+            {
+                Hint("column", TriageAction.PrevColumn, TriageAction.NextColumn),
+                Hint("card", TriageAction.NextMail, TriageAction.PrevMail),
+                Hint("stage", TriageAction.StageBack, TriageAction.StageForward),
+                Hint("blocked by", TriageAction.AddBlocker),
+                Hint("assign", TriageAction.AddAssignment),
+                Hint("clear", TriageAction.ClearWait),
+                Hint("chase", TriageAction.Chase),
+                Hint("due", TriageAction.SetDue),
+                Hint("notes", TriageAction.AddNote),
+                Hint("done", TriageAction.ToggleComplete),
+                Hint("priority", TriageAction.CyclePriority),
+                Hint("outlook", TriageAction.OpenInOutlook),
+                Hint("help", TriageAction.ShowHelp),
+            };
     }
 
     // ---- WebView2 ---------------------------------------------------------
@@ -73,49 +125,14 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(userData);
 
             var env = await CoreWebView2Environment.CreateAsync(null, userData);
-            await BodyView.EnsureCoreWebView2Async(env);
 
-            var core = BodyView.CoreWebView2;
-
-            // Embedded (cid:) images are saved here by the mail store and served
-            // under a private host name; see HtmlPresenter.ResolveInlineImages.
-            var inlineImages = EmailTriage.Outlook.OutlookMailStore.DefaultInlineImageFolder;
-            Directory.CreateDirectory(inlineImages);
-            core.SetVirtualHostNameToFolderMapping(
-                EmailTriage.Core.Services.MailImages.InlineImageHost, inlineImages, CoreWebView2HostResourceAccessKind.DenyCors);
-
-            // The pane renders mail, nothing more: no devtools, no context menu,
-            // no downloads initiated by message content.
-            core.Settings.AreDevToolsEnabled = false;
-            core.Settings.AreDefaultContextMenusEnabled = false;
-            core.Settings.IsStatusBarEnabled = false;
-            core.Settings.IsZoomControlEnabled = true;
-            core.Settings.AreHostObjectsAllowed = false;
-            core.Settings.IsGeneralAutofillEnabled = false;
-            core.Settings.IsPasswordAutosaveEnabled = false;
-
-            // Links open in the real browser rather than hijacking the pane.
-            core.NavigationStarting += (_, e) =>
-            {
-                if (e.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return;
-                e.Cancel = true;
-                OpenExternally(e.Uri);
-            };
-
-            core.NewWindowRequested += (_, e) =>
-            {
-                e.Handled = true;
-                OpenExternally(e.Uri);
-            };
-
-            // Keys typed into the pane go to the browser, not to WPF. Forward
-            // the bound ones so shortcuts work wherever focus is. Injected
-            // scripts are exempt from the page CSP; mail's own scripts are not.
-            await core.AddScriptToExecuteOnDocumentCreatedAsync(BuildKeyForwardingScript());
-            core.WebMessageReceived += OnWebMessageReceived;
-
+            await ConfigureMailViewAsync(BodyView, env);
             _webViewReady = true;
-            if (_pendingHtml.Length > 0) core.NavigateToString(_pendingHtml);
+            if (_pendingHtml.Length > 0) BodyView.CoreWebView2.NavigateToString(_pendingHtml);
+
+            await ConfigureMailViewAsync(ActionBodyView, env);
+            _actionViewReady = true;
+            RenderActionBody(_pendingActionHtml.Length > 0 ? _pendingActionHtml : ViewModel.Actions.BodyHtml);
         }
         catch (Exception ex)
         {
@@ -124,6 +141,55 @@ public partial class MainWindow : Window
             ViewModel.Triage.Status =
                 $"Message preview unavailable (WebView2 runtime missing?): {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Locks a WebView2 down to rendering mail: no scripts from the mail, links
+    /// to the real browser, embedded images from the local cache, and the
+    /// app's shortcut keys still working while it has focus.
+    /// </summary>
+    private async Task ConfigureMailViewAsync(Microsoft.Web.WebView2.Wpf.WebView2 view, CoreWebView2Environment env)
+    {
+        await view.EnsureCoreWebView2Async(env);
+
+        var core = view.CoreWebView2;
+
+        // Embedded (cid:) images are saved here by the mail store and served
+        // under a private host name; see HtmlPresenter.ResolveInlineImages.
+        var inlineImages = EmailTriage.Outlook.OutlookMailStore.DefaultInlineImageFolder;
+        Directory.CreateDirectory(inlineImages);
+        core.SetVirtualHostNameToFolderMapping(
+            EmailTriage.Core.Services.MailImages.InlineImageHost, inlineImages, CoreWebView2HostResourceAccessKind.DenyCors);
+
+        // The pane renders mail, nothing more: no devtools, no context menu,
+        // no downloads initiated by message content.
+        core.Settings.AreDevToolsEnabled = false;
+        core.Settings.AreDefaultContextMenusEnabled = false;
+        core.Settings.IsStatusBarEnabled = false;
+        core.Settings.IsZoomControlEnabled = true;
+        core.Settings.AreHostObjectsAllowed = false;
+        core.Settings.IsGeneralAutofillEnabled = false;
+        core.Settings.IsPasswordAutosaveEnabled = false;
+
+        // Links open in the real browser rather than hijacking the pane.
+        core.NavigationStarting += (_, e) =>
+        {
+            if (e.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return;
+            e.Cancel = true;
+            OpenExternally(e.Uri);
+        };
+
+        core.NewWindowRequested += (_, e) =>
+        {
+            e.Handled = true;
+            OpenExternally(e.Uri);
+        };
+
+        // Keys typed into the pane go to the browser, not to WPF. Forward
+        // the bound ones so shortcuts work wherever focus is. Injected
+        // scripts are exempt from the page CSP; mail's own scripts are not.
+        await core.AddScriptToExecuteOnDocumentCreatedAsync(BuildKeyForwardingScript());
+        core.WebMessageReceived += OnWebMessageReceived;
     }
 
     /// <summary>
@@ -201,6 +267,48 @@ public partial class MainWindow : Window
             string.IsNullOrEmpty(html) ? "<html><body></body></html>" : html);
     }
 
+    private void RenderActionBody(string html)
+    {
+        if (!_actionViewReady || ActionBodyView.CoreWebView2 is null)
+        {
+            _pendingActionHtml = html;
+            return;
+        }
+
+        ActionBodyView.CoreWebView2.NavigateToString(
+            string.IsNullOrEmpty(html) ? "<html><body style='background:#16181d'></body></html>" : html);
+    }
+
+    // ---- action board clicks -----------------------------------------------
+
+    private void OnBoardCardClick(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is EmailTriage.Core.Models.ActionItem item)
+            ViewModel.Actions.Select(item);
+        Focus();
+    }
+
+    private async void OnWaitingChipClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is string person)
+            await ViewModel.Actions.FilterToAsync(person);
+        Focus();
+    }
+
+    private async void OnBlockerCheck(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is EmailTriage.Core.Models.BlockingTask blocker)
+            await ViewModel.Actions.ToggleBlockerAsync(blocker);
+        Focus();
+    }
+
+    private async void OnAssignmentCheck(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is EmailTriage.Core.Models.Assignment assignment)
+            await ViewModel.Actions.ToggleAssignmentAsync(assignment);
+        Focus();
+    }
+
     // ---- airspace ----------------------------------------------------------
 
     private int _airspaceVersion;
@@ -220,17 +328,23 @@ public partial class MainWindow : Window
     private async Task UpdateAirspaceAsync()
     {
         var version = ++_airspaceVersion;
+        await CoverAsync(BodyView, BodySnapshot, _webViewReady, version);
+        await CoverAsync(ActionBodyView, ActionBodySnapshot, _actionViewReady, version);
+    }
 
+    private async Task CoverAsync(
+        Microsoft.Web.WebView2.Wpf.WebView2 view, Image snapshot, bool ready, int version)
+    {
         if (!IsOverlayOpen)
         {
-            BodyView.Visibility = Visibility.Visible;
-            BodySnapshot.Source = null;
+            view.Visibility = Visibility.Visible;
+            snapshot.Source = null;
             return;
         }
 
-        if (BodyView.Visibility != Visibility.Visible) return;
+        if (view.Visibility != Visibility.Visible || !view.IsVisible) return;
 
-        if (_webViewReady && BodyView.CoreWebView2 is { } core && BodyView.ActualWidth > 0)
+        if (ready && view.CoreWebView2 is { } core && view.ActualWidth > 0)
         {
             try
             {
@@ -247,7 +361,7 @@ public partial class MainWindow : Window
 
                 // The overlay may have closed while the capture was running.
                 if (version != _airspaceVersion) return;
-                BodySnapshot.Source = image;
+                snapshot.Source = image;
             }
             catch
             {
@@ -256,7 +370,7 @@ public partial class MainWindow : Window
         }
 
         if (version == _airspaceVersion && IsOverlayOpen)
-            BodyView.Visibility = Visibility.Hidden;
+            view.Visibility = Visibility.Hidden;
     }
 
     // ---- view model reactions --------------------------------------------
@@ -264,7 +378,10 @@ public partial class MainWindow : Window
     private void OnViewModelChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(MainViewModel.Section))
+        {
+            HintStrip.ItemsSource = BuildHints();
             Dispatcher.BeginInvoke(() => Focus());
+        }
 
         if (e.PropertyName is nameof(MainViewModel.IsHelpVisible))
             _ = UpdateAirspaceAsync();
@@ -310,8 +427,70 @@ public partial class MainWindow : Window
         Focus();
     }
 
+    private void UpdateMentionSearch()
+    {
+        if (!ComposerBox.IsKeyboardFocusWithin) return;
+        ViewModel.Triage.Composer.UpdateMentionSearch(ComposerBox.Text, ComposerBox.CaretIndex);
+    }
+
+    /// <summary>
+    /// Recipient suggestions hang under the header; mention suggestions sit
+    /// under the "@" being typed, or above it when that is low in the box.
+    /// </summary>
+    private void PlaceSuggestions()
+    {
+        var composer = ViewModel.Triage.Composer;
+
+        if (composer.SuggestingFor != RecipientField.Body)
+        {
+            Grid.SetRow(SuggestionPopup, 1);
+            Grid.SetRowSpan(SuggestionPopup, 1);
+            SuggestionPopup.Width = double.NaN;
+            SuggestionPopup.CornerRadius = new CornerRadius(0, 0, 6, 6);
+            SuggestionPopup.HorizontalAlignment = HorizontalAlignment.Stretch;
+            SuggestionPopup.VerticalAlignment = VerticalAlignment.Top;
+            SuggestionPopup.Margin = new Thickness(52, 0, 18, 0);
+            return;
+        }
+
+        if (SuggestionPopup.Parent is not Grid dialog) return;
+
+        var start = Math.Min(composer.MentionStart, ComposerBox.Text.Length);
+        var rect = ComposerBox.GetRectFromCharacterIndex(start);
+        if (rect.IsEmpty) return;
+
+        // The whole dialog, not just the message row, so a long list is not squashed.
+        var at = ComposerBox.TranslatePoint(rect.TopLeft, dialog);
+        const double width = 420;
+        var left = Math.Clamp(at.X, 18, Math.Max(18, dialog.ActualWidth - width - 18));
+
+        Grid.SetRow(SuggestionPopup, 0);
+        Grid.SetRowSpan(SuggestionPopup, 3);
+        SuggestionPopup.Width = width;
+        SuggestionPopup.CornerRadius = new CornerRadius(6);
+        SuggestionPopup.HorizontalAlignment = HorizontalAlignment.Left;
+
+        if (at.Y < dialog.ActualHeight / 2)
+        {
+            SuggestionPopup.VerticalAlignment = VerticalAlignment.Top;
+            SuggestionPopup.Margin = new Thickness(left, at.Y + rect.Height + 2, 0, 0);
+        }
+        else
+        {
+            SuggestionPopup.VerticalAlignment = VerticalAlignment.Bottom;
+            SuggestionPopup.Margin = new Thickness(left, 0, 0, dialog.ActualHeight - at.Y + 2);
+        }
+    }
+
     private void OnSuggestionAccepted(object? sender, RecipientField field)
     {
+        if (field == RecipientField.Body)
+        {
+            var caret = ViewModel.Triage.Composer.BodyCaret;
+            Dispatcher.BeginInvoke(() => ComposerBox.CaretIndex = Math.Min(caret, ComposerBox.Text.Length));
+            return;
+        }
+
         var box = field switch
         {
             RecipientField.To => ToBox,
@@ -333,6 +512,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.PropertyName is nameof(ComposerViewModel.SuggestingFor) or nameof(ComposerViewModel.MentionStart))
+        {
+            // After layout, so the caret position reflects the text just typed.
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, PlaceSuggestions);
+            return;
+        }
+
         if (e.PropertyName == nameof(ComposerViewModel.IsScheduling))
         {
             FocusLater(ViewModel.Triage.Composer.IsScheduling ? ScheduleBox : ComposerBox);
@@ -349,6 +535,12 @@ public partial class MainWindow : Window
 
     private void OnActionsChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(ActionItemsViewModel.BodyHtml))
+        {
+            RenderActionBody(ViewModel.Actions.BodyHtml);
+            return;
+        }
+
         if (e.PropertyName != nameof(ActionItemsViewModel.Editor)) return;
 
         _ = UpdateAirspaceAsync();

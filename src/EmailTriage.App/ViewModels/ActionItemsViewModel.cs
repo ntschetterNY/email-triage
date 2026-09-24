@@ -7,25 +7,77 @@ using EmailTriage.Core.Services;
 
 namespace EmailTriage.App.ViewModels;
 
-public enum EditorMode { None, Note, Blocker, Assignment }
+public enum EditorMode { None, Note, Blocker, Assignment, Due }
+
+/// <summary>One column of the board.</summary>
+public sealed partial class BoardColumn : ObservableObject
+{
+    public BoardColumn(ActionStage stage, string title)
+    {
+        Stage = stage;
+        Title = title;
+    }
+
+    public ActionStage Stage { get; }
+    public string Title { get; }
+    public ObservableCollection<ActionItem> Items { get; } = new();
+
+    [ObservableProperty] private bool _isActive;
+
+    public int Count => Items.Count;
+
+    public void Fill(IEnumerable<ActionItem> items)
+    {
+        Items.Clear();
+        foreach (var i in items) Items.Add(i);
+        OnPropertyChanged(nameof(Count));
+    }
+}
+
+/// <summary>A "waiting on" chip in the board's summary strip.</summary>
+public sealed record WaitingChip(string Person, int Count, bool AnyOverdue)
+{
+    public string Label => $"{Person}  {Count}";
+}
 
 /// <summary>
-/// The second surface: mail that needs work, with the notes, blockers and
-/// hand-offs attached to it. Assignments stay local until the user explicitly
-/// asks for a draft, so nothing leaves the machine by accident.
+/// The action board: every mail that needs work, in To do, Doing, Waiting and
+/// Done columns, with the blockers and hand-offs that hold it up and the
+/// original email underneath. Built for moving fast from the keyboard;
+/// assignments stay local until the user explicitly drafts a chase email.
 /// </summary>
 public sealed partial class ActionItemsViewModel : ObservableObject
 {
+    /// <summary>How far back the Done column reaches.</summary>
+    private static readonly TimeSpan DoneWindow = TimeSpan.FromDays(14);
+
     private readonly IActionItemRepository _repo;
     private readonly IMailStore _store;
     private readonly IClock _clock;
     private readonly AppSettings _settings;
 
-    public ObservableCollection<ActionItem> Items { get; } = new();
+    private readonly LruCache<string, Task<string>> _bodies = new(40, StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _bodyLoad;
+
+    public IReadOnlyList<BoardColumn> Columns { get; } = new[]
+    {
+        new BoardColumn(ActionStage.ToDo, "TO DO"),
+        new BoardColumn(ActionStage.Doing, "DOING"),
+        new BoardColumn(ActionStage.Waiting, "WAITING"),
+        new BoardColumn(ActionStage.Done, "DONE"),
+    };
+
+    public ObservableCollection<WaitingChip> WaitingOnPeople { get; } = new();
 
     [ObservableProperty] private ActionItem? _selected;
+    [ObservableProperty] private int _activeColumn;
     [ObservableProperty] private string _status = "";
-    [ObservableProperty] private bool _showCompleted;
+    [ObservableProperty] private string _personFilter = "";
+    [ObservableProperty] private string _bodyHtml = "";
+
+    [ObservableProperty] private int _openCount;
+    [ObservableProperty] private int _waitingCount;
+    [ObservableProperty] private int _overdueCount;
 
     // Inline editor state. One editor at a time keeps the key handling simple.
     [ObservableProperty] private EditorMode _editor = EditorMode.None;
@@ -44,9 +96,13 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         _store = store;
         _clock = clock;
         _settings = settings;
+        Columns[0].IsActive = true;
     }
 
     public bool HasSelection => Selected is not null;
+    public bool HasFilter => PersonFilter.Length > 0;
+
+    // ---- loading ----------------------------------------------------------
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
@@ -55,30 +111,46 @@ public sealed partial class ActionItemsViewModel : ObservableObject
             var previous = Selected?.Id;
 
             var open = await _repo.GetOpenAsync(ct).ConfigureAwait(true);
-            var items = open
-                .OrderByDescending(i => i.Priority)
-                .ThenBy(i => i.IsBlocked)
-                .ThenByDescending(i => i.ReceivedUtc)
-                .ToList();
+            var recentDone = (await _repo.GetCompletedAsync(60, ct).ConfigureAwait(true))
+                .Where(i => i.CompletedUtc is { } d && _clock.UtcNow - d < DoneWindow);
 
-            if (ShowCompleted)
-                items.AddRange(await _repo.GetCompletedAsync(50, ct).ConfigureAwait(true));
+            var all = open.Concat(recentDone).ToList();
 
-            Items.Clear();
-            foreach (var i in items) Items.Add(i);
+            WaitingOnPeople.Clear();
+            foreach (var (person, count, overdue) in ActionWorkflow.WaitingOn(all))
+                WaitingOnPeople.Add(new WaitingChip(person, count, overdue));
 
-            Selected = previous is not null
-                ? Items.FirstOrDefault(i => i.Id == previous) ?? Items.FirstOrDefault()
-                : Items.FirstOrDefault();
+            var shown = HasFilter ? all.Where(i => ActionWorkflow.Involves(i, PersonFilter)).ToList() : all;
+
+            foreach (var column in Columns)
+            {
+                var stage = column.Stage;
+                column.Fill(shown
+                    .Where(i => (i.IsComplete ? ActionStage.Done : i.Stage == ActionStage.Done ? ActionStage.Doing : i.Stage) == stage)
+                    .OrderByDescending(i => stage == ActionStage.Done ? i.CompletedUtc : null)
+                    .ThenByDescending(i => i.IsOverdue)
+                    .ThenByDescending(i => i.Priority)
+                    .ThenBy(i => i.NextDueUtc ?? DateTimeOffset.MaxValue)
+                    .ThenByDescending(i => i.ReceivedUtc));
+            }
+
+            OpenCount = open.Count;
+            WaitingCount = open.Count(i => i.IsWaiting);
+            OverdueCount = open.Count(i => i.IsOverdue);
 
             var assignees = await _repo.GetKnownAssigneesAsync(ct).ConfigureAwait(true);
             KnownAssignees.Clear();
             foreach (var (name, email) in assignees)
                 KnownAssignees.Add(string.IsNullOrWhiteSpace(email) ? name : $"{name} <{email}>");
 
-            var blocked = Items.Count(i => i.IsBlocked && !i.IsComplete);
-            Status = $"{Items.Count(i => !i.IsComplete)} open"
-                   + (blocked > 0 ? $"  ·  {blocked} blocked" : "");
+            // Keep the same card selected across a reload, wherever it moved.
+            var again = previous is null ? null : Columns.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == previous);
+            if (again is not null) Select(again);
+            else SelectInColumn(ActiveColumn, 0);
+
+            Status = $"{OpenCount} open  ·  {WaitingCount} waiting"
+                   + (OverdueCount > 0 ? $"  ·  {OverdueCount} overdue" : "")
+                   + (HasFilter ? $"  ·  showing {PersonFilter}" : "");
         }
         catch (Exception ex)
         {
@@ -86,15 +158,127 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         }
     }
 
-    public void Move(int delta)
-    {
-        if (Items.Count == 0) return;
+    partial void OnPersonFilterChanged(string value) => OnPropertyChanged(nameof(HasFilter));
 
-        var index = Selected is null ? 0 : Items.IndexOf(Selected) + delta;
-        Selected = Items[Math.Clamp(index, 0, Items.Count - 1)];
+    /// <summary>Shows only the items waiting on one person; the same person again clears it.</summary>
+    public Task FilterToAsync(string person)
+    {
+        PersonFilter = string.Equals(PersonFilter, person, StringComparison.OrdinalIgnoreCase) ? "" : person;
+        return LoadAsync();
     }
 
-    partial void OnSelectedChanged(ActionItem? value) => OnPropertyChanged(nameof(HasSelection));
+    public Task ClearFilterAsync()
+    {
+        if (!HasFilter) return Task.CompletedTask;
+        PersonFilter = "";
+        return LoadAsync();
+    }
+
+    // ---- navigation -------------------------------------------------------
+
+    public void Select(ActionItem item)
+    {
+        var column = Array.FindIndex(Columns.ToArray(), c => c.Items.Contains(item));
+        if (column >= 0) SetActiveColumn(column);
+        Selected = item;
+    }
+
+    public void Move(int delta)
+    {
+        var items = Columns[ActiveColumn].Items;
+        if (items.Count == 0) return;
+
+        var index = Selected is null ? 0 : items.IndexOf(Selected) + delta;
+        Selected = items[Math.Clamp(index, 0, items.Count - 1)];
+    }
+
+    /// <summary>Hops to the neighbouring column, landing on the card at the same height.</summary>
+    public void MoveColumn(int delta)
+    {
+        var row = Selected is null ? 0 : Math.Max(0, Columns[ActiveColumn].Items.IndexOf(Selected));
+        SelectInColumn(Math.Clamp(ActiveColumn + delta, 0, Columns.Count - 1), row);
+    }
+
+    private void SelectInColumn(int column, int row)
+    {
+        SetActiveColumn(column);
+        var items = Columns[column].Items;
+        Selected = items.Count == 0 ? null : items[Math.Clamp(row, 0, items.Count - 1)];
+    }
+
+    private void SetActiveColumn(int column)
+    {
+        ActiveColumn = column;
+        for (var i = 0; i < Columns.Count; i++) Columns[i].IsActive = i == column;
+    }
+
+    partial void OnSelectedChanged(ActionItem? value)
+    {
+        OnPropertyChanged(nameof(HasSelection));
+        _ = LoadBodyAsync(value);
+    }
+
+    // ---- the email behind the card ------------------------------------------
+
+    private async Task LoadBodyAsync(ActionItem? item)
+    {
+        _bodyLoad?.Cancel();
+
+        if (item is null) { BodyHtml = ""; return; }
+
+        var cts = new CancellationTokenSource();
+        _bodyLoad = cts;
+
+        var page = _bodies.GetOrAdd(item.InternetMessageId, _ => RenderBodyAsync(item));
+        try
+        {
+            var html = await page.ConfigureAwait(true);
+            if (!cts.IsCancellationRequested) BodyHtml = html;
+        }
+        catch (Exception ex)
+        {
+            _bodies.Remove(item.InternetMessageId);
+            if (!cts.IsCancellationRequested)
+                BodyHtml = HtmlPresenter.Render(Placeholder($"Could not open the email: {ex.Message}"), true);
+        }
+    }
+
+    /// <summary>
+    /// Reads the email, re-finding it by Message-ID if it has been filed since
+    /// it was flagged, and remembers where it went.
+    /// </summary>
+    private async Task<string> RenderBodyAsync(ActionItem item)
+    {
+        MailBody body;
+        try
+        {
+            body = await _store.GetBodyAsync(new MailRef(item.EntryId, item.StoreId)).ConfigureAwait(true);
+        }
+        catch
+        {
+            var found = await _store.FindByMessageIdAsync(item.InternetMessageId, null).ConfigureAwait(true);
+            if (found is null)
+                return HtmlPresenter.Render(Placeholder("The email could not be found - it may have been deleted."), true);
+
+            await _repo.UpdateLocationAsync(item.InternetMessageId, found.Value.EntryId, found.Value.StoreId).ConfigureAwait(true);
+            item.EntryId = found.Value.EntryId;
+            item.StoreId = found.Value.StoreId;
+            body = await _store.GetBodyAsync(found.Value).ConfigureAwait(true);
+        }
+
+        var blockRemote = _settings.BlockRemoteImages;
+        return await Task.Run(() => HtmlPresenter.Render(body, blockRemote)).ConfigureAwait(true);
+    }
+
+    private static MailBody Placeholder(string text) => new()
+    {
+        Ref = default,
+        Subject = "",
+        SenderName = "",
+        SenderAddress = "",
+        ReceivedUtc = default,
+        PlainText = text,
+    };
 
     // ---- editors ----------------------------------------------------------
 
@@ -103,15 +287,21 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         if (Selected is null) return;
 
         Editor = mode;
-        FieldPrimary = mode == EditorMode.Note ? Selected.Notes : "";
+        FieldPrimary = mode switch
+        {
+            EditorMode.Note => Selected.Notes,
+            EditorMode.Due => Selected.DueUtc?.ToLocalTime().ToString("ddd d MMM HH:mm") ?? "",
+            _ => "",
+        };
         FieldSecondary = "";
         FieldDue = "";
 
         (EditorTitle, EditorHint) = mode switch
         {
             EditorMode.Note => ("Notes", "Ctrl+Enter save · Esc cancel"),
-            EditorMode.Blocker => ("What is blocking this?", "Tab between fields · Ctrl+Enter save · Esc cancel"),
-            EditorMode.Assignment => ("Assign to someone", "Tab between fields · Ctrl+Enter save · Esc cancel"),
+            EditorMode.Blocker => ("What is blocking this?", "Tab between fields · Ctrl+Enter save · Esc cancel · moves the card to Waiting"),
+            EditorMode.Assignment => ("Assign to someone", "Tab between fields · Ctrl+Enter save · Esc cancel · moves the card to Waiting"),
+            EditorMode.Due => ("When is this due?", "e.g. fri, 14 oct, 3d, tomorrow 5pm · empty clears · Ctrl+Enter save"),
             _ => ("", ""),
         };
     }
@@ -136,6 +326,17 @@ public sealed partial class ActionItemsViewModel : ObservableObject
                     Status = "Notes saved";
                     break;
 
+                case EditorMode.Due:
+                    DateTimeOffset? due = null;
+                    if (FieldPrimary.Trim().Length > 0)
+                    {
+                        due = ParseDue(FieldPrimary);
+                        if (due is null) { Status = "Not a date I understand - try \"fri\", \"14 oct\" or \"3d\""; return; }
+                    }
+                    await _repo.UpdateDueAsync(item.Id, due).ConfigureAwait(true);
+                    Status = due is { } d ? $"Due {d.ToLocalTime():ddd d MMM}" : "Due date cleared";
+                    break;
+
                 case EditorMode.Blocker:
                     if (string.IsNullOrWhiteSpace(FieldPrimary)) { Status = "Describe the blocker first"; return; }
 
@@ -149,7 +350,8 @@ public sealed partial class ActionItemsViewModel : ObservableObject
                     }).ConfigureAwait(true);
 
                     item.Blockers.Add(blocker);
-                    Status = "Blocker added";
+                    await ApplyAsync(item, ActionWorkflow.AfterWaitAdded(item)).ConfigureAwait(true);
+                    Status = "Blocker added · moved to Waiting";
                     break;
 
                 case EditorMode.Assignment:
@@ -169,12 +371,13 @@ public sealed partial class ActionItemsViewModel : ObservableObject
                     }).ConfigureAwait(true);
 
                     item.Assignments.Add(assignment);
-                    Status = $"Assigned to {name} · nothing sent yet";
+                    await ApplyAsync(item, ActionWorkflow.AfterWaitAdded(item)).ConfigureAwait(true);
+                    Status = $"Assigned to {name} · moved to Waiting · nothing sent yet (c drafts a chase email)";
                     break;
             }
 
             CloseEditor();
-            OnPropertyChanged(nameof(Selected));
+            await LoadAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -201,7 +404,57 @@ public sealed partial class ActionItemsViewModel : ObservableObject
             ? when.ToUniversalTime()
             : null;
 
-    // ---- item operations --------------------------------------------------
+    // ---- workflow ---------------------------------------------------------
+
+    /// <summary>Moves the selected card one column along (or back).</summary>
+    public async Task StepStageAsync(int delta)
+    {
+        if (Selected is not { } item) return;
+
+        var from = item.IsComplete ? ActionStage.Done : item.Stage;
+        var to = ActionWorkflow.Step(from, delta);
+        if (to == from) return;
+
+        if (to == ActionStage.Done || from == ActionStage.Done)
+        {
+            await ToggleCompleteAsync().ConfigureAwait(true);
+            return;
+        }
+
+        try
+        {
+            await _repo.UpdateStageAsync(item.Id, to).ConfigureAwait(true);
+            Status = to == ActionStage.Waiting && !item.IsWaiting
+                ? "Moved to Waiting · add who it is on with b (blocked by) or Shift+A (assign)"
+                : $"Moved to {Title(to)}";
+            await LoadAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not move it: {ex.Message}";
+        }
+    }
+
+    private async Task ApplyAsync(ActionItem item, ActionStage? stage)
+    {
+        if (stage is not { } s) return;
+        await _repo.UpdateStageAsync(item.Id, s).ConfigureAwait(true);
+        item.Stage = s;
+    }
+
+    /// <summary>Clears the oldest open blocker, or failing that the oldest hand-off.</summary>
+    public async Task ClearNextWaitAsync()
+    {
+        if (Selected is not { } item) return;
+
+        var blocker = item.Blockers.FirstOrDefault(b => !b.IsResolved);
+        if (blocker is not null) { await ToggleBlockerAsync(blocker).ConfigureAwait(true); return; }
+
+        var assignment = item.Assignments.FirstOrDefault(a => !a.IsDone);
+        if (assignment is not null) { await ToggleAssignmentAsync(assignment).ConfigureAwait(true); return; }
+
+        Status = "Nothing is holding this up";
+    }
 
     public async Task ToggleCompleteAsync()
     {
@@ -224,7 +477,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
                 catch { /* the mail may have been filed or deleted since */ }
             }
 
-            Status = target ? "Done" : "Reopened";
+            Status = target ? "Done" : "Reopened · back in Doing";
             await LoadAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
@@ -252,18 +505,53 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
     public async Task ToggleBlockerAsync(BlockingTask blocker)
     {
+        if (Selected is not { } item) return;
+
         await _repo.SetBlockerResolvedAsync(blocker.Id, !blocker.IsResolved).ConfigureAwait(true);
         blocker.ResolvedUtc = blocker.IsResolved ? null : _clock.UtcNow;
-        OnPropertyChanged(nameof(Selected));
+
+        await ApplyAsync(item, blocker.IsResolved
+            ? ActionWorkflow.AfterWaitCleared(item)
+            : ActionWorkflow.AfterWaitAdded(item)).ConfigureAwait(true);
+
+        Status = blocker.IsResolved
+            ? $"Cleared: {blocker.Description}" + (item.Stage == ActionStage.Doing && !item.IsWaiting ? " · back in Doing" : "")
+            : $"Blocked again: {blocker.Description}";
         await LoadAsync().ConfigureAwait(true);
     }
 
     public async Task ToggleAssignmentAsync(Assignment assignment)
     {
+        if (Selected is not { } item) return;
+
         await _repo.SetAssignmentDoneAsync(assignment.Id, !assignment.IsDone).ConfigureAwait(true);
         assignment.DoneUtc = assignment.IsDone ? null : _clock.UtcNow;
-        OnPropertyChanged(nameof(Selected));
+
+        await ApplyAsync(item, assignment.IsDone
+            ? ActionWorkflow.AfterWaitCleared(item)
+            : ActionWorkflow.AfterWaitAdded(item)).ConfigureAwait(true);
+
+        Status = assignment.IsDone
+            ? $"{assignment.PersonName} delivered" + (item.Stage == ActionStage.Doing && !item.IsWaiting ? " · back in Doing" : "")
+            : $"Back with {assignment.PersonName}";
         await LoadAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>Drafts a chase email to the first person with an open hand-off.</summary>
+    public async Task ChaseAsync()
+    {
+        if (Selected is not { } item) return;
+
+        var assignment = item.Assignments.FirstOrDefault(a => !a.IsDone && a.PersonEmail.Length > 0)
+                         ?? item.Assignments.FirstOrDefault(a => !a.IsDone);
+
+        if (assignment is null)
+        {
+            Status = "No open hand-off to chase - assign it with Shift+A first";
+            return;
+        }
+
+        await DraftAssignmentMailAsync(assignment).ConfigureAwait(true);
     }
 
     /// <summary>
@@ -332,6 +620,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
             await _repo.UpdateLocationAsync(
                 item.InternetMessageId, found.Value.EntryId, found.Value.StoreId).ConfigureAwait(true);
 
+            await _store.ShowItemAsync(found.Value).ConfigureAwait(true);
             Status = "Opened in Outlook";
         }
         catch (Exception ex)
@@ -348,4 +637,12 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         Status = "Removed from the action list";
         await LoadAsync().ConfigureAwait(true);
     }
+
+    private static string Title(ActionStage stage) => stage switch
+    {
+        ActionStage.ToDo => "To do",
+        ActionStage.Doing => "Doing",
+        ActionStage.Waiting => "Waiting",
+        _ => "Done",
+    };
 }

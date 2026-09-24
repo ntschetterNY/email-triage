@@ -180,5 +180,17 @@ public sealed class Database
 
             CREATE INDEX ix_scheduled_sends_pending ON scheduled_sends (state, send_at_utc);
             """),
+
+        (3, """
+            ALTER TABLE action_items ADD COLUMN stage INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE action_items ADD COLUMN due_utc TEXT NULL;
+
+            -- Place existing items: finished ones in Done, held-up ones in Waiting.
+            UPDATE action_items SET stage = 3 WHERE completed_utc IS NOT NULL;
+            UPDATE action_items SET stage = 2
+            WHERE completed_utc IS NULL AND (
+                EXISTS (SELECT 1 FROM blocking_tasks b WHERE b.action_item_id = action_items.id AND b.resolved_utc IS NULL)
+                OR EXISTS (SELECT 1 FROM assignments a WHERE a.action_item_id = action_items.id AND a.done_utc IS NULL));
+            """),
     };
 }

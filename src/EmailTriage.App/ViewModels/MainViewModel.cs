@@ -57,10 +57,18 @@ public sealed partial class MainViewModel : ObservableObject
         Actions = actions;
         Keys = keys;
 
-        Triage.Composer.Sent += async (_, message) =>
+        Triage.Composer.Sent += async (_, sent) =>
         {
+            // Ctrl+Shift+Enter: send & mark done, archiving the conversation replied to.
+            var status = sent.Message;
+            if (sent.MarkDone)
+            {
+                await Triage.ArchiveConversationOfAsync(sent.InReplyTo).ConfigureAwait(true);
+                status = $"{sent.Message} · {Triage.Status}";
+            }
+
             await Triage.LoadAsync().ConfigureAwait(true);
-            Triage.Status = message;
+            Triage.Status = status;
             await RefreshScheduledCountAsync().ConfigureAwait(true);
         };
     }
@@ -241,15 +249,28 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var composer = Triage.Composer;
 
-        // Ctrl+Shift+Enter opens the "send later" row; checked before plain
-        // Ctrl+Enter, which it would otherwise also match.
+        // Superhuman's compose keys. Ctrl+Shift+Enter is send & mark done;
+        // checked before plain Ctrl+Enter, which it would otherwise also match.
         if (ctrlEnter && stroke.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift))
         {
-            composer.ToggleSchedule();
+            await composer.SendAsync(markDone: true).ConfigureAwait(true);
             return true;
         }
 
         if (ctrlEnter) { await composer.SendAsync().ConfigureAwait(true); return true; }
+
+        if (stroke.Modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift))
+        {
+            switch (stroke.Key)
+            {
+                case System.Windows.Input.Key.L: composer.ToggleSchedule(); return true;
+                case System.Windows.Input.Key.OemComma: await composer.DiscardAsync().ConfigureAwait(true); return true;
+                case System.Windows.Input.Key.O: composer.RequestFocus(RecipientField.To); return true;
+                case System.Windows.Input.Key.C: composer.RequestFocus(RecipientField.Cc); return true;
+                case System.Windows.Input.Key.B: composer.RequestFocus(RecipientField.Bcc); return true;
+                case System.Windows.Input.Key.M: composer.RequestFocus(RecipientField.Body); return true;
+            }
+        }
 
         if (action == TriageAction.Cancel && composer.IsScheduling && !composer.HasSuggestions)
         {
@@ -372,6 +393,9 @@ public sealed partial class MainViewModel : ObservableObject
                 Triage.OpenSnoozePalette();
                 return true;
 
+            // Enter replies to everyone, as in Superhuman; it is Confirm in
+            // palettes and search, which claim it before this.
+            case TriageAction.Confirm:
             case TriageAction.ReplyAll:
                 await Triage.StartReplyAsync(ReplyScope.All).ConfigureAwait(true);
                 return true;
@@ -415,6 +439,15 @@ public sealed partial class MainViewModel : ObservableObject
         {
             case TriageAction.NextMail: Actions.Move(1); return true;
             case TriageAction.PrevMail: Actions.Move(-1); return true;
+            case TriageAction.PrevColumn: Actions.MoveColumn(-1); return true;
+            case TriageAction.NextColumn: Actions.MoveColumn(1); return true;
+
+            case TriageAction.StageBack: await Actions.StepStageAsync(-1).ConfigureAwait(true); return true;
+            case TriageAction.StageForward: await Actions.StepStageAsync(1).ConfigureAwait(true); return true;
+            case TriageAction.SetDue: Actions.OpenEditor(EditorMode.Due); return true;
+            case TriageAction.ClearWait: await Actions.ClearNextWaitAsync().ConfigureAwait(true); return true;
+            case TriageAction.Chase: await Actions.ChaseAsync().ConfigureAwait(true); return true;
+            case TriageAction.Cancel: await Actions.ClearFilterAsync().ConfigureAwait(true); return true;
 
             case TriageAction.AddNote: Actions.OpenEditor(EditorMode.Note); return true;
             case TriageAction.AddBlocker: Actions.OpenEditor(EditorMode.Blocker); return true;
@@ -441,6 +474,10 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>Reply all has no key of its own by default: Enter does it from the list.</summary>
+    public string ReplyAllKey =>
+        Keys.Describe(TriageAction.ReplyAll) is { Length: > 0 } own ? own : Keys.Describe(TriageAction.Confirm);
+
     /// <summary>Rows for the help overlay, grouped for readability.</summary>
     public IReadOnlyList<(string Group, string Keys, string Description)> HelpRows => new[]
     {
@@ -457,15 +494,23 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.OpenAttachment), "Open an attachment (or click it in the header)"),
         ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move or snooze"),
 
-        ("Reply",   Keys.Describe(TriageAction.ReplyAll), "Reply to everyone"),
+        ("Reply",   ReplyAllKey, "Reply to everyone"),
         ("Reply",   Keys.Describe(TriageAction.ReplySender), "Reply to the sender only"),
         ("Reply",   Keys.Describe(TriageAction.Forward), "Forward (type the To line, Tab to the message)"),
         ("Reply",   "Ctrl+Enter", "Send"),
-        ("Reply",   "Ctrl+Shift+Enter", "Send later - optionally held for review if they reply first"),
+        ("Reply",   "Ctrl+Shift+Enter", "Send & mark done - archives the conversation"),
+        ("Reply",   "Ctrl+Shift+L", "Send later - optionally held for review if they reply first"),
+        ("Reply",   "Ctrl+Shift+O / C / B / M", "Jump to To / Cc / Bcc / the message"),
+        ("Reply",   "Ctrl+Shift+,", "Discard the draft (Esc too)"),
 
+        ("Board",   $"{Keys.Describe(TriageAction.PrevColumn)} {Keys.Describe(TriageAction.NextColumn)}  /  {Keys.Describe(TriageAction.NextMail)} {Keys.Describe(TriageAction.PrevMail)}", "Between columns  /  up and down a column"),
+        ("Board",   $"{Keys.Describe(TriageAction.StageBack)} {Keys.Describe(TriageAction.StageForward)}", "Move the card back / forward a stage"),
+        ("Board",   Keys.Describe(TriageAction.SetDue), "Set a due date"),
+        ("Board",   Keys.Describe(TriageAction.ClearWait), "Clear the next blocker or hand-off (back to Doing when none are left)"),
+        ("Board",   Keys.Describe(TriageAction.Chase), "Draft a chase email to whoever has it"),
         ("Actions", Keys.Describe(TriageAction.AddNote), "Edit notes"),
-        ("Actions", Keys.Describe(TriageAction.AddBlocker), "Add a blocker"),
-        ("Actions", Keys.Describe(TriageAction.AddAssignment), "Assign someone a task"),
+        ("Actions", Keys.Describe(TriageAction.AddBlocker), "Blocked by - who or what it is waiting on"),
+        ("Actions", Keys.Describe(TriageAction.AddAssignment), "Assign to someone else"),
         ("Actions", Keys.Describe(TriageAction.ToggleComplete), "Mark done"),
         ("Actions", Keys.Describe(TriageAction.CyclePriority), "Cycle priority"),
         ("Actions", Keys.Describe(TriageAction.OpenInOutlook), "Open the original in Outlook"),

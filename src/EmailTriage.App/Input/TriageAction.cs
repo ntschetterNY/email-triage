@@ -59,4 +59,17 @@ public enum TriageAction
     ToggleComplete,
     CyclePriority,
     OpenInOutlook,
+
+    // Action board
+    PrevColumn,
+    NextColumn,
+    StageBack,
+    StageForward,
+    SetDue,
+
+    /// <summary>Clear the oldest blocker or hand-off on the selected card.</summary>
+    ClearWait,
+
+    /// <summary>Draft a chase email to whoever holds the hand-off.</summary>
+    Chase,
 }

@@ -202,14 +202,36 @@ public static partial class HtmlPresenter
 
 
     /// <summary>
-    /// Wraps the user's reply text as HTML to sit above Outlook's quoted history.
+    /// Wraps the user's reply text as HTML to sit above Outlook's quoted history,
+    /// with any @mentions written as Outlook writes them.
     /// </summary>
-    public static string ComposeReplyFragment(string plainText)
+    public static string ComposeReplyFragment(string plainText, IReadOnlyCollection<ContactEntry>? mentions = null)
     {
-        var encoded = WebUtility.HtmlEncode(plainText).Replace("\r\n", "\n");
-        var paragraphs = encoded.Split('\n')
-            .Select(line => line.Length == 0 ? "<div>&nbsp;</div>" : $"<div>{line}</div>");
+        var paragraphs = plainText.Replace("\r\n", "\n").Split('\n')
+            .Select(line => line.Length == 0 ? "<div>&nbsp;</div>" : $"<div>{LineHtml(line, mentions)}</div>");
 
         return $"<div style=\"font-family:Calibri,sans-serif;font-size:11pt\">{string.Join("", paragraphs)}<br></div>";
     }
+
+    private static string LineHtml(string line, IReadOnlyCollection<ContactEntry>? mentions)
+    {
+        if (mentions is null || mentions.Count == 0) return WebUtility.HtmlEncode(line);
+
+        var html = new StringBuilder();
+        foreach (var segment in MentionText.Split(line, mentions))
+        {
+            html.Append(segment.Contact is { } who ? MentionLink(segment.Text, who) : WebUtility.HtmlEncode(segment.Text));
+        }
+        return html.ToString();
+    }
+
+    /// <summary>
+    /// A mailto link with an "OWAAM" id is how Outlook marks a mention, and
+    /// what lets the recipient's Outlook flag the message with an @.
+    /// </summary>
+    private static string MentionLink(string text, ContactEntry who) =>
+        $"<a id=\"OWAAM{Guid.NewGuid().ToString("N").ToUpperInvariant()}Z\" href=\"mailto:{WebUtility.HtmlEncode(who.Address)}\">"
+        + "<span style=\"font-family:Calibri,sans-serif;text-decoration:none\">"
+        + WebUtility.HtmlEncode(text)
+        + "</span></a>";
 }

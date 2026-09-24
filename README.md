@@ -12,10 +12,10 @@ fast filing, a real action list, and snooze.
 | | |
 |---|---|
 | **Triage** | Walk the inbox, decide action / no action, file it, move on - without the mouse. |
-| **Move** | `k` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. |
-| **Snooze** | `g` parks a mail and puts it back in your inbox at a time you pick. |
+| **Move** | `v` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. |
+| **Snooze** | `h` parks a mail and puts it back in your inbox at a time you pick. |
 | **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. |
-| **Reply** | `r` reply-all, `Shift+R` reply-to-sender, sent from inside the app. |
+| **Reply** | `Enter` reply-all, `r` reply-to-sender, sent from inside the app. |
 
 ## Requirements
 
@@ -48,13 +48,17 @@ Building from macOS or Linux (compiles only - it cannot run there) needs
 
 ## Keys
 
-`?` shows this in the app.
+`?` shows this in the app. The layout follows
+[Superhuman](https://superhuman.com)'s shortcuts wherever the app has the same command;
+the ones Superhuman has no equivalent for (action / no action, the action board) keep
+their own letters.
 
 ### Moving around
 | Key | |
 |---|---|
 | `j` / `↓` | Next message |
-| `p` / `↑` | Previous message |
+| `k` / `↑` | Previous message |
+| `Home` / `Ctrl+↑`, `End` / `Ctrl+↓` | First / last message |
 | `Tab` | Switch between Triage and Action items |
 | `/` | Filter the list |
 | `F5` | Refresh |
@@ -64,23 +68,26 @@ Building from macOS or Linux (compiles only - it cannot run there) needs
 |---|---|
 | `a` | Needs action - flags it and adds it to the action list |
 | `n` | No action needed |
-| `k` | **Move to folder** - type to search, `Ctrl+Enter` creates and moves |
-| `g` | **Come back to this** - presets, or type `tomorrow 9am` / `fri` / `3d` |
+| `v` | **Move to folder** - type to search, `Ctrl+Enter` creates and moves |
+| `h` | **Remind me** (snooze) - presets, or type `tomorrow 9am` / `fri` / `3d` |
 | `e` | Archive |
 | `u` | Toggle read / unread |
-| `Ctrl+Z` | Undo the last move or snooze |
+| `Ctrl+O` | Open an attachment |
+| `z` / `Ctrl+Z` | Undo the last move or snooze |
 
 ### Replying
 | Key | |
 |---|---|
-| `r` | Reply to everyone |
-| `Shift+R` | Reply to the sender only |
+| `Enter` | Reply to everyone |
+| `r` | Reply to the sender only |
+| `f` | Forward |
 | `Ctrl+Enter` | Send |
-| `Esc` | Discard |
+| `Ctrl+Shift+Enter` | Send & mark done - archives the conversation |
+| `Ctrl+Shift+L` | Send later |
+| `Ctrl+Shift+O` / `C` / `B` / `M` | Jump to To / Cc / Bcc / the message |
+| `Esc` / `Ctrl+Shift+,` | Discard |
+| `@` | Mention someone in the message - pick with `↑↓` `Enter`/`Tab`; they are added to To if not already on it |
 
-> These two are the way round you asked for. Note it is the opposite of Gmail and
-> Outlook, where the *unshifted* key replies to one person. If it fights your muscle
-> memory, swap them in the config file below - no rebuild needed.
 
 ### Action items
 | Key | |
@@ -91,12 +98,16 @@ Building from macOS or Linux (compiles only - it cannot run there) needs
 | `x` | Mark done |
 | `Shift+P` | Cycle priority |
 | `o` | Open the original in Outlook |
+| `#` / `Delete` | Delete the card |
 
 Every binding lives in `%APPDATA%\EmailTriage\keybindings.json`, written on first run.
+A file from before the Superhuman layout is upgraded on the next start: its copies of
+the old defaults are replaced, any keys you changed yourself are kept, and the original
+is saved beside it as `keybindings.v1.json`.
 
 ## How the pieces work
 
-### Filing (`k`)
+### Filing (`v`)
 The palette searches every mail folder across every open store, scoring matches the
 way `fzf` does - so `acinv` finds `Clients\Acme\Invoices`. It also learns: folders you
 file into often rise to the top, with the weighting halving every 60 days so old
@@ -104,7 +115,7 @@ habits fade. When nothing matches, `Ctrl+Enter` creates the folder you typed
 (`Clients\Acme\Q3` creates `Q3` under an existing `Clients\Acme`) and moves the mail
 there in the same keystroke.
 
-### Snooze (`g`)
+### Snooze (`h`)
 Outlook has no snooze for received mail, so the app implements it: the message moves
 to a `Snoozed` folder and a return time is recorded locally. A background loop checks
 every 30 seconds and moves it back, marked unread so it reads as new.

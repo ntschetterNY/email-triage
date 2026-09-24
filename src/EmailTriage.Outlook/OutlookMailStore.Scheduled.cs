@@ -51,13 +51,16 @@ public sealed partial class OutlookMailStore
         }, ct);
 
     public Task ShowSavedDraftAsync(DraftRef saved, CancellationToken ct = default) =>
+        ShowItemAsync(new MailRef(saved.EntryId, saved.StoreId), ct);
+
+    public Task ShowItemAsync(MailRef mail, CancellationToken ct = default) =>
         _sta.InvokeAsync(() =>
         {
             EnsureConnected();
             dynamic? item = null;
             try
             {
-                item = GetItem(new MailRef(saved.EntryId, saved.StoreId));
+                item = GetItem(mail);
                 item.Display(false);
             }
             finally { ComUtil.Release(item); }
