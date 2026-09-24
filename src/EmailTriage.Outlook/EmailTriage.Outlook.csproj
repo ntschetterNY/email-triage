@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Outlook is reached by late binding (IDispatch), so no PIA or type
+         library is needed at build time. The solution therefore compiles on
+         any OS; it only *runs* on Windows with classic Outlook installed. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EmailTriage.Core\EmailTriage.Core.csproj" />
+  </ItemGroup>
+
+</Project>

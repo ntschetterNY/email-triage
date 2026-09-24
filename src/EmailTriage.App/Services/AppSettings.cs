@@ -1,0 +1,71 @@
+using System.IO;
+using System.Text.Json;
+using EmailTriage.Core.Services;
+
+namespace EmailTriage.App.Services;
+
+/// <summary>User-adjustable behaviour, persisted next to the database.</summary>
+public sealed class AppSettings
+{
+    /// <summary>Outlook category applied to mail that needs action.</summary>
+    public string ActionCategory { get; set; } = "Action Required";
+
+    /// <summary>Folder, relative to the mailbox root, that holds snoozed mail.</summary>
+    public string SnoozeFolder { get; set; } = "Snoozed";
+
+    /// <summary>How many messages to pull into the triage list.</summary>
+    public int InboxPageSize { get; set; } = 250;
+
+    /// <summary>
+    /// Remote images are blocked by default: in an inbox, they are mostly
+    /// tracking pixels that tell a sender exactly when a mail was opened.
+    /// </summary>
+    public bool BlockRemoteImages { get; set; } = true;
+
+    /// <summary>Mark a message read once it has been on screen this long.</summary>
+    public int MarkReadAfterMs { get; set; } = 1200;
+
+    /// <summary>Times of day the snooze presets anchor to.</summary>
+    public int MorningHour { get; set; } = 8;
+    public int AfternoonHour { get; set; } = 13;
+    public int EveningHour { get; set; } = 18;
+
+    public SnoozeDayShape DayShape => new()
+    {
+        Morning = TimeSpan.FromHours(MorningHour),
+        Afternoon = TimeSpan.FromHours(AfternoonHour),
+        Evening = TimeSpan.FromHours(EveningHour),
+    };
+
+    public static string DefaultPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "EmailTriage",
+            "settings.json");
+
+    public static AppSettings Load(string? path = null)
+    {
+        path ??= DefaultPath;
+        try
+        {
+            if (File.Exists(path))
+            {
+                var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path));
+                if (loaded is not null) return loaded;
+            }
+        }
+        catch { /* fall through to defaults */ }
+
+        return new AppSettings();
+    }
+
+    public void Save(string? path = null)
+    {
+        path ??= DefaultPath;
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        File.WriteAllText(path, JsonSerializer.Serialize(
+            this, new JsonSerializerOptions { WriteIndented = true }));
+    }
+}
