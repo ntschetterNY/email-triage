@@ -55,6 +55,8 @@ public sealed class KeyMap
         // Replying
         ("r",           TriageAction.ReplyAll),
         ("shift+r",     TriageAction.ReplySender),
+        ("f",           TriageAction.Forward),
+        ("v",           TriageAction.OpenAttachment),
 
         // Action list
         ("t",           TriageAction.AddNote),

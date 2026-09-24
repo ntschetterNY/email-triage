@@ -32,6 +32,11 @@ public sealed partial class OutlookMailStore
 
                         // Public folders and shared archives can be enormous and
                         // slow to enumerate; skip anything not cached locally.
+                        // Every folder in an online store is a round-trip to
+                        // Exchange, and walking one kept the palette waiting
+                        // for minutes.
+                        if (!IsLocallyAvailable((object)store!)) continue;
+
                         root = ComUtil.Try<object?>(() => store!.GetRootFolder());
                         if (root is null) continue;
 
@@ -49,6 +54,22 @@ public sealed partial class OutlookMailStore
 
             return nodes;
         }, ct);
+
+    /// <summary>
+    /// The primary mailbox always counts, whatever its cache mode; .pst files
+    /// are local by nature; any other Exchange store only when it is cached.
+    /// </summary>
+    private static bool IsLocallyAvailable(object storeObj)
+    {
+        dynamic store = storeObj;
+        return ComUtil.Int(() => store.ExchangeStoreType, ComUtil.ExchangeStoreNotExchange) switch
+        {
+            ComUtil.ExchangeStorePrimaryMailbox => true,
+            ComUtil.ExchangeStoreNotExchange => true,
+            ComUtil.ExchangeStorePublicFolder => false,
+            _ => ComUtil.Try(() => (bool)store.IsCachedExchange),
+        };
+    }
 
     private static void WalkFolders(
         object folderObj, string storeName, int depth, List<FolderNode> into, CancellationToken ct)
@@ -80,7 +101,6 @@ public sealed partial class OutlookMailStore
                             Path = ComUtil.Str(() => child!.FolderPath).TrimStart('\\'),
                             Depth = depth,
                             StoreName = storeName,
-                            ItemCount = ComUtil.Int(() => child!.Items.Count),
                         });
                     }
 
@@ -144,7 +164,6 @@ public sealed partial class OutlookMailStore
             Path = path,
             Depth = Math.Max(0, path.Count(c => c == '\\') - 1),
             StoreName = storeName,
-            ItemCount = ComUtil.Int(() => folder.Items.Count),
         };
     }
 

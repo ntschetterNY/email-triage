@@ -24,6 +24,11 @@ internal static class ComUtil
     /// <summary>olMailItem, as reported by Folder.DefaultItemType</summary>
     public const int DefaultItemTypeMail = 0;
 
+    /// <summary>OlExchangeStoreType values, as reported by Store.ExchangeStoreType</summary>
+    public const int ExchangeStorePrimaryMailbox = 0;
+    public const int ExchangeStorePublicFolder = 2;
+    public const int ExchangeStoreNotExchange = 3;
+
     // MAPI property tags, addressed by DASL. These give us the values the
     // object model either hides or reports in Exchange-internal form.
     public const string PropInternetMessageId =

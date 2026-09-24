@@ -28,12 +28,18 @@ public sealed partial class OutlookMailStore
             {
                 source = GetItem(mail);
 
-                reply = scope == ReplyScope.All
-                    ? source!.ReplyAll()
-                    : source!.Reply();
+                reply = scope switch
+                {
+                    ReplyScope.All => source!.ReplyAll(),
+                    ReplyScope.Forward => source!.Forward(),
+                    _ => source!.Reply(),
+                };
 
                 if (reply is null)
-                    throw new InvalidOperationException("Outlook could not create the reply.");
+                    throw new InvalidOperationException(
+                        scope == ReplyScope.Forward
+                            ? "Outlook could not create the forward."
+                            : "Outlook could not create the reply.");
 
                 var dyn = (dynamic)reply;
                 var (to, cc) = ReadRecipients((object)dyn);
@@ -63,28 +69,81 @@ public sealed partial class OutlookMailStore
             }
         }, ct);
 
-    public Task SendReplyAsync(DraftRef draft, string bodyHtml, CancellationToken ct = default) =>
+    public Task SendReplyAsync(
+        DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default) =>
         _sta.InvokeAsync(() =>
         {
             EnsureConnected();
 
-            if (!_openDrafts.TryRemove(draft.EntryId, out var stored))
-                throw new InvalidOperationException(
-                    "That reply is no longer open. It may have been sent or discarded already.");
+            var stored = PrepareOpenDraft(draft, bodyHtml, recipients);
+            try { ((dynamic)stored).Send(); }
+            finally { ComUtil.Release(stored); }
+        }, ct);
 
+    public Task<DraftRef> SaveDraftForLaterAsync(
+        DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default) =>
+        _sta.InvokeAsync(() =>
+        {
+            EnsureConnected();
+
+            var stored = PrepareOpenDraft(draft, bodyHtml, recipients);
             try
             {
-                var reply = (dynamic)stored;
+                var item = (dynamic)stored;
 
-                // Put the new text above Outlook's quoted history rather than
-                // replacing the body, so the thread stays intact.
-                var existing = ComUtil.Str(() => reply.HTMLBody);
-                reply.HTMLBody = bodyHtml + existing;
-
-                reply.Send();
+                // Saving an unsent reply files it in Drafts, where it only now
+                // gets an EntryID that lasts beyond this session.
+                item.Save();
+                return new DraftRef(
+                    ComUtil.Str(() => item.EntryID),
+                    ComUtil.Str(() => item.Parent.StoreID));
             }
             finally { ComUtil.Release(stored); }
         }, ct);
+
+    /// <summary>
+    /// Applies recipient edits and the user's text to an open draft and takes
+    /// it out of <see cref="_openDrafts"/>; the caller must release it. If a
+    /// recipient does not resolve, this throws and the draft stays open so the
+    /// user can correct it.
+    /// </summary>
+    private object PrepareOpenDraft(DraftRef draft, string bodyHtml, RecipientOverrides? recipients)
+    {
+        if (!_openDrafts.TryGetValue(draft.EntryId, out var stored))
+            throw new InvalidOperationException(
+                "That reply is no longer open. It may have been sent or discarded already.");
+
+        var item = (dynamic)stored;
+
+        if (recipients is not null)
+        {
+            static string Join(IReadOnlyList<string> list) =>
+                string.Join("; ", list.Where(a => !string.IsNullOrWhiteSpace(a)));
+
+            if (recipients.To is { } to) item.To = Join(to);
+            if (recipients.Cc is { } cc) item.CC = Join(cc);
+            if (recipients.Bcc is { } bcc) item.BCC = Join(bcc);
+
+            dynamic? list = null;
+            try
+            {
+                list = item.Recipients;
+                if (!(bool)list!.ResolveAll())
+                    throw new InvalidOperationException(
+                        "Outlook could not resolve every recipient. Check the To, Cc and Bcc lines.");
+            }
+            finally { ComUtil.Release(list); }
+        }
+
+        _openDrafts.TryRemove(draft.EntryId, out _);
+
+        // Put the new text above Outlook's quoted history rather than
+        // replacing the body, so the thread stays intact.
+        var existing = ComUtil.Str(() => item.HTMLBody);
+        item.HTMLBody = bodyHtml + existing;
+
+        return stored;
+    }
 
     public Task DiscardDraftAsync(DraftRef draft, CancellationToken ct = default) =>
         _sta.InvokeAsync(() =>

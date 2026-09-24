@@ -29,7 +29,7 @@
 
                 <StackPanel Grid.Column="1" Margin="10,6,8,6">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding Sender}" FontSize="12.5"
+                        <TextBlock x:Name="SenderText" Text="{Binding Sender}" FontSize="12.5"
                                    TextTrimming="CharacterEllipsis" MaxWidth="240">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
@@ -45,27 +45,85 @@
                             </TextBlock.Style>
                         </TextBlock>
 
+                        <!-- messages in the conversation -->
+                        <TextBlock x:Name="CountText" Text="{Binding Count}" FontSize="11" Margin="6,1,0,0"
+                                   Foreground="{StaticResource Muted}"
+                                   Visibility="{Binding HasCount, Converter={StaticResource BoolVis}}" />
+
+                        <!-- your follow-up is the newest message -->
+                        <Border x:Name="SentTag" Background="#337AA2F7" CornerRadius="3" Padding="5,0" Margin="8,0,0,0"
+                                Visibility="{Binding LatestIsMine, Converter={StaticResource BoolVis}}">
+                            <TextBlock x:Name="SentText" Text="SENT" FontSize="9" FontWeight="Bold"
+                                       Foreground="{StaticResource Accent}" />
+                        </Border>
+
                         <!-- flagged for action -->
                         <Border Background="#33E0AF68" CornerRadius="3" Padding="5,0" Margin="8,0,0,0"
                                 Visibility="{Binding IsActionRequired, Converter={StaticResource BoolVis}}">
-                            <TextBlock Text="ACTION" FontSize="9" FontWeight="Bold"
+                            <TextBlock x:Name="ActionText" Text="ACTION" FontSize="9" FontWeight="Bold"
                                        Foreground="{StaticResource Warn}" />
                         </Border>
 
-                        <TextBlock Text="📎" FontSize="10" Margin="6,0,0,0" Foreground="{StaticResource Muted}"
+                        <TextBlock x:Name="ClipText" Text="📎" FontSize="10" Margin="6,0,0,0" Foreground="{StaticResource Muted}"
                                    Visibility="{Binding HasAttachments, Converter={StaticResource BoolVis}}" />
                     </StackPanel>
 
-                    <TextBlock Text="{Binding Subject}" FontSize="13" Margin="0,3,0,0"
+                    <TextBlock x:Name="SubjectText" Text="{Binding Subject}" FontSize="13" Margin="0,3,0,0"
                                TextTrimming="CharacterEllipsis"
                                Foreground="{StaticResource Text}" />
                 </StackPanel>
 
-                <TextBlock Grid.Column="2" Text="{Binding When}" FontSize="11"
+                <TextBlock x:Name="WhenText" Grid.Column="2" Text="{Binding When}" FontSize="11"
                            Foreground="{StaticResource Muted}"
                            VerticalAlignment="Top" Margin="0,8,10,0" />
             </Grid>
+
+            <!-- The selected row sits on light yellow, so its text turns dark to stay readable.
+                 Template triggers outrank the sender's style triggers, so this wins for unread mail too. -->
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                    <Setter TargetName="SenderText" Property="Foreground" Value="{StaticResource SelectedText}" />
+                    <Setter TargetName="SubjectText" Property="Foreground" Value="{StaticResource SelectedText}" />
+                    <Setter TargetName="WhenText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                    <Setter TargetName="ClipText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                    <Setter TargetName="ActionText" Property="Foreground" Value="#8A5A00" />
+                    <Setter TargetName="CountText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                    <Setter TargetName="SentText" Property="Foreground" Value="#1F4FA8" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
         </DataTemplate>
+
+        <!-- Light yellow selection that is easy to find at a glance: the triage list,
+             the move/snooze palette and contact suggestions. Their templates darken
+             the text of the selected row to match. -->
+        <Style x:Key="MailRowContainer" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}"
+                                CornerRadius="5" Margin="4,0">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{StaticResource SelectedRow}" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                    <Condition Property="IsSelected" Value="False" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Root" Property="Background" Value="#15FFFFFF" />
+                            </MultiTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <Style x:Key="RowContainer" TargetType="ListBoxItem">
             <Setter Property="Padding" Value="0" />
@@ -143,6 +201,13 @@
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <TextBlock Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,14,0"
+                               ToolTip="Sent while this app is running. Delete the draft in Outlook to cancel."
+                               Visibility="{Binding PendingScheduledCount, Converter={StaticResource CountVis}}">
+                        <Run Text="{Binding PendingScheduledCount, Mode=OneWay}" />
+                        <Run Text="scheduled" />
+                    </TextBlock>
+
+                    <TextBlock Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,14,0"
                                Visibility="{Binding PendingSnoozeCount, Converter={StaticResource CountVis}}">
                         <Run Text="{Binding PendingSnoozeCount, Mode=OneWay}" />
                         <Run Text="snoozed" />
@@ -195,7 +260,7 @@
                                  ItemsSource="{Binding Triage.Rows}"
                                  SelectedItem="{Binding Triage.Selected, Mode=TwoWay}"
                                  ItemTemplate="{StaticResource MailRowTemplate}"
-                                 ItemContainerStyle="{StaticResource RowContainer}"
+                                 ItemContainerStyle="{StaticResource MailRowContainer}"
                                  Background="Transparent" BorderThickness="0"
                                  Focusable="False"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -225,13 +290,70 @@
                         <StackPanel>
                             <TextBlock Text="{Binding Triage.OpenBody.Subject}" FontSize="17"
                                        FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
-                                <TextBlock Text="{Binding Triage.OpenBody.SenderName}" FontSize="12" />
-                                <TextBlock Text="{Binding Triage.OpenBody.SenderAddress, StringFormat=' &lt;{0}&gt;'}"
-                                           FontSize="12" Foreground="{StaticResource Muted}" />
-                            </StackPanel>
+                            <Grid Margin="0,7,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Triage.OpenBody.SenderName}" FontSize="12" />
+                                    <TextBlock Text="{Binding Triage.OpenBody.SenderAddress, StringFormat=' &lt;{0}&gt;'}"
+                                               FontSize="12" Foreground="{StaticResource Muted}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding Triage.OpenBody.ReceivedDisplay}" FontSize="11.5"
+                                           HorizontalAlignment="Right" Foreground="{StaticResource Muted}" />
+                            </Grid>
+
+                            <!-- who it went to: names here, full addresses on hover -->
+                            <DockPanel Margin="0,5,0,0" ToolTip="{Binding Triage.OpenBody.ToDetail}">
+                                <TextBlock Text="To" Width="26" FontSize="12" Foreground="{StaticResource Muted}" />
+                                <TextBlock Text="{Binding Triage.OpenBody.ToSummary}" FontSize="12"
+                                           TextWrapping="Wrap" MaxHeight="48" TextTrimming="CharacterEllipsis" />
+                            </DockPanel>
+                            <DockPanel Margin="0,3,0,0" ToolTip="{Binding Triage.OpenBody.CcDetail}"
+                                       Visibility="{Binding Triage.OpenBody.HasCc, Converter={StaticResource BoolVis}}">
+                                <TextBlock Text="Cc" Width="26" FontSize="12" Foreground="{StaticResource Muted}" />
+                                <TextBlock Text="{Binding Triage.OpenBody.CcSummary}" FontSize="12"
+                                           TextWrapping="Wrap" MaxHeight="48" TextTrimming="CharacterEllipsis" />
+                            </DockPanel>
+
+                            <!-- attachments: click to open, or press v -->
+                            <ItemsControl ItemsSource="{Binding Triage.ThreadAttachments}" Margin="0,9,0,0"
+                                          Visibility="{Binding Triage.ThreadAttachments.Count, Converter={StaticResource CountVis}}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Click="OnAttachmentClick" Tag="{Binding}" Cursor="Hand"
+                                                Margin="0,0,6,6" Focusable="False"
+                                                ToolTip="{Binding Name}">
+                                            <Button.Template>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border x:Name="Chip" Background="{StaticResource Raised}"
+                                                            BorderBrush="{StaticResource Border}" BorderThickness="1"
+                                                            CornerRadius="5" Padding="9,4">
+                                                        <ContentPresenter />
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource Accent}" />
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Button.Template>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="📎" FontSize="11" Margin="0,0,5,0" Foreground="{StaticResource Muted}" />
+                                                <TextBlock Text="{Binding Name}" FontSize="12" MaxWidth="260"
+                                                           TextTrimming="CharacterEllipsis" Foreground="{StaticResource Text}" />
+                                                <TextBlock Text="{Binding SizeDisplay}" FontSize="11" Margin="6,0,0,0"
+                                                           Foreground="{StaticResource Muted}" />
+                                            </StackPanel>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </StackPanel>
                     </Border>
+
+                    <!-- Stands in for the WebView while an overlay is open; see MainWindow.UpdateAirspaceAsync. -->
+                    <Image Grid.Row="1" x:Name="BodySnapshot" Stretch="Fill" />
 
                     <wv2:WebView2 Grid.Row="1" x:Name="BodyView" DefaultBackgroundColor="#16181D" />
 
@@ -451,19 +573,26 @@
                     <ListBox Grid.Row="2" Margin="8,0,8,0"
                              ItemsSource="{Binding Triage.Palette.Entries}"
                              SelectedIndex="{Binding Triage.Palette.SelectedIndex, Mode=TwoWay}"
-                             ItemContainerStyle="{StaticResource RowContainer}"
+                             ItemContainerStyle="{StaticResource MailRowContainer}"
                              Background="Transparent" BorderThickness="0" Focusable="False"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="10,7">
-                                    <TextBlock Text="{Binding Primary}" FontSize="13.5"
+                                    <TextBlock x:Name="PrimaryText" Text="{Binding Primary}" FontSize="13.5"
+                                               Foreground="{StaticResource Text}"
                                                TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding Secondary}" FontSize="11"
+                                    <TextBlock x:Name="SecondaryText" Text="{Binding Secondary}" FontSize="11"
                                                Foreground="{StaticResource Muted}" Margin="0,2,0,0"
                                                TextTrimming="CharacterEllipsis"
                                                Visibility="{Binding HasSecondary, Converter={StaticResource BoolVis}}" />
                                 </StackPanel>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                        <Setter TargetName="PrimaryText" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                        <Setter TargetName="SecondaryText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
@@ -484,10 +613,10 @@
             </Border>
         </Grid>
 
-        <!-- reply composer (r / Shift+R) -->
+        <!-- reply / forward composer (r / Shift+R / f) -->
         <Grid Grid.RowSpan="3" Background="#B0000000"
               Visibility="{Binding Triage.Composer.IsOpen, Converter={StaticResource BoolVis}}">
-            <Border Width="820" MaxHeight="560" VerticalAlignment="Center"
+            <Border Width="820" MaxHeight="660" VerticalAlignment="Center"
                     Background="{StaticResource Panel}" CornerRadius="9"
                     BorderBrush="{StaticResource Border}" BorderThickness="1">
                 <Border.Effect>
@@ -495,6 +624,14 @@
                 </Border.Effect>
 
                 <Grid>
+                    <Grid.Resources>
+                        <Style x:Key="RecipientLabel" TargetType="TextBlock">
+                            <Setter Property="FontSize" Value="11.5" />
+                            <Setter Property="Width" Value="34" />
+                            <Setter Property="VerticalAlignment" Value="Center" />
+                            <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                        </Style>
+                    </Grid.Resources>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -509,9 +646,21 @@
                                        Margin="12,0,0,0" Foreground="{StaticResource Muted}"
                                        TextTrimming="CharacterEllipsis" MaxWidth="560" />
                         </StackPanel>
-                        <TextBlock Text="{Binding Triage.Composer.Recipients}" FontSize="11.5"
-                                   Margin="0,7,0,0" TextWrapping="Wrap"
-                                   Foreground="{StaticResource Muted}" />
+                        <DockPanel Margin="0,10,0,0">
+                            <TextBlock Text="To" Style="{StaticResource RecipientLabel}" />
+                            <TextBox x:Name="ToBox" Style="{StaticResource FlatInput}" FontSize="13"
+                                     Text="{Binding Triage.Composer.ToLine, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                        <DockPanel Margin="0,5,0,0">
+                            <TextBlock Text="Cc" Style="{StaticResource RecipientLabel}" />
+                            <TextBox x:Name="CcBox" Style="{StaticResource FlatInput}" FontSize="13"
+                                     Text="{Binding Triage.Composer.CcLine, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                        <DockPanel Margin="0,5,0,0">
+                            <TextBlock Text="Bcc" Style="{StaticResource RecipientLabel}" />
+                            <TextBox x:Name="BccBox" Style="{StaticResource FlatInput}" FontSize="13"
+                                     Text="{Binding Triage.Composer.BccLine, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
                     </StackPanel>
 
                     <TextBox Grid.Row="1" x:Name="ComposerBox" Margin="18,0,18,12"
@@ -520,14 +669,64 @@
                              VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
                              Text="{Binding Triage.Composer.BodyText, UpdateSourceTrigger=PropertyChanged}" />
 
+                    <!-- contact suggestions, dropped over the top of the message -->
+                    <Border Grid.Row="1" Margin="52,0,18,0" VerticalAlignment="Top" Panel.ZIndex="1"
+                            Background="{StaticResource Raised}" CornerRadius="0,0,6,6"
+                            BorderBrush="{StaticResource Border}" BorderThickness="1"
+                            Visibility="{Binding Triage.Composer.HasSuggestions, Converter={StaticResource BoolVis}}">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.45" Color="Black" />
+                        </Border.Effect>
+                        <ListBox x:Name="SuggestionList"
+                                 ItemsSource="{Binding Triage.Composer.Suggestions}"
+                                 SelectedItem="{Binding Triage.Composer.SelectedSuggestion, Mode=TwoWay}"
+                                 ItemContainerStyle="{StaticResource MailRowContainer}"
+                                 Background="Transparent" BorderThickness="0" Focusable="False"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Margin="10,6">
+                                        <TextBlock x:Name="NameText" Text="{Binding Display}" FontSize="13"
+                                                   Foreground="{StaticResource Text}" />
+                                        <TextBlock x:Name="AddressText" Text="{Binding Address}" FontSize="11.5" Margin="10,1,0,0"
+                                                   Foreground="{StaticResource Muted}" />
+                                    </StackPanel>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                            <Setter TargetName="NameText" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                            <Setter TargetName="AddressText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+
                     <Border Grid.Row="2" Background="{StaticResource Raised}"
                             CornerRadius="0,0,9,9" Padding="18,10">
+                        <StackPanel>
+                            <!-- send later (Ctrl+Shift+Enter) -->
+                            <DockPanel Margin="0,0,0,10"
+                                       Visibility="{Binding Triage.Composer.IsScheduling, Converter={StaticResource BoolVis}}">
+                                <TextBlock Text="Send at" FontSize="12" VerticalAlignment="Center" Width="52"
+                                           Foreground="{StaticResource Accent}" FontWeight="SemiBold" />
+                                <TextBox x:Name="ScheduleBox" Width="170" Style="{StaticResource FlatInput}" FontSize="13"
+                                         Text="{Binding Triage.Composer.ScheduleText, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="{Binding Triage.Composer.SchedulePreview}" FontSize="12" Margin="10,0,0,0"
+                                           VerticalAlignment="Center" Foreground="{StaticResource Muted}" Width="200" />
+                                <CheckBox IsChecked="{Binding Triage.Composer.HoldIfReplied}" VerticalAlignment="Center"
+                                          Foreground="{StaticResource Text}" FontSize="12">
+                                    If anyone replies first, don't send - hold it for my review
+                                </CheckBox>
+                            </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Esc discard · Outlook keeps the quoted thread and your signature" />
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send later · Esc discard · ↑↓ Enter/Tab picks a contact" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
-                                       HorizontalAlignment="Right" Foreground="{StaticResource Warn}" />
+                                       HorizontalAlignment="Right" Foreground="{StaticResource Warn}"
+                                       Background="{StaticResource Raised}" />
                         </Grid>
+                        </StackPanel>
                     </Border>
                 </Grid>
             </Border>

@@ -18,6 +18,9 @@ public sealed partial class MainViewModel : ObservableObject
 {
     private readonly IMailStore _store;
     private readonly SnoozeScheduler _scheduler;
+    private readonly ContactDirectory _contacts;
+    private readonly ScheduledSender _sender;
+    private readonly IScheduledSendRepository _scheduled;
     private readonly ISnoozeRepository _snoozes;
 
     public KeyMap Keys { get; }
@@ -30,6 +33,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _isConnected;
     [ObservableProperty] private string _fatalError = "";
     [ObservableProperty] private int _pendingSnoozeCount;
+    [ObservableProperty] private int _pendingScheduledCount;
 
     public MainViewModel(
         IMailStore store,
@@ -37,8 +41,14 @@ public sealed partial class MainViewModel : ObservableObject
         ActionItemsViewModel actions,
         SnoozeScheduler scheduler,
         ISnoozeRepository snoozes,
-        KeyMap keys)
+        KeyMap keys,
+        ContactDirectory contacts,
+        ScheduledSender sender,
+        IScheduledSendRepository scheduled)
     {
+        _contacts = contacts;
+        _sender = sender;
+        _scheduled = scheduled;
         _store = store;
         _scheduler = scheduler;
         _snoozes = snoozes;
@@ -47,10 +57,11 @@ public sealed partial class MainViewModel : ObservableObject
         Actions = actions;
         Keys = keys;
 
-        Triage.Composer.Sent += async (_, _) =>
+        Triage.Composer.Sent += async (_, message) =>
         {
-            Triage.Status = "Reply sent";
             await Triage.LoadAsync().ConfigureAwait(true);
+            Triage.Status = message;
+            await RefreshScheduledCountAsync().ConfigureAwait(true);
         };
     }
 
@@ -58,6 +69,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     public async Task InitialiseAsync()
     {
+        _ui = SynchronizationContext.Current;
+
         try
         {
             ConnectionStatus = "Connecting to Outlook...";
@@ -66,27 +79,57 @@ public sealed partial class MainViewModel : ObservableObject
             IsConnected = true;
             ConnectionStatus = "Connected";
 
-            _store.NewMailArrived += async (_, _) =>
+            // Autocomplete works from the cache at once, and fills out as
+            // Outlook's contacts and directory are read in the background.
+            _ = _contacts.StartLoading();
+
+            // Both of these fire on background threads. The list is bound to
+            // WPF, which rejects changes from any thread but its own, so every
+            // reaction is posted back to the UI thread first.
+            _store.InboxChanged += (_, _) => OnUi(RefreshTriageLiveAsync);
+
+            Triage.Palette.PropertyChanged += (_, e) =>
             {
-                if (Section == Section.Triage && !Triage.Palette.IsOpen && !Triage.Composer.IsOpen)
-                    await Triage.LoadAsync().ConfigureAwait(true);
+                if (e.PropertyName == nameof(PaletteViewModel.IsOpen)) _ = CatchUpAsync();
+            };
+            Triage.Composer.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(ComposerViewModel.IsOpen)) _ = CatchUpAsync();
             };
 
-            _scheduler.Restored += async (_, e) =>
+            _scheduler.Restored += (_, e) => OnUi(async () =>
             {
                 Triage.Status = $"Back in your inbox: {e.Entry.Subject}";
                 await RefreshSnoozeCountAsync().ConfigureAwait(true);
-                if (Section == Section.Triage) await Triage.LoadAsync().ConfigureAwait(true);
-            };
+                if (Section == Section.Triage) await Triage.RefreshQuietlyAsync().ConfigureAwait(true);
+            });
 
-            _scheduler.RestoreFailed += (_, e) =>
+            _scheduler.RestoreFailed += (_, e) => OnUi(() =>
+            {
                 Triage.Status = $"Could not return \"{e.Entry.Subject}\": {e.Error}";
+                return Task.CompletedTask;
+            });
 
             _scheduler.Start();
+
+            _sender.Settled += (_, outcome) => OnUi(async () =>
+            {
+                var subject = outcome.Entry.Subject;
+                Triage.Status = outcome.State switch
+                {
+                    ScheduledSendState.Sent when outcome.Note.Length == 0 => $"Scheduled send went out: {subject}",
+                    ScheduledSendState.Held => $"Held for your review (opened in Outlook): {subject} - {outcome.Note}",
+                    ScheduledSendState.Failed => $"Scheduled send failed, opened in Outlook: {subject} - {outcome.Note}",
+                    _ => $"Scheduled send for \"{subject}\": {outcome.Note}",
+                };
+                await RefreshScheduledCountAsync().ConfigureAwait(true);
+            });
+            _sender.Start();
 
             await Triage.LoadAsync().ConfigureAwait(true);
             await Actions.LoadAsync().ConfigureAwait(true);
             await RefreshSnoozeCountAsync().ConfigureAwait(true);
+            await RefreshScheduledCountAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -94,6 +137,45 @@ public sealed partial class MainViewModel : ObservableObject
             ConnectionStatus = "Not connected";
             FatalError = ex.Message;
         }
+    }
+
+    private SynchronizationContext? _ui;
+
+    /// <summary>Set when a live refresh was held back, so it can run once the way is clear.</summary>
+    private bool _refreshHeld;
+
+    private void OnUi(Func<Task> work)
+    {
+        if (_ui is null) { _ = work(); return; }
+        _ui.Post(_ => _ = work(), null);
+    }
+
+    /// <summary>
+    /// Keeps the triage list in step with Outlook. Held while a palette or the
+    /// composer is open, because those act on the selected message and it must
+    /// not change underneath them.
+    /// </summary>
+    private async Task RefreshTriageLiveAsync()
+    {
+        if (Section != Section.Triage || Triage.Palette.IsOpen || Triage.Composer.IsOpen)
+        {
+            _refreshHeld = true;
+            return;
+        }
+
+        _refreshHeld = false;
+        await Triage.RefreshQuietlyAsync().ConfigureAwait(true);
+    }
+
+    private async Task CatchUpAsync()
+    {
+        if (_refreshHeld) await RefreshTriageLiveAsync().ConfigureAwait(true);
+    }
+
+    private async Task RefreshScheduledCountAsync()
+    {
+        try { PendingScheduledCount = (await _scheduled.GetPendingAsync().ConfigureAwait(true)).Count; }
+        catch { /* decoration only */ }
     }
 
     private async Task RefreshSnoozeCountAsync()
@@ -109,6 +191,7 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnSectionChanged(Section value)
     {
         OnPropertyChanged(nameof(StatusText));
+        if (value == Section.Triage) _refreshHeld = false;
         _ = value == Section.Actions ? Actions.LoadAsync() : Triage.LoadAsync();
     }
 
@@ -124,8 +207,13 @@ public sealed partial class MainViewModel : ObservableObject
 
         // Modal surfaces claim the keyboard first: while one is open, ordinary
         // letters are text the user is typing, not commands.
-        if (Triage.Composer.IsOpen) return await HandleComposerKeyAsync(action, ctrlEnter).ConfigureAwait(true);
-        if (Triage.Palette.IsOpen) return await HandlePaletteKeyAsync(action, ctrlEnter).ConfigureAwait(true);
+        if (Triage.Composer.IsOpen) return await HandleComposerKeyAsync(stroke, action, ctrlEnter).ConfigureAwait(true);
+        if (Triage.Palette.IsOpen)
+        {
+            // "3 pm" must reach the box, not move the highlight via `p`.
+            if (stroke.IsTyping) return false;
+            return await HandlePaletteKeyAsync(action, ctrlEnter).ConfigureAwait(true);
+        }
         if (Actions.Editor != EditorMode.None) return await HandleEditorKeyAsync(action, ctrlEnter).ConfigureAwait(true);
 
         if (IsHelpVisible)
@@ -138,7 +226,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             if (action is TriageAction.Cancel) { Triage.IsSearching = false; Triage.SearchQuery = ""; return true; }
             if (action is TriageAction.Confirm) { Triage.IsSearching = false; return true; }
-            if (action is TriageAction.NextMail or TriageAction.PrevMail)
+            if (action is TriageAction.NextMail or TriageAction.PrevMail && !stroke.IsTyping)
             {
                 Triage.Move(action == TriageAction.NextMail ? 1 : -1);
                 return true;
@@ -149,15 +237,54 @@ public sealed partial class MainViewModel : ObservableObject
         return await HandleGlobalKeyAsync(action).ConfigureAwait(true);
     }
 
-    private async Task<bool> HandleComposerKeyAsync(TriageAction action, bool ctrlEnter)
+    private async Task<bool> HandleComposerKeyAsync(KeyStroke stroke, TriageAction action, bool ctrlEnter)
     {
-        if (ctrlEnter) { await Triage.Composer.SendAsync().ConfigureAwait(true); return true; }
+        var composer = Triage.Composer;
+
+        // Ctrl+Shift+Enter opens the "send later" row; checked before plain
+        // Ctrl+Enter, which it would otherwise also match.
+        if (ctrlEnter && stroke.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift))
+        {
+            composer.ToggleSchedule();
+            return true;
+        }
+
+        if (ctrlEnter) { await composer.SendAsync().ConfigureAwait(true); return true; }
+
+        if (action == TriageAction.Cancel && composer.IsScheduling && !composer.HasSuggestions)
+        {
+            composer.ToggleSchedule();
+            return true;
+        }
+
+        // While contact suggestions are showing, the arrows pick one and
+        // Enter or Tab takes it; Esc just closes the list.
+        if (composer.HasSuggestions && stroke.Modifiers == System.Windows.Input.ModifierKeys.None)
+        {
+            switch (stroke.Key)
+            {
+                case System.Windows.Input.Key.Down: composer.MoveSuggestion(1); return true;
+                case System.Windows.Input.Key.Up: composer.MoveSuggestion(-1); return true;
+                case System.Windows.Input.Key.Return:
+                case System.Windows.Input.Key.Tab: composer.AcceptSuggestion(); return true;
+                case System.Windows.Input.Key.Escape: composer.CloseSuggestions(); return true;
+            }
+        }
+
         if (action == TriageAction.Cancel) { await Triage.Composer.DiscardAsync().ConfigureAwait(true); return true; }
         return false;
     }
 
     private async Task<bool> HandlePaletteKeyAsync(TriageAction action, bool ctrlEnter)
     {
+        // Ctrl+Enter has no binding of its own - only plain Enter maps to
+        // Confirm - so it must be caught before the action switch.
+        if (ctrlEnter)
+        {
+            await Triage.ConfirmPaletteAsync(forceCreate: true).ConfigureAwait(true);
+            return true;
+        }
+
         switch (action)
         {
             case TriageAction.Cancel:
@@ -165,7 +292,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return true;
 
             case TriageAction.Confirm:
-                await Triage.ConfirmPaletteAsync(ctrlEnter).ConfigureAwait(true);
+                await Triage.ConfirmPaletteAsync(forceCreate: false).ConfigureAwait(true);
                 return true;
 
             case TriageAction.NextMail:
@@ -253,6 +380,14 @@ public sealed partial class MainViewModel : ObservableObject
                 await Triage.StartReplyAsync(ReplyScope.SenderOnly).ConfigureAwait(true);
                 return true;
 
+            case TriageAction.Forward:
+                await Triage.StartReplyAsync(ReplyScope.Forward).ConfigureAwait(true);
+                return true;
+
+            case TriageAction.OpenAttachment:
+                await Triage.OpenAttachmentPaletteAsync().ConfigureAwait(true);
+                return true;
+
             case TriageAction.ToggleRead:
                 await Triage.ToggleReadAsync().ConfigureAwait(true);
                 return true;
@@ -319,11 +454,14 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.Snooze), "Come back to this later"),
         ("Triage",  Keys.Describe(TriageAction.Archive), "Archive"),
         ("Triage",  Keys.Describe(TriageAction.ToggleRead), "Toggle read / unread"),
+        ("Triage",  Keys.Describe(TriageAction.OpenAttachment), "Open an attachment (or click it in the header)"),
         ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move or snooze"),
 
         ("Reply",   Keys.Describe(TriageAction.ReplyAll), "Reply to everyone"),
         ("Reply",   Keys.Describe(TriageAction.ReplySender), "Reply to the sender only"),
+        ("Reply",   Keys.Describe(TriageAction.Forward), "Forward (type the To line, Tab to the message)"),
         ("Reply",   "Ctrl+Enter", "Send"),
+        ("Reply",   "Ctrl+Shift+Enter", "Send later - optionally held for review if they reply first"),
 
         ("Actions", Keys.Describe(TriageAction.AddNote), "Edit notes"),
         ("Actions", Keys.Describe(TriageAction.AddBlocker), "Add a blocker"),

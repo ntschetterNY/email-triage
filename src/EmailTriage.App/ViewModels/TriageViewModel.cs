@@ -26,6 +26,7 @@ public sealed partial class TriageViewModel : ObservableObject
     private readonly IClock _clock;
 
     private FolderRef _inbox;
+    private FolderRef? _sent;
     private readonly Stack<UndoStep> _undo = new();
     private CancellationTokenSource? _bodyLoad;
     private IReadOnlyList<SnoozeOption> _snoozePresets = Array.Empty<SnoozeOption>();
@@ -36,6 +37,9 @@ public sealed partial class TriageViewModel : ObservableObject
 
     [ObservableProperty] private MailRowViewModel? _selected;
     [ObservableProperty] private MailBody? _openBody;
+
+    /// <summary>Attachments from every message in the open conversation, newest first.</summary>
+    [ObservableProperty] private IReadOnlyList<MailAttachment> _threadAttachments = Array.Empty<MailAttachment>();
     [ObservableProperty] private string _bodyHtml = "";
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string _status = "";
@@ -44,13 +48,21 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private List<MailRowViewModel> _allRows = new();
 
+    // Reloads are serialised: one that arrives mid-load is folded into a
+    // single follow-up pass rather than racing the one in flight.
+    private bool _loadRunning;
+    private bool _reloadPending;
+    private bool _pendingQuiet = true;
+
     public TriageViewModel(
         IMailStore store,
         IActionItemRepository actions,
         ISnoozeRepository snoozes,
         FolderSearchService folders,
         AppSettings settings,
-        IClock clock)
+        IClock clock,
+        ContactDirectory contacts,
+        IScheduledSendRepository scheduled)
     {
         _store = store;
         _actions = actions;
@@ -59,41 +71,111 @@ public sealed partial class TriageViewModel : ObservableObject
         _settings = settings;
         _clock = clock;
 
-        Composer = new ComposerViewModel(store);
+        Composer = new ComposerViewModel(store, contacts, scheduled, clock, settings.DayShape);
         Palette.QueryChanged += (_, _) => RefreshPalette();
     }
 
     public bool CanUndo => _undo.Count > 0;
 
-    public async Task LoadAsync(CancellationToken ct = default)
+    public Task LoadAsync(CancellationToken ct = default) => LoadCoreAsync(quiet: false, ct);
+
+    /// <summary>
+    /// A refresh prompted by Outlook rather than by the user: it leaves the
+    /// status line alone, so "Moved to Archive" is not wiped by the change
+    /// notification that very move causes.
+    /// </summary>
+    public Task RefreshQuietlyAsync() => LoadCoreAsync(quiet: true, default);
+
+    private async Task LoadCoreAsync(bool quiet, CancellationToken ct)
     {
-        IsLoading = true;
+        if (_loadRunning)
+        {
+            _reloadPending = true;
+            _pendingQuiet &= quiet;
+            return;
+        }
+
+        _loadRunning = true;
+        try
+        {
+            do
+            {
+                _reloadPending = false;
+                await LoadOnceAsync(quiet, ct).ConfigureAwait(true);
+
+                quiet = _pendingQuiet;
+                _pendingQuiet = true;
+            }
+            while (_reloadPending);
+        }
+        finally
+        {
+            _loadRunning = false;
+        }
+    }
+
+    private async Task LoadOnceAsync(bool quiet, CancellationToken ct)
+    {
+        if (!quiet) IsLoading = true;
         try
         {
             _inbox = await _store.GetInboxAsync(ct).ConfigureAwait(true);
+            _sent ??= await _store.GetSentItemsAsync(ct).ConfigureAwait(true);
 
             var mail = await _store
                 .GetMailAsync(_inbox, _settings.InboxPageSize, ct).ConfigureAwait(true);
+
+            // Your side of each conversation. Only decoration for the list, so a
+            // failure here still shows the Inbox rather than nothing.
+            IReadOnlyList<MailSummary> sent;
+            try { sent = await _store.GetMailAsync(_sent.Value, _settings.SentPageSize, ct).ConfigureAwait(true); }
+            catch (Exception) when (!ct.IsCancellationRequested) { sent = Array.Empty<MailSummary>(); }
+
+            var threads = ConversationGrouper.Group(mail, sent);
 
             var flagged = (await _actions.GetOpenAsync(ct).ConfigureAwait(true))
                 .Select(a => a.InternetMessageId)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            var previouslySelected = Selected?.Summary.InternetMessageId;
+            // Reuse the row objects for conversations that are still there.
+            // Rebuilding them all would drop the selection and reload the
+            // reading pane on every change notification.
+            var existing = new Dictionary<string, MailRowViewModel>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in _allRows) existing.TryAdd(row.Key, row);
 
-            _allRows = mail
-                .Select(m => new MailRowViewModel(m, flagged.Contains(m.InternetMessageId)))
-                .ToList();
+            _allRows = threads.Select(t =>
+            {
+                var isFlagged = t.InboxMessages.Any(m => flagged.Contains(m.InternetMessageId));
+                if (existing.Remove(t.Key, out var row))
+                {
+                    row.Refresh(t);
+                    row.IsActionRequired = isFlagged;
+                    return row;
+                }
+                return new MailRowViewModel(t, isFlagged);
+            }).ToList();
+
+            var selected = Selected;
+            var selectedIndex = selected is null ? -1 : Rows.IndexOf(selected);
 
             ApplySearchFilter();
 
-            // Keep the caret where it was across a refresh where possible.
-            Selected = previouslySelected is not null
-                ? Rows.FirstOrDefault(r => r.Summary.InternetMessageId == previouslySelected) ?? Rows.FirstOrDefault()
-                : Rows.FirstOrDefault();
+            if (selected is null || !Rows.Contains(selected))
+            {
+                // A conversation that came back (an undone move) is still the
+                // same one; otherwise land on its neighbour.
+                var key = selected?.Key;
+                Selected = (string.IsNullOrEmpty(key)
+                               ? null
+                               : Rows.FirstOrDefault(r => string.Equals(r.Key, key, StringComparison.OrdinalIgnoreCase)))
+                           ?? (Rows.Count == 0 ? null : Rows[Math.Clamp(selectedIndex, 0, Rows.Count - 1)]);
+            }
 
-            Status = $"{Rows.Count} message{(Rows.Count == 1 ? "" : "s")}"
-                   + $"  ·  {Rows.Count(r => r.IsUnread)} unread";
+            if (!quiet)
+            {
+                Status = $"{Rows.Count} conversation{(Rows.Count == 1 ? "" : "s")}"
+                       + $"  ·  {Rows.Count(r => r.IsUnread)} unread";
+            }
         }
         catch (Exception ex)
         {
@@ -101,7 +183,7 @@ public sealed partial class TriageViewModel : ObservableObject
         }
         finally
         {
-            IsLoading = false;
+            if (!quiet) IsLoading = false;
         }
     }
 
@@ -115,8 +197,30 @@ public sealed partial class TriageViewModel : ObservableObject
                   FuzzyMatcher.Score(query, r.Subject) is not null ||
                   FuzzyMatcher.Score(query, r.Sender) is not null).ToList();
 
-        Rows.Clear();
-        foreach (var row in source) Rows.Add(row);
+        SyncRows(source);
+    }
+
+    /// <summary>
+    /// Brings <see cref="Rows"/> in line with <paramref name="target"/> using the
+    /// fewest edits, so the list keeps its scroll position and selection
+    /// instead of being cleared and refilled.
+    /// </summary>
+    private void SyncRows(IReadOnlyList<MailRowViewModel> target)
+    {
+        var keep = new HashSet<MailRowViewModel>(target);
+        for (var i = Rows.Count - 1; i >= 0; i--)
+        {
+            if (!keep.Contains(Rows[i])) Rows.RemoveAt(i);
+        }
+
+        for (var i = 0; i < target.Count; i++)
+        {
+            if (i < Rows.Count && ReferenceEquals(Rows[i], target[i])) continue;
+
+            var at = Rows.IndexOf(target[i]);
+            if (at >= 0) Rows.Move(at, i);
+            else Rows.Insert(i, target[i]);
+        }
     }
 
     partial void OnSearchQueryChanged(string value)
@@ -140,6 +244,7 @@ public sealed partial class TriageViewModel : ObservableObject
         if (row is null)
         {
             OpenBody = null;
+            ThreadAttachments = Array.Empty<MailAttachment>();
             BodyHtml = "";
             return;
         }
@@ -149,11 +254,22 @@ public sealed partial class TriageViewModel : ObservableObject
 
         try
         {
-            var body = await _store.GetBodyAsync(row.Summary.Ref, cts.Token).ConfigureAwait(true);
-            if (cts.IsCancellationRequested) return;
+            // Every message in the conversation, yours included, newest first.
+            var bodies = new List<MailBody>();
+            foreach (var message in row.Thread.Messages.Take(Math.Max(1, _settings.ThreadMessageLimit)))
+            {
+                try { bodies.Add(await _store.GetBodyAsync(message.Ref, cts.Token).ConfigureAwait(true)); }
+                catch (Exception) when (!cts.IsCancellationRequested && bodies.Count > 0) { /* skip one that moved */ }
+                if (cts.IsCancellationRequested) return;
+            }
 
-            OpenBody = body;
-            BodyHtml = HtmlPresenter.Render(body, _settings.BlockRemoteImages);
+            OpenBody = bodies[0];
+            ThreadAttachments = bodies
+                .SelectMany(b => b.Attachments)
+                .DistinctBy(a => (a.Name.ToLowerInvariant(), a.Size))
+                .ToList();
+            BodyHtml = HtmlPresenter.RenderThread(bodies, _settings.BlockRemoteImages,
+                hiddenOlder: row.Thread.Count - bodies.Count);
 
             await MarkReadAfterDwellAsync(row, cts.Token).ConfigureAwait(true);
         }
@@ -175,8 +291,9 @@ public sealed partial class TriageViewModel : ObservableObject
         await Task.Delay(_settings.MarkReadAfterMs, ct).ConfigureAwait(true);
         if (ct.IsCancellationRequested || Selected != row) return;
 
-        await _store.SetReadAsync(row.Summary.Ref, true, ct).ConfigureAwait(true);
-        row.Refresh(row.Summary with { IsUnread = false });
+        foreach (var m in row.InboxMessages.Where(m => m.IsUnread))
+            await _store.SetReadAsync(m.Ref, true, ct).ConfigureAwait(true);
+        row.Refresh(row.Thread.WithInboxUnread(false));
     }
 
     // ---- navigation -------------------------------------------------------
@@ -258,9 +375,19 @@ public sealed partial class TriageViewModel : ObservableObject
 
         try
         {
-            var target = row.IsUnread;
-            await _store.SetReadAsync(row.Summary.Ref, target).ConfigureAwait(true);
-            row.Refresh(row.Summary with { IsUnread = !target });
+            if (row.IsUnread)
+            {
+                // Reading the conversation clears all of it...
+                foreach (var m in row.InboxMessages.Where(m => m.IsUnread))
+                    await _store.SetReadAsync(m.Ref, true).ConfigureAwait(true);
+                row.Refresh(row.Thread.WithInboxUnread(false));
+            }
+            else
+            {
+                // ...but "come back to this" only needs the newest message bold.
+                await _store.SetReadAsync(row.Summary.Ref, false).ConfigureAwait(true);
+                row.Refresh(row.Thread.WithLatestInboxUnread());
+            }
         }
         catch (Exception ex)
         {
@@ -296,8 +423,12 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         if (!Palette.IsOpen) return;
 
-        if (Palette.Mode == PaletteMode.Folder) RefreshFolderPalette();
-        else RefreshSnoozePalette();
+        switch (Palette.Mode)
+        {
+            case PaletteMode.Folder: RefreshFolderPalette(); break;
+            case PaletteMode.Attachment: RefreshAttachmentPalette(); break;
+            default: RefreshSnoozePalette(); break;
+        }
     }
 
     private void RefreshFolderPalette()
@@ -336,8 +467,75 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         if (!Palette.IsOpen) return;
 
-        if (Palette.Mode == PaletteMode.Folder) await ConfirmFolderAsync(forceCreate).ConfigureAwait(true);
-        else await ConfirmSnoozeAsync().ConfigureAwait(true);
+        switch (Palette.Mode)
+        {
+            case PaletteMode.Folder: await ConfirmFolderAsync(forceCreate).ConfigureAwait(true); break;
+            case PaletteMode.Attachment:
+                var pick = Palette.Selected?.Payload as MailAttachment;
+                Palette.Close();
+                if (pick is not null) await OpenAttachmentAsync(pick).ConfigureAwait(true);
+                break;
+            default: await ConfirmSnoozeAsync().ConfigureAwait(true); break;
+        }
+    }
+
+    // ---- attachments (v, or a click in the header) ------------------------
+
+    public Task OpenAttachmentPaletteAsync()
+    {
+        if (OpenBody is not { } body) return Task.CompletedTask;
+
+        if (ThreadAttachments.Count == 0)
+        {
+            Status = "No attachments in this conversation";
+            return Task.CompletedTask;
+        }
+
+        // One attachment: skip the picker and just open it.
+        if (ThreadAttachments.Count == 1) return OpenAttachmentAsync(ThreadAttachments[0]);
+
+        Palette.Open(
+            PaletteMode.Attachment,
+            "Open attachment",
+            "Enter opens · type to filter · Esc cancels",
+            body.Subject);
+        RefreshPalette();
+        return Task.CompletedTask;
+    }
+
+    private void RefreshAttachmentPalette()
+    {
+        var query = Palette.Query.Trim();
+        var attachments = ThreadAttachments;
+
+        Palette.SetEntries(attachments
+            .Where(a => query.Length == 0 || a.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .Select(a => new PaletteEntry(a.Name, a.SizeDisplay, a, Array.Empty<int>())));
+    }
+
+    /// <summary>Saves the attachment locally and opens it in its usual program.</summary>
+    public async Task OpenAttachmentAsync(MailAttachment attachment)
+    {
+        if (OpenBody is not { } body) return;
+        var source = attachment.Source.IsEmpty ? body.Ref : attachment.Source;
+
+        if (attachment.IsBlockedType)
+        {
+            Status = $"{attachment.Name} is a program or script - open it from Outlook if you trust it (o)";
+            return;
+        }
+
+        try
+        {
+            Status = $"Opening {attachment.Name}...";
+            var path = await _store.SaveAttachmentAsync(source, attachment.Index).ConfigureAwait(true);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            Status = $"Opened {attachment.Name}";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not open {attachment.Name}: {ex.Message}";
+        }
     }
 
     private async Task ConfirmFolderAsync(bool forceCreate)
@@ -384,30 +582,42 @@ public sealed partial class TriageViewModel : ObservableObject
         if (Selected is not { } row) return;
 
         var origin = _inbox;
-        var summary = row.Summary;
+        var moved = new List<MailRef>();
 
         try
         {
             row.IsBusy = true;
 
-            var moved = await _store.MoveAsync(summary.Ref, target.Ref).ConfigureAwait(true);
+            // The whole conversation goes, so the thread leaves the list in one
+            // keystroke. Your sent copies stay in Sent Items.
+            foreach (var m in row.InboxMessages)
+            {
+                var to = await _store.MoveAsync(m.Ref, target.Ref).ConfigureAwait(true);
+                moved.Add(to);
+                await _actions.UpdateLocationAsync(m.InternetMessageId, to.EntryId, to.StoreId).ConfigureAwait(true);
+            }
             await _folders.RecordUseAsync(target).ConfigureAwait(true);
-            await _actions.UpdateLocationAsync(
-                summary.InternetMessageId, moved.EntryId, moved.StoreId).ConfigureAwait(true);
 
             RemoveRow(row);
-            Status = $"Moved to {target.Path}";
-
-            PushUndo($"move to {target.Name}", async () =>
-            {
-                await _store.MoveAsync(moved, origin).ConfigureAwait(true);
-                await LoadAsync().ConfigureAwait(true);
-            });
+            Status = moved.Count == 1
+                ? $"Moved to {target.Path}"
+                : $"Moved {moved.Count} messages to {target.Path}";
         }
         catch (Exception ex)
         {
             row.IsBusy = false;
-            Status = $"Move failed: {ex.Message}";
+            Status = moved.Count == 0
+                ? $"Move failed: {ex.Message}"
+                : $"Moved {moved.Count} of {row.InboxMessages.Count} messages, then failed: {ex.Message}";
+        }
+
+        if (moved.Count > 0)
+        {
+            PushUndo($"move to {target.Name}", async () =>
+            {
+                foreach (var m in moved) await _store.MoveAsync(m, origin).ConfigureAwait(true);
+                await LoadAsync().ConfigureAwait(true);
+            });
         }
     }
 
@@ -470,8 +680,8 @@ public sealed partial class TriageViewModel : ObservableObject
 
         Palette.Close();
 
-        var summary = row.Summary;
         var origin = _inbox;
+        var moved = new List<(MailRef Ref, long SnoozeId)>();
 
         try
         {
@@ -480,39 +690,53 @@ public sealed partial class TriageViewModel : ObservableObject
             var holding = await _store
                 .EnsureFolderPathAsync(_settings.SnoozeFolder).ConfigureAwait(true);
 
-            var moved = await _store.MoveAsync(summary.Ref, holding).ConfigureAwait(true);
-
-            await _snoozes.AddAsync(new SnoozeEntry
+            // Every Inbox message in the conversation is parked, each with its
+            // own entry, so they all come back together.
+            foreach (var m in row.InboxMessages)
             {
-                InternetMessageId = summary.InternetMessageId,
-                EntryId = moved.EntryId,
-                StoreId = moved.StoreId,
-                Subject = summary.Subject,
-                SenderName = summary.DisplaySender,
-                OriginFolderEntryId = origin.EntryId,
-                OriginFolderStoreId = origin.StoreId,
-                OriginFolderPath = origin.Path,
-                SnoozedUtc = _clock.UtcNow,
-                ReturnUtc = when.ToUniversalTime(),
-            }).ConfigureAwait(true);
+                var to = await _store.MoveAsync(m.Ref, holding).ConfigureAwait(true);
+
+                var entry = await _snoozes.AddAsync(new SnoozeEntry
+                {
+                    InternetMessageId = m.InternetMessageId,
+                    EntryId = to.EntryId,
+                    StoreId = to.StoreId,
+                    Subject = m.Subject,
+                    SenderName = m.DisplaySender,
+                    OriginFolderEntryId = origin.EntryId,
+                    OriginFolderStoreId = origin.StoreId,
+                    OriginFolderPath = origin.Path,
+                    SnoozedUtc = _clock.UtcNow,
+                    ReturnUtc = when.ToUniversalTime(),
+                }).ConfigureAwait(true);
+
+                moved.Add((to, entry.Id));
+            }
 
             RemoveRow(row);
             Status = $"Back in your inbox {Humanise(when - _clock.Now)} · {when:ddd d MMM HH:mm}";
-
-            PushUndo("snooze", async () =>
-            {
-                await _store.MoveAsync(moved, origin).ConfigureAwait(true);
-                await LoadAsync().ConfigureAwait(true);
-            });
         }
         catch (Exception ex)
         {
             row.IsBusy = false;
-            Status = $"Could not snooze that message: {ex.Message}";
+            Status = $"Could not snooze that conversation: {ex.Message}";
+        }
+
+        if (moved.Count > 0)
+        {
+            PushUndo("snooze", async () =>
+            {
+                foreach (var (m, id) in moved)
+                {
+                    await _store.MoveAsync(m, origin).ConfigureAwait(true);
+                    await _snoozes.CancelAsync(id).ConfigureAwait(true);
+                }
+                await LoadAsync().ConfigureAwait(true);
+            });
         }
     }
 
-    // ---- replies (r / Shift+R) -------------------------------------------
+    // ---- replies and forwards (r / Shift+R / f) ---------------------------
 
     public async Task StartReplyAsync(ReplyScope scope)
     {
@@ -520,7 +744,7 @@ public sealed partial class TriageViewModel : ObservableObject
 
         try
         {
-            Status = "Preparing reply...";
+            Status = scope == ReplyScope.Forward ? "Preparing forward..." : "Preparing reply...";
             var draft = await _store.BuildReplyAsync(row.Summary.Ref, scope).ConfigureAwait(true);
             Composer.Open(draft);
             Status = "";
@@ -537,18 +761,21 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         try
         {
-            await _folders.EnsureIndexedAsync().ConfigureAwait(true);
+            if (Selected is null) return;
 
-            var archive = _folders.Search("Archive")
-                .FirstOrDefault(m => m.Folder.Name.Equals("Archive", StringComparison.OrdinalIgnoreCase));
+            // Always the Archive beside the Inbox, created if missing. Searching
+            // the folder index by name could land on another mailbox's Archive,
+            // or find nothing and leave the message sitting in the list.
+            var archive = await _store.EnsureFolderPathAsync("Archive").ConfigureAwait(true);
 
-            if (archive is null)
+            await MoveSelectedAsync(new FolderNode
             {
-                Status = "No Archive folder found - use the move command instead";
-                return;
-            }
-
-            await MoveSelectedAsync(archive.Folder).ConfigureAwait(true);
+                Ref = archive,
+                Name = "Archive",
+                Path = archive.Path,
+                Depth = 0,
+                StoreName = "",
+            }).ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -592,9 +819,13 @@ public sealed partial class TriageViewModel : ObservableObject
     private void RemoveRow(MailRowViewModel row)
     {
         var index = Rows.IndexOf(row);
-
-        Rows.Remove(row);
         _allRows.Remove(row);
+
+        // A live refresh may already have taken it out and moved the
+        // selection on; doing it again would jump to the top of the list.
+        if (index < 0) return;
+
+        Rows.RemoveAt(index);
 
         // Land on the next message so triage keeps flowing without a keystroke.
         Selected = Rows.Count == 0

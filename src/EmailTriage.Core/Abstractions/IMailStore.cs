@@ -15,8 +15,12 @@ public interface IMailStore : IAsyncDisposable
     /// <summary>True once <see cref="ConnectAsync"/> has succeeded.</summary>
     bool IsConnected { get; }
 
-    /// <summary>Raised when Outlook reports new mail, so the list can refresh.</summary>
-    event EventHandler? NewMailArrived;
+    /// <summary>
+    /// Raised when anything in the Inbox changes - mail arriving, leaving, or
+    /// being read or flagged, in this app or in Outlook itself - so the list
+    /// can refresh. Fired on a background thread.
+    /// </summary>
+    event EventHandler? InboxChanged;
 
     Task<FolderRef> GetInboxAsync(CancellationToken ct = default);
 
@@ -47,8 +51,51 @@ public interface IMailStore : IAsyncDisposable
     /// <summary>
     /// Prepends the user's text above the quoted history and sends. The draft is
     /// released afterwards and its <see cref="DraftRef"/> becomes invalid.
+    /// Any line set in <paramref name="recipients"/> replaces what Outlook put
+    /// there; if a recipient cannot be resolved the draft stays open and this
+    /// throws.
     /// </summary>
-    Task SendReplyAsync(DraftRef draft, string bodyHtml, CancellationToken ct = default);
+    Task SendReplyAsync(
+        DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Writes the user's text and recipients onto an open draft and saves it to
+    /// Drafts instead of sending, returning a lasting reference to it. The open
+    /// <paramref name="draft"/> token is released.
+    /// </summary>
+    Task<DraftRef> SaveDraftForLaterAsync(
+        DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default);
+
+    Task<SavedDraftState> GetSavedDraftStateAsync(DraftRef saved, CancellationToken ct = default);
+
+    Task SendSavedDraftAsync(DraftRef saved, CancellationToken ct = default);
+
+    /// <summary>Opens a saved draft in Outlook for the user to review.</summary>
+    Task ShowSavedDraftAsync(DraftRef saved, CancellationToken ct = default);
+
+    /// <summary>
+    /// True when someone other than the user has written in the saved draft's
+    /// conversation since <paramref name="sinceUtc"/>.
+    /// </summary>
+    Task<bool> HasReplySinceAsync(DraftRef saved, DateTimeOffset sinceUtc, CancellationToken ct = default);
+
+    /// <summary>Sent Items of the default store, for showing your side of each conversation.</summary>
+    Task<FolderRef> GetSentItemsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Saves one attachment to a local cache and returns its path, for opening
+    /// in the program Windows associates with it.
+    /// </summary>
+    Task<string> SaveAttachmentAsync(MailRef mail, int index, CancellationToken ct = default);
+
+    /// <summary>
+    /// Contacts and frequent correspondents for recipient autocomplete.
+    /// Entries with an empty address are name-only boosts from Sent Items.
+    /// </summary>
+    Task<IReadOnlyList<ContactEntry>> GetFrequentContactsAsync(CancellationToken ct = default);
+
+    /// <summary>One slice of the company directory; empty when there is none.</summary>
+    Task<AddressBookBatch> GetAddressBookBatchAsync(int start, int count, CancellationToken ct = default);
 
     /// <summary>Abandons a reply the user backed out of.</summary>
     Task DiscardDraftAsync(DraftRef draft, CancellationToken ct = default);

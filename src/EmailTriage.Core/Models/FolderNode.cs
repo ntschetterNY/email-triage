@@ -18,6 +18,4 @@ public sealed record FolderNode
 
     /// <summary>Name of the owning store, so multi-account users can tell folders apart.</summary>
     public required string StoreName { get; init; }
-
-    public int ItemCount { get; init; }
 }

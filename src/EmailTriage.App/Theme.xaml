@@ -26,6 +26,11 @@
     <SolidColorBrush x:Key="Danger" Color="{StaticResource DangerColor}" />
     <SolidColorBrush x:Key="Ok" Color="{StaticResource OkColor}" />
 
+    <!-- The selected message in the triage list: light yellow, dark text. -->
+    <SolidColorBrush x:Key="SelectedRow" Color="#FFF1A8" />
+    <SolidColorBrush x:Key="SelectedText" Color="#1C1C1C" />
+    <SolidColorBrush x:Key="SelectedMuted" Color="#5C5540" />
+
     <svc:BoolToVisibilityConverter x:Key="BoolVis" />
     <svc:BoolToVisibilityConverter x:Key="BoolVisInv" Invert="True" />
     <svc:NullToVisibilityConverter x:Key="NullVis" />

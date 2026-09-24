@@ -27,15 +27,15 @@ public sealed partial class OutlookMailStore : IMailStore
 
     public bool IsConnected { get; private set; }
 
-    public event EventHandler? NewMailArrived;
+    public event EventHandler? InboxChanged;
 
     /// <summary>
-    /// How often to look for new mail. Outlook's COM events would be lower
-    /// latency, but subscribing to them through late binding needs a connection
-    /// point plumbed by hand; polling a single folder is cheap and far simpler
-    /// to keep correct.
+    /// How often to re-check the Inbox as a backstop. Outlook's item events
+    /// (see OutlookMailStore.Watch.cs) are what make the list live; they are
+    /// known to drop events when many items arrive at once, so this catches
+    /// whatever they miss.
     /// </summary>
-    public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(20);
+    public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(15);
 
     public Task ConnectAsync(CancellationToken ct = default) =>
         _sta.InvokeAsync(() =>
@@ -60,16 +60,18 @@ public sealed partial class OutlookMailStore : IMailStore
             catch { /* already logged on */ }
 
             IsConnected = true;
+            PruneInlineImages();
+            StartWatching();
             StartPolling();
         }, ct);
 
     private void StartPolling()
     {
         _pollTimer?.Dispose();
-        _pollTimer = new Timer(_ => PollForNewMail(), null, PollInterval, PollInterval);
+        _pollTimer = new Timer(_ => PollForChanges(), null, PollInterval, PollInterval);
     }
 
-    private void PollForNewMail()
+    private void PollForChanges()
     {
         // Skip rather than queue up if a previous poll is still running.
         if (Interlocked.Exchange(ref _pollInFlight, 1) == 1) return;
@@ -89,13 +91,15 @@ public sealed partial class OutlookMailStore : IMailStore
                     int count = ComUtil.Int(() => items!.Count);
                     var newest = NewestReceived((object)items!);
 
-                    bool changed = (_lastSeenCount >= 0 && count > _lastSeenCount)
-                                || (newest > _lastSeenReceived && _lastSeenReceived != DateTimeOffset.MinValue);
+                    // Any difference counts: a lower count is mail moved or
+                    // deleted in Outlook, not just new mail arriving.
+                    bool changed = _lastSeenCount >= 0
+                                && (count != _lastSeenCount || newest != _lastSeenReceived);
 
                     _lastSeenCount = count;
-                    if (newest > _lastSeenReceived) _lastSeenReceived = newest;
+                    _lastSeenReceived = newest;
 
-                    if (changed) NewMailArrived?.Invoke(this, EventArgs.Empty);
+                    if (changed) SignalInboxChanged();
                 }
                 finally
                 {
@@ -177,6 +181,30 @@ public sealed partial class OutlookMailStore : IMailStore
 
     private const string PropHasAttach = "http://schemas.microsoft.com/mapi/proptag/0x0E1B000B";
 
+    /// <summary>PR_CONVERSATION_ID: shared by every message in a thread, sent or received.</summary>
+    private const string PropConversationId = "http://schemas.microsoft.com/mapi/proptag/0x30130102";
+
+    /// <summary>Tables hand binary columns back as byte arrays; some stores give a hex string.</summary>
+    private static string ConversationKeyFrom(object? value) => value switch
+    {
+        byte[] bytes when bytes.Length > 0 => Convert.ToHexString(bytes),
+        string s => s.Trim(),
+        _ => "",
+    };
+
+    public Task<FolderRef> GetSentItemsAsync(CancellationToken ct = default) =>
+        _sta.InvokeAsync(() =>
+        {
+            EnsureConnected();
+            dynamic? sent = null;
+            try
+            {
+                sent = _session!.GetDefaultFolder(FolderSentMail);
+                return ToFolderRef((object)sent!);
+            }
+            finally { ComUtil.Release(sent); }
+        }, ct);
+
     private static IReadOnlyList<MailSummary> ReadViaTable(object folderObj, string storeId, int max)
     {
         dynamic folder = folderObj;
@@ -199,6 +227,7 @@ public sealed partial class OutlookMailStore : IMailStore
             columns.Add("MessageClass");
             columns.Add(ComUtil.PropInternetMessageId);
             columns.Add(PropHasAttach);
+            columns.Add(PropConversationId);
 
             table.Sort("ReceivedTime", 2 /* olDescending */);
 
@@ -225,6 +254,7 @@ public sealed partial class OutlookMailStore : IMailStore
                         IsUnread = ComUtil.Bool(() => row!["UnRead"]),
                         HasAttachments = ComUtil.Bool(() => row![PropHasAttach]),
                         Categories = ComUtil.ParseCategories(ComUtil.Str(() => row!["Categories"])),
+                        ConversationKey = ConversationKeyFrom(ComUtil.Try<object?>(() => row![PropConversationId])),
                     });
                 }
                 finally { ComUtil.Release(row); }
@@ -285,6 +315,7 @@ public sealed partial class OutlookMailStore : IMailStore
         IsUnread = ComUtil.Bool(() => mail.UnRead),
         HasAttachments = ComUtil.Int(() => mail.Attachments.Count) > 0,
             Categories = ComUtil.ParseCategories(ComUtil.Str(() => mail.Categories)),
+            ConversationKey = ComUtil.Str(() => mail.ConversationID),
         };
     }
 
@@ -299,6 +330,8 @@ public sealed partial class OutlookMailStore : IMailStore
                 item = GetItem(mail);
 
                 var (to, cc) = ReadRecipients((object)item!);
+                var html = NullIfEmpty(ComUtil.Str(() => item!.HTMLBody));
+                var inline = SaveInlineImages((object)item!, mail.EntryId, html);
 
                 return new MailBody
                 {
@@ -307,11 +340,13 @@ public sealed partial class OutlookMailStore : IMailStore
                     SenderName = ComUtil.Str(() => item!.SenderName),
                     SenderAddress = ComUtil.SenderSmtp((object)item!),
                     ReceivedUtc = ComUtil.Date(() => item!.ReceivedTime),
-                    Html = NullIfEmpty(ComUtil.Str(() => item!.HTMLBody)),
+                    Html = html,
                     PlainText = ComUtil.Str(() => item!.Body),
                     To = to,
                     Cc = cc,
-                    AttachmentNames = ReadAttachmentNames((object)item!),
+                    InlineImages = inline,
+                    Attachments = ReadAttachments((object)item!, html)
+                        .Select(a => a with { Source = mail }).ToList(),
                 };
             }
             finally { ComUtil.Release(item); }
@@ -373,34 +408,6 @@ public sealed partial class OutlookMailStore : IMailStore
         return (to, cc);
     }
 
-    private static IReadOnlyList<string> ReadAttachmentNames(object mailObj)
-    {
-        dynamic mail = mailObj;
-        var names = new List<string>();
-        dynamic? attachments = null;
-
-        try
-        {
-            attachments = mail.Attachments;
-            int count = ComUtil.Int(() => attachments!.Count);
-
-            for (int i = 1; i <= count; i++)
-            {
-                dynamic? a = null;
-                try
-                {
-                    a = attachments![i];
-                    var name = ComUtil.Str(() => a!.FileName);
-                    if (!string.IsNullOrWhiteSpace(name)) names.Add(name);
-                }
-                finally { ComUtil.Release(a); }
-            }
-        }
-        catch { }
-        finally { ComUtil.Release(attachments); }
-
-        return names;
-    }
 
     public async ValueTask DisposeAsync()
     {
@@ -410,11 +417,18 @@ public sealed partial class OutlookMailStore : IMailStore
             _pollTimer = null;
         }
 
+        if (_changeSettle is not null)
+        {
+            await _changeSettle.DisposeAsync().ConfigureAwait(false);
+            _changeSettle = null;
+        }
+
         try
         {
             await _sta.InvokeAsync(() =>
             {
                 ReleaseOpenDrafts();
+                StopWatching();
                 ComUtil.ReleaseAll(_session, _app);
                 _session = null;
                 _app = null;

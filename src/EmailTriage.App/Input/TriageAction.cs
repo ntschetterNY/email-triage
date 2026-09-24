@@ -33,6 +33,12 @@ public enum TriageAction
     /// <summary>Reply to the sender alone. Bound to Shift+R.</summary>
     ReplySender,
 
+    /// <summary>Forward, typing the recipients in. Bound to `f`.</summary>
+    Forward,
+
+    /// <summary>Pick one of the open message's attachments to open. Bound to `v`.</summary>
+    OpenAttachment,
+
     ToggleRead,
     Archive,
     Delete,

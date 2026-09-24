@@ -161,5 +161,24 @@ public sealed class Database
                 last_used_utc TEXT   NOT NULL
             );
             """),
+
+        (2, """
+            CREATE TABLE scheduled_sends (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                draft_entry_id  TEXT    NOT NULL,
+                draft_store_id  TEXT    NOT NULL DEFAULT '',
+                subject         TEXT    NOT NULL DEFAULT '',
+                recipients      TEXT    NOT NULL DEFAULT '',
+                created_utc     TEXT    NOT NULL,
+                send_at_utc     TEXT    NOT NULL,
+                hold_if_replied INTEGER NOT NULL DEFAULT 0,
+                state           INTEGER NOT NULL DEFAULT 0,
+                completed_utc   TEXT    NULL,
+                note            TEXT    NOT NULL DEFAULT '',
+                failure_count   INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX ix_scheduled_sends_pending ON scheduled_sends (state, send_at_utc);
+            """),
     };
 }

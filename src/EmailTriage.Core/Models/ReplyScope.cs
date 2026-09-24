@@ -7,4 +7,7 @@ public enum ReplyScope
 
     /// <summary>Reply to the sender alone (bound to Shift+R).</summary>
     SenderOnly,
+
+    /// <summary>Forward to recipients the user types in (bound to `f`).</summary>
+    Forward,
 }

@@ -3,33 +3,51 @@ using EmailTriage.Core.Models;
 
 namespace EmailTriage.App.ViewModels;
 
-/// <summary>One row in the triage list.</summary>
+/// <summary>
+/// One row in the triage list: a whole conversation, including your own sent
+/// messages. Triage actions work on its Inbox messages; replies answer
+/// <see cref="Summary"/>, the newest message from someone else.
+/// </summary>
 public sealed partial class MailRowViewModel : ObservableObject
 {
-    [ObservableProperty] private MailSummary _summary;
+    [ObservableProperty] private ConversationThread _thread;
     [ObservableProperty] private bool _isActionRequired;
     [ObservableProperty] private bool _isBusy;
 
     /// <summary>Set while a move or snooze animates the row out of the list.</summary>
     [ObservableProperty] private bool _isLeaving;
 
-    public MailRowViewModel(MailSummary summary, bool isActionRequired)
+    public MailRowViewModel(ConversationThread thread, bool isActionRequired)
     {
-        _summary = summary;
+        _thread = thread;
         _isActionRequired = isActionRequired;
     }
 
-    public string Subject => string.IsNullOrWhiteSpace(Summary.Subject)
+    public string Key => Thread.Key;
+
+    /// <summary>The newest message someone else sent: what replies, flags and forwards act on.</summary>
+    public MailSummary Summary => Thread.LatestInbox;
+
+    public IReadOnlyList<MailSummary> InboxMessages => Thread.InboxMessages;
+
+    public string Subject => string.IsNullOrWhiteSpace(Thread.Latest.Subject)
         ? "(no subject)"
-        : Summary.Subject;
+        : Thread.Latest.Subject;
 
-    public string Sender => Summary.DisplaySender;
+    /// <summary>Who spoke last - "You" when it was your own follow-up.</summary>
+    public string Sender => Thread.LatestIsMine ? "You" : Thread.Latest.DisplaySender;
 
-    public bool IsUnread => Summary.IsUnread;
+    public bool LatestIsMine => Thread.LatestIsMine;
 
-    public bool HasAttachments => Summary.HasAttachments;
+    public int Count => Thread.Count;
 
-    public string When => FormatWhen(Summary.ReceivedUtc.ToLocalTime());
+    public bool HasCount => Thread.Count > 1;
+
+    public bool IsUnread => Thread.IsUnread;
+
+    public bool HasAttachments => Thread.HasAttachments;
+
+    public string When => FormatWhen(Thread.LastActivityUtc.ToLocalTime());
 
     /// <summary>Relative for recent mail, absolute once it is older than a week.</summary>
     private static string FormatWhen(DateTimeOffset when)
@@ -47,11 +65,16 @@ public sealed partial class MailRowViewModel : ObservableObject
         return when.ToString("MMM yyyy");
     }
 
-    public void Refresh(MailSummary summary)
+    public void Refresh(ConversationThread thread)
     {
-        Summary = summary;
+        Thread = thread;
+        OnPropertyChanged(nameof(Summary));
+        OnPropertyChanged(nameof(InboxMessages));
         OnPropertyChanged(nameof(Subject));
         OnPropertyChanged(nameof(Sender));
+        OnPropertyChanged(nameof(LatestIsMine));
+        OnPropertyChanged(nameof(Count));
+        OnPropertyChanged(nameof(HasCount));
         OnPropertyChanged(nameof(IsUnread));
         OnPropertyChanged(nameof(When));
         OnPropertyChanged(nameof(HasAttachments));

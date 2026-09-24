@@ -31,6 +31,15 @@ public interface IActionItemRepository
         CancellationToken ct = default);
 }
 
+public interface IScheduledSendRepository
+{
+    Task<ScheduledSend> AddAsync(ScheduledSend entry, CancellationToken ct = default);
+    Task<IReadOnlyList<ScheduledSend>> GetPendingAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<ScheduledSend>> GetDueAsync(DateTimeOffset now, CancellationToken ct = default);
+    Task CompleteAsync(long id, ScheduledSendState state, string note, CancellationToken ct = default);
+    Task RecordFailureAsync(long id, string error, CancellationToken ct = default);
+}
+
 public interface ISnoozeRepository
 {
     Task<SnoozeEntry> AddAsync(SnoozeEntry entry, CancellationToken ct = default);

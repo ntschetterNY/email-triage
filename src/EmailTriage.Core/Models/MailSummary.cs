@@ -26,6 +26,12 @@ public sealed record MailSummary
 
     public int ConversationSize { get; init; } = 1;
 
+    /// <summary>Outlook's conversation ID as hex; empty when the store has none.</summary>
+    public string ConversationKey { get; init; } = "";
+
+    /// <summary>True for your own messages, read from Sent Items.</summary>
+    public bool IsSent { get; init; }
+
     public string DisplaySender =>
         string.IsNullOrWhiteSpace(SenderName) ? SenderAddress : SenderName;
 }

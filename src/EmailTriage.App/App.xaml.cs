@@ -18,6 +18,7 @@ public partial class App : Application
     private ServiceProvider? _services;
     private IMailStore? _store;
     private SnoozeScheduler? _scheduler;
+    private ScheduledSender? _sender;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -40,6 +41,7 @@ public partial class App : Application
 
             _store = _services.GetRequiredService<IMailStore>();
             _scheduler = _services.GetRequiredService<SnoozeScheduler>();
+            _sender = _services.GetRequiredService<ScheduledSender>();
 
             var window = _services.GetRequiredService<MainWindow>();
             MainWindow = window;
@@ -68,10 +70,16 @@ public partial class App : Application
 
         services.AddSingleton<IActionItemRepository, ActionItemRepository>();
         services.AddSingleton<ISnoozeRepository, SnoozeRepository>();
+        services.AddSingleton<IScheduledSendRepository, ScheduledSendRepository>();
+        services.AddSingleton<ScheduledSender>();
         services.AddSingleton<IFolderUsageRepository, FolderUsageRepository>();
 
         services.AddSingleton<IMailStore, OutlookMailStore>();
         services.AddSingleton<FolderSearchService>();
+        services.AddSingleton(sp => new ContactDirectory(
+            sp.GetRequiredService<IMailStore>(),
+            ContactDirectory.DefaultCachePath,
+            sp.GetRequiredService<IClock>()));
 
         services.AddSingleton(sp => new SnoozeScheduler(
             sp.GetRequiredService<IMailStore>(),
@@ -91,6 +99,7 @@ public partial class App : Application
     {
         // Outlook keeps running invisibly if its COM references are not released.
         if (_scheduler is not null) await _scheduler.DisposeAsync();
+        if (_sender is not null) await _sender.DisposeAsync();
         if (_store is not null) await _store.DisposeAsync();
 
         _services?.Dispose();

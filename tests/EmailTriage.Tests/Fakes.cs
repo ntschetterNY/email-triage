@@ -17,7 +17,7 @@ public sealed class FakeClock : IClock
 public sealed class FakeMailStore : IMailStore
 {
     public bool IsConnected { get; private set; }
-    public event EventHandler? NewMailArrived;
+    public event EventHandler? InboxChanged;
 
     public List<FolderNode> Folders { get; } = new();
     public Dictionary<string, MailRef> ByMessageId { get; } = new();
@@ -36,7 +36,7 @@ public sealed class FakeMailStore : IMailStore
         return Task.CompletedTask;
     }
 
-    public void RaiseNewMail() => NewMailArrived?.Invoke(this, EventArgs.Empty);
+    public void RaiseInboxChanged() => InboxChanged?.Invoke(this, EventArgs.Empty);
 
     public Task<FolderRef> GetInboxAsync(CancellationToken ct = default) => Task.FromResult(Inbox);
 
@@ -97,8 +97,63 @@ public sealed class FakeMailStore : IMailStore
         MailRef mail, ReplyScope scope, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");
 
-    public Task SendReplyAsync(DraftRef draft, string bodyHtml, CancellationToken ct = default)
+    public Task SendReplyAsync(
+        DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");
+
+    // Saved drafts, for scheduled sends.
+    public Dictionary<string, SavedDraftState> SavedDrafts { get; } = new();
+    public HashSet<string> RepliedTo { get; } = new();
+    public List<string> SentDrafts { get; } = new();
+    public List<string> ShownDrafts { get; } = new();
+    public Exception? NextSendFailure { get; set; }
+
+    public Task<DraftRef> SaveDraftForLaterAsync(
+        DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default)
+    {
+        var saved = new DraftRef($"saved-{draft.EntryId}", "store");
+        SavedDrafts[saved.EntryId] = SavedDraftState.Waiting;
+        return Task.FromResult(saved);
+    }
+
+    public Task<SavedDraftState> GetSavedDraftStateAsync(DraftRef saved, CancellationToken ct = default)
+        => Task.FromResult(SavedDrafts.GetValueOrDefault(saved.EntryId, SavedDraftState.Missing));
+
+    public Task SendSavedDraftAsync(DraftRef saved, CancellationToken ct = default)
+    {
+        if (NextSendFailure is { } fail) { NextSendFailure = null; throw fail; }
+        SentDrafts.Add(saved.EntryId);
+        SavedDrafts[saved.EntryId] = SavedDraftState.AlreadySent;
+        return Task.CompletedTask;
+    }
+
+    public Task ShowSavedDraftAsync(DraftRef saved, CancellationToken ct = default)
+    {
+        ShownDrafts.Add(saved.EntryId);
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> HasReplySinceAsync(DraftRef saved, DateTimeOffset sinceUtc, CancellationToken ct = default)
+        => Task.FromResult(RepliedTo.Contains(saved.EntryId));
+
+    public Task<FolderRef> GetSentItemsAsync(CancellationToken ct = default)
+        => Task.FromResult(new FolderRef("sent", "store", "Mailbox\\Sent Items"));
+
+    public Task<string> SaveAttachmentAsync(MailRef mail, int index, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by these tests.");
+
+    public List<ContactEntry> FrequentContacts { get; } = new();
+    public List<ContactEntry> Directory { get; } = new();
+    public int DirectoryReads { get; private set; }
+
+    public Task<IReadOnlyList<ContactEntry>> GetFrequentContactsAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<ContactEntry>>(FrequentContacts);
+
+    public Task<AddressBookBatch> GetAddressBookBatchAsync(int start, int count, CancellationToken ct = default)
+    {
+        DirectoryReads++;
+        return Task.FromResult(new AddressBookBatch(Directory.Skip(start).Take(count).ToList(), Directory.Count));
+    }
 
     public Task DiscardDraftAsync(DraftRef draft, CancellationToken ct = default)
         => Task.CompletedTask;

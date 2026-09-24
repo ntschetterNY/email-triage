@@ -26,6 +26,19 @@ public readonly record struct KeyStroke(Key Key, ModifierKeys Modifiers)
     public bool IsEmpty => Key == Key.None;
 
     /// <summary>
+    /// True for a key that types a character into a text box: letters, digits,
+    /// space and punctuation, with at most Shift held. Search boxes must treat
+    /// these as text even when a command like `j` or `p` is bound to them.
+    /// </summary>
+    public bool IsTyping =>
+        (Modifiers & ~ModifierKeys.Shift) == ModifierKeys.None
+        && Key is (>= Key.A and <= Key.Z)
+               or (>= Key.D0 and <= Key.D9)
+               or (>= Key.NumPad0 and <= Key.NumPad9)
+               or Key.Space
+               or (>= Key.Oem1 and <= Key.Oem102);
+
+    /// <summary>
     /// Parses "shift+r", "ctrl+enter", "k". Unknown text yields an empty stroke
     /// rather than throwing, so one bad line in a config file cannot stop
     /// the app from starting.

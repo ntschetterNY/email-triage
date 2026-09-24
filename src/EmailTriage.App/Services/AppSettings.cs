@@ -16,11 +16,18 @@ public sealed class AppSettings
     /// <summary>How many messages to pull into the triage list.</summary>
     public int InboxPageSize { get; set; } = 250;
 
+    /// <summary>How many of your recent sent messages to fold into conversations.</summary>
+    public int SentPageSize { get; set; } = 200;
+
+    /// <summary>Most messages shown stacked in the reading pane for one conversation.</summary>
+    public int ThreadMessageLimit { get; set; } = 12;
+
     /// <summary>
-    /// Remote images are blocked by default: in an inbox, they are mostly
-    /// tracking pixels that tell a sender exactly when a mail was opened.
+    /// Remote images are shown by default, since logos and pictures in mail
+    /// are content people expect to see. Invisible tracking pixels are
+    /// stripped either way; set this to block every remote image as well.
     /// </summary>
-    public bool BlockRemoteImages { get; set; } = true;
+    public bool BlockRemoteImages { get; set; }
 
     /// <summary>Mark a message read once it has been on screen this long.</summary>
     public int MarkReadAfterMs { get; set; } = 1200;
