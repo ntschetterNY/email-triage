@@ -64,6 +64,13 @@
                                        Foreground="{StaticResource Warn}" />
                         </Border>
 
+                        <!-- meeting invitation, cancellation or response -->
+                        <Border Background="#3398C379" CornerRadius="3" Padding="5,0" Margin="8,0,0,0"
+                                Visibility="{Binding HasKindTag, Converter={StaticResource BoolVis}}">
+                            <TextBlock x:Name="KindText" Text="{Binding KindTag}" FontSize="9" FontWeight="Bold"
+                                       Foreground="{StaticResource Ok}" />
+                        </Border>
+
                         <TextBlock x:Name="ClipText" Text="📎" FontSize="10" Margin="6,0,0,0" Foreground="{StaticResource Muted}"
                                    Visibility="{Binding HasAttachments, Converter={StaticResource BoolVis}}" />
                     </StackPanel>
@@ -89,9 +96,35 @@
                     <Setter TargetName="ActionText" Property="Foreground" Value="#8A5A00" />
                     <Setter TargetName="CountText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
                     <Setter TargetName="SentText" Property="Foreground" Value="#1F4FA8" />
+                    <Setter TargetName="KindText" Property="Foreground" Value="#2E6B1F" />
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
+
+        <!-- Small action buttons on the action tab; Tag="on" marks the active toggle. -->
+        <Style x:Key="ReportButton" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="B" Background="{StaticResource Raised}" BorderBrush="{StaticResource Border}"
+                                BorderThickness="1" CornerRadius="4" Padding="10,3">
+                            <TextBlock x:Name="T" Text="{TemplateBinding Content}" FontSize="11.5" Foreground="{StaticResource Text}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource Accent}" />
+                            </Trigger>
+                            <Trigger Property="Tag" Value="on">
+                                <Setter TargetName="B" Property="Background" Value="#337AA2F7" />
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource Accent}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <!-- Light yellow selection that is easy to find at a glance: the triage list,
              the move/snooze palette and contact suggestions. Their templates darken
@@ -167,7 +200,13 @@
         <Border Grid.Row="0" Background="{StaticResource Panel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,9">
             <Grid>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="Triage" FontSize="12" Padding="12,6">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SectionTab}">
@@ -194,12 +233,98 @@
                         </TextBlock.Style>
                     </TextBlock>
 
+                    <TextBlock Text="Calendar" FontSize="12" Padding="12,6">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SectionTab}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Section, Converter={StaticResource SectionActive}, ConverterParameter=Calendar}" Value="True">
+                                        <Setter Property="Foreground" Value="{StaticResource Text}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
                     <Border Style="{StaticResource KeyCap}" Margin="4,0,0,0">
                         <TextBlock Text="Tab" Style="{StaticResource KeyCapText}" />
                     </Border>
+
+                    <Button Content="✎ New email" Margin="18,0,0,0" Click="OnComposeClick"
+                            Style="{StaticResource ReportButton}">
+                        <Button.ToolTip>
+                            <TextBlock>
+                                <Run Text="Write a new message ·" />
+                                <Run Text="{Binding ComposeKey, Mode=OneWay}" />
+                            </TextBlock>
+                        </Button.ToolTip>
+                    </Button>
                 </StackPanel>
 
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <!-- today strip: what is on now or next; click for the Calendar tab -->
+                <Border Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Margin="16,0" Padding="10,3" CornerRadius="11" BorderThickness="1" Cursor="Hand"
+                        MouseLeftButtonUp="OnStripClick"
+                        Visibility="{Binding Calendar.StripText, Converter={StaticResource NullVis}}">
+                    <Border.ToolTip>
+                        <TextBlock>
+                            <Run Text="Click to see it in the Calendar tab ·" />
+                            <Run Text="{Binding JoinKey, Mode=OneWay}" />
+                            <Run Text="joins" />
+                        </TextBlock>
+                    </Border.ToolTip>
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="{StaticResource Raised}" />
+                            <Setter Property="BorderBrush" Value="{StaticResource Border}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Calendar.StripState}" Value="Clear">
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="BorderBrush" Value="Transparent" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Calendar.StripState}" Value="Now">
+                                    <Setter Property="Background" Value="#1F7AA2F7" />
+                                    <Setter Property="BorderBrush" Value="#667AA2F7" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Calendar.StripState}" Value="Soon">
+                                    <Setter Property="Background" Value="#2EE0AF68" />
+                                    <Setter Property="BorderBrush" Value="{StaticResource Warn}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="6" Height="6" Margin="0,1,7,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{StaticResource Accent}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Calendar.StripState}" Value="Clear">
+                                            <Setter Property="Fill" Value="{StaticResource Ok}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Calendar.StripState}" Value="Soon">
+                                            <Setter Property="Fill" Value="{StaticResource Warn}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="{Binding Calendar.StripText}" FontSize="11.5" MaxWidth="560"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Calendar.StripState}" Value="Clear">
+                                            <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <TextBlock Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,14,0"
                                ToolTip="Sent while this app is running. Delete the draft in Outlook to cancel."
                                Visibility="{Binding PendingScheduledCount, Converter={StaticResource CountVis}}">
@@ -313,6 +438,42 @@
                                            TextWrapping="Wrap" MaxHeight="48" TextTrimming="CharacterEllipsis" />
                             </DockPanel>
 
+                            <!-- a meeting message: when it is, whether you are free, and y to answer -->
+                            <Border Margin="0,10,0,0" Padding="12,9" CornerRadius="6" BorderThickness="1"
+                                    Background="#147AA2F7" BorderBrush="#447AA2F7"
+                                    Visibility="{Binding Triage.HasInvite, Converter={StaticResource BoolVis}}">
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0"
+                                                Visibility="{Binding Triage.HasInviteAction, Converter={StaticResource BoolVis}}">
+                                        <Border Style="{StaticResource KeyCap}">
+                                            <TextBlock Text="{Binding RsvpKey}" Style="{StaticResource KeyCapText}" />
+                                        </Border>
+                                        <TextBlock Text="{Binding Triage.InviteAction}" FontSize="11.5" Margin="6,0,0,0"
+                                                   VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap">
+                                            <Run Text="📅" /><Run Text="  " /><Run Text="{Binding Triage.InviteWhen, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Triage.InviteMeta}" FontSize="12" Margin="0,3,0,0"
+                                                   Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding Triage.InviteClash}" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap"
+                                                   Visibility="{Binding Triage.InviteClash, Converter={StaticResource NullVis}}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Setter Property="Foreground" Value="{StaticResource Ok}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Triage.InviteHasClash}" Value="True">
+                                                            <Setter Property="Foreground" Value="{StaticResource Warn}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+
                             <!-- attachments: click to open, or press v -->
                             <ItemsControl ItemsSource="{Binding Triage.ThreadAttachments}" Margin="0,9,0,0"
                                           Visibility="{Binding Triage.ThreadAttachments.Count, Converter={StaticResource CountVis}}">
@@ -321,34 +482,57 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Button Click="OnAttachmentClick" Tag="{Binding}" Cursor="Hand"
-                                                Margin="0,0,6,6" Focusable="False"
-                                                ToolTip="{Binding Name}">
-                                            <Button.Template>
-                                                <ControlTemplate TargetType="Button">
-                                                    <Border x:Name="Chip" Background="{StaticResource Raised}"
-                                                            BorderBrush="{StaticResource Border}" BorderThickness="1"
-                                                            CornerRadius="5" Padding="9,4">
-                                                        <ContentPresenter />
-                                                    </Border>
-                                                    <ControlTemplate.Triggers>
-                                                        <Trigger Property="IsMouseOver" Value="True">
-                                                            <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource Accent}" />
-                                                        </Trigger>
-                                                    </ControlTemplate.Triggers>
-                                                </ControlTemplate>
-                                            </Button.Template>
+                                        <!-- click: preview (PDF, image, text) or open · drag: copy to a folder · ↗: open in its program -->
+                                        <Border x:Name="Chip" Tag="{Binding}" Cursor="Hand" Margin="0,0,6,6"
+                                                Background="{StaticResource Raised}" BorderBrush="{StaticResource Border}"
+                                                BorderThickness="1" CornerRadius="5" Padding="9,4,4,4"
+                                                ToolTip="Click to preview or open · drag to a folder to save a copy"
+                                                PreviewMouseLeftButtonDown="OnAttachmentMouseDown"
+                                                MouseMove="OnAttachmentMouseMove"
+                                                MouseLeftButtonUp="OnAttachmentClick">
                                             <StackPanel Orientation="Horizontal">
                                                 <TextBlock Text="📎" FontSize="11" Margin="0,0,5,0" Foreground="{StaticResource Muted}" />
                                                 <TextBlock Text="{Binding Name}" FontSize="12" MaxWidth="260"
                                                            TextTrimming="CharacterEllipsis" Foreground="{StaticResource Text}" />
                                                 <TextBlock Text="{Binding SizeDisplay}" FontSize="11" Margin="6,0,0,0"
                                                            Foreground="{StaticResource Muted}" />
+                                                <Button Content="↗" Click="OnAttachmentOpenClick" Tag="{Binding}" Focusable="False"
+                                                        Margin="6,0,0,0" Padding="4,0" Cursor="Hand" FontSize="11"
+                                                        ToolTip="Open in its usual program">
+                                                    <Button.Template>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <Border x:Name="Open" CornerRadius="3" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                                                <TextBlock Text="{TemplateBinding Content}" Foreground="{StaticResource Muted}" />
+                                                            </Border>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="Open" Property="Background" Value="#337AA2F7" />
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Button.Template>
+                                                </Button>
                                             </StackPanel>
-                                        </Button>
+                                        </Border>
+                                        <DataTemplate.Triggers>
+                                            <Trigger SourceName="Chip" Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource Accent}" />
+                                            </Trigger>
+                                        </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+
+                            <!-- previewing an attachment instead of the email -->
+                            <Border Background="#337AA2F7" CornerRadius="4" Padding="10,5" Margin="0,4,0,0"
+                                    HorizontalAlignment="Left"
+                                    Visibility="{Binding Triage.IsPreviewing, Converter={StaticResource BoolVis}}">
+                                <TextBlock FontSize="12" Foreground="{StaticResource Text}">
+                                    <Run Text="Previewing" />
+                                    <Run Text="{Binding Triage.PreviewName, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text="· Esc back to the email" Foreground="{StaticResource Muted}" />
+                                </TextBlock>
+                            </Border>
                         </StackPanel>
                     </Border>
 
@@ -396,6 +580,31 @@
                                        Visibility="{Binding WaitingOnPeople.Count, Converter={StaticResource CountVis}}" />
                         </StackPanel>
 
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                            <Button Content="Board" Click="OnShowBoard" ToolTip="The board (g toggles)">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource ReportButton}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsByPerson}" Value="False">
+                                                <Setter Property="Tag" Value="on" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="By person" Margin="4,0,0,0" Click="OnShowByPerson" ToolTip="Who everything is waiting on (g toggles)">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource ReportButton}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsByPerson}" Value="True">
+                                                <Setter Property="Tag" Value="on" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+
                         <Border DockPanel.Dock="Right" Background="#33E0AF68" CornerRadius="4" Padding="8,2"
                                 VerticalAlignment="Center" Margin="10,0,0,0"
                                 Visibility="{Binding HasFilter, Converter={StaticResource BoolVis}}">
@@ -440,8 +649,99 @@
                     </DockPanel>
                 </Border>
 
+                <!-- By person report (g): every open wait, grouped under who it is on -->
+                <DockPanel Grid.Row="1" Margin="12,8,12,4"
+                           Visibility="{Binding IsByPerson, Converter={StaticResource BoolVis}}">
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Sort by" FontSize="12" VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
+                        <ComboBox Width="160" Margin="8,0,0,0" FontSize="12"
+                                  ItemsSource="{Binding SortChoices}" DisplayMemberPath="Label"
+                                  SelectedItem="{Binding ReportSort}" />
+                        <Button Content="Export to Excel" Margin="16,0,0,0" Click="OnReportExport"
+                                Style="{StaticResource ReportButton}" />
+                        <Button Content="Email this report" Margin="8,0,0,0" Click="OnReportEmail"
+                                Style="{StaticResource ReportButton}" />
+                        <TextBlock Text="Click a row to open its card" FontSize="11.5" Margin="16,0,0,0"
+                                   VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
+                    </StackPanel>
+
+                    <Grid>
+                        <TextBlock Text="Nothing is waiting on anyone" FontSize="13" Foreground="{StaticResource Muted}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Visibility="{Binding Report.Count, Converter={StaticResource CountVisInv}}" />
+
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding Report}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource Panel}" CornerRadius="7" Margin="0,0,0,10"
+                                                BorderBrush="{StaticResource Border}" BorderThickness="1">
+                                            <StackPanel>
+                                                <StackPanel Orientation="Horizontal" Margin="14,9,14,6">
+                                                    <TextBlock Text="{Binding Person}" FontSize="14" FontWeight="SemiBold" />
+                                                    <TextBlock FontSize="12" Margin="10,2,0,0" Foreground="{StaticResource Muted}">
+                                                        <Run Text="{Binding Count, Mode=OneWay}" /><Run Text=" waiting" />
+                                                    </TextBlock>
+                                                    <TextBlock FontSize="12" Margin="10,2,0,0" Foreground="{StaticResource Danger}"
+                                                               Visibility="{Binding OverdueCount, Converter={StaticResource CountVis}}">
+                                                        <Run Text="{Binding OverdueCount, Mode=OneWay}" /><Run Text=" overdue" />
+                                                    </TextBlock>
+                                                </StackPanel>
+
+                                                <ItemsControl ItemsSource="{Binding Rows}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border x:Name="Line" Padding="14,6" Cursor="Hand" Background="Transparent"
+                                                                    Tag="{Binding Item}" MouseLeftButtonUp="OnReportRowClick"
+                                                                    BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
+                                                                <Grid>
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="90" />
+                                                                        <ColumnDefinition Width="3*" />
+                                                                        <ColumnDefinition Width="2*" />
+                                                                        <ColumnDefinition Width="90" />
+                                                                        <ColumnDefinition Width="90" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock x:Name="Kind" Grid.Column="0" Text="{Binding Kind}" FontSize="11.5"
+                                                                               Foreground="{StaticResource Warn}" />
+                                                                    <TextBlock Grid.Column="1" Text="{Binding Item.Subject}" FontSize="12.5"
+                                                                               TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
+                                                                    <TextBlock Grid.Column="2" Text="{Binding What}" FontSize="12"
+                                                                               TextTrimming="CharacterEllipsis" Margin="0,0,10,0"
+                                                                               Foreground="{StaticResource Muted}" />
+                                                                    <TextBlock Grid.Column="3" FontSize="11.5" Foreground="{StaticResource Muted}"
+                                                                               Text="{Binding SinceUtc, StringFormat='since {0:d MMM}'}" />
+                                                                    <TextBlock x:Name="Due" Grid.Column="4" FontSize="11.5" Foreground="{StaticResource Muted}"
+                                                                               Text="{Binding DueDisplay, StringFormat='due {0}'}"
+                                                                               Visibility="{Binding DueDisplay, Converter={StaticResource NullVis}}" />
+                                                                </Grid>
+                                                            </Border>
+                                                            <DataTemplate.Triggers>
+                                                                <Trigger SourceName="Line" Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="Line" Property="Background" Value="#15FFFFFF" />
+                                                                </Trigger>
+                                                                <DataTrigger Binding="{Binding Kind}" Value="Assigned">
+                                                                    <Setter TargetName="Kind" Property="Foreground" Value="{StaticResource Accent}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                                                    <Setter TargetName="Due" Property="Foreground" Value="{StaticResource Danger}" />
+                                                                </DataTrigger>
+                                                            </DataTemplate.Triggers>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
+                </DockPanel>
+
                 <!-- the board -->
-                <ItemsControl Grid.Row="1" ItemsSource="{Binding Columns}" Margin="8,8,8,4">
+                <ItemsControl Grid.Row="1" ItemsSource="{Binding Columns}" Margin="8,8,8,4"
+                              Visibility="{Binding IsByPerson, Converter={StaticResource BoolVisInv}}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
@@ -460,10 +760,15 @@
                                     <ListBox ItemsSource="{Binding Items}"
                                              SelectedItem="{Binding DataContext.Selected, RelativeSource={RelativeSource AncestorType=ItemsControl}, Mode=OneWay}"
                                              Background="Transparent" BorderThickness="0" Focusable="False"
-                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             AllowDrop="True" Tag="{Binding}"
+                                             DragEnter="OnColumnDragOver" DragOver="OnColumnDragOver"
+                                             DragLeave="OnColumnDragLeave" Drop="OnColumnDrop">
                                         <ListBox.ItemContainerStyle>
                                             <Style TargetType="ListBoxItem" BasedOn="{StaticResource MailRowContainer}">
                                                 <Setter Property="Margin" Value="0,0,0,5" />
+                                                <EventSetter Event="PreviewMouseLeftButtonDown" Handler="OnBoardCardMouseDown" />
+                                                <EventSetter Event="PreviewMouseMove" Handler="OnBoardCardMouseMove" />
                                                 <EventSetter Event="PreviewMouseLeftButtonUp" Handler="OnBoardCardClick" />
                                             </Style>
                                         </ListBox.ItemContainerStyle>
@@ -529,6 +834,11 @@
                                     <Setter TargetName="ColumnFrame" Property="BorderBrush" Value="{StaticResource Accent}" />
                                     <Setter TargetName="ColumnTitle" Property="Foreground" Value="{StaticResource Accent}" />
                                 </DataTrigger>
+                                <DataTrigger Binding="{Binding IsDropTarget}" Value="True">
+                                    <Setter TargetName="ColumnFrame" Property="BorderBrush" Value="{StaticResource Warn}" />
+                                    <Setter TargetName="ColumnFrame" Property="BorderThickness" Value="2" />
+                                    <Setter TargetName="ColumnFrame" Property="Background" Value="#1AE0AF68" />
+                                </DataTrigger>
                             </DataTemplate.Triggers>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -544,9 +854,52 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <ScrollViewer Grid.Column="0" Padding="18,14" VerticalScrollBarVisibility="Auto"
-                                  Background="{StaticResource Panel}"
+                    <!-- the selected card as a form: click and type, Enter saves.
+                         The shortcut keys (b, Shift+A, t, d) put the cursor in these same fields. -->
+                    <ScrollViewer Grid.Column="0" Padding="16,12" VerticalScrollBarVisibility="Auto"
+                                  Background="{StaticResource Panel}" x:Name="ActionForm"
                                   Visibility="{Binding Selected, Converter={StaticResource NullVis}}">
+                        <ScrollViewer.Resources>
+                            <Style x:Key="FormLabel" TargetType="TextBlock">
+                                <Setter Property="FontSize" Value="10" />
+                                <Setter Property="FontWeight" Value="Bold" />
+                                <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                                <Setter Property="Margin" Value="0,16,0,6" />
+                            </Style>
+                            <Style x:Key="FormHint" TargetType="TextBlock">
+                                <Setter Property="FontSize" Value="10.5" />
+                                <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                                <Setter Property="Margin" Value="0,3,0,0" />
+                            </Style>
+                            <Style x:Key="FormButton" TargetType="Button">
+                                <Setter Property="Cursor" Value="Hand" />
+                                <Setter Property="Focusable" Value="False" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="B" Background="#337AA2F7" CornerRadius="4" Padding="10,4">
+                                                <TextBlock Text="{TemplateBinding Content}" FontSize="11.5"
+                                                           Foreground="{StaticResource Text}" HorizontalAlignment="Center" />
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="B" Property="Background" Value="#557AA2F7" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                            <!-- "who" boxes remember everyone tagged before -->
+                            <Style x:Key="PersonBox" TargetType="ComboBox">
+                                <Setter Property="IsEditable" Value="True" />
+                                <Setter Property="IsTextSearchEnabled" Value="True" />
+                                <Setter Property="StaysOpenOnEdit" Value="True" />
+                                <Setter Property="FontSize" Value="12.5" />
+                                <Setter Property="Padding" Value="6,4" />
+                            </Style>
+                        </ScrollViewer.Resources>
+
                         <StackPanel>
                             <TextBlock Text="{Binding Selected.Subject}" FontSize="15"
                                        FontWeight="SemiBold" TextWrapping="Wrap" />
@@ -558,25 +911,29 @@
                                 <Run Text="{Binding Selected.Priority, Mode=OneWay}" />
                                 <Run Text="priority" />
                             </TextBlock>
-                            <TextBlock FontSize="12" Margin="0,3,0,0" Foreground="{StaticResource Muted}"
-                                       Visibility="{Binding Selected.DueDisplay, Converter={StaticResource NullVis}}">
-                                <Run Text="Next due" />
-                                <Run Text="{Binding Selected.DueDisplay, Mode=OneWay}" FontWeight="SemiBold" />
-                            </TextBlock>
+
+                            <!-- due date -->
+                            <TextBlock Text="DUE  (d)" Style="{StaticResource FormLabel}" />
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="Set" Margin="6,0,0,0"
+                                        Style="{StaticResource FormButton}" Click="OnFormDueSave" />
+                                <TextBox x:Name="FormDue" Tag="form:due" Style="{StaticResource FlatInput}" FontSize="12.5"
+                                         Text="{Binding DueDraft, UpdateSourceTrigger=PropertyChanged}" />
+                            </DockPanel>
+                            <TextBlock Text="e.g. fri, 14 oct, 3d, tomorrow 5pm · empty clears · Enter saves" Style="{StaticResource FormHint}" />
 
                             <!-- blocked by -->
-                            <TextBlock Text="BLOCKED BY  (b adds · w clears)" FontSize="10" FontWeight="Bold"
-                                       Foreground="{StaticResource Muted}" Margin="0,18,0,6" />
+                            <TextBlock Text="BLOCKED BY  (b)" Style="{StaticResource FormLabel}" />
                             <ItemsControl ItemsSource="{Binding Selected.Blockers}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border x:Name="Row" Background="{StaticResource Raised}" CornerRadius="5"
-                                                Padding="10,8" Margin="0,0,0,5">
+                                                Padding="10,7" Margin="0,0,0,5">
                                             <DockPanel>
                                                 <CheckBox DockPanel.Dock="Left" VerticalAlignment="Top" Margin="0,2,8,0"
                                                           IsChecked="{Binding IsResolved, Mode=OneWay}" Focusable="False"
                                                           Click="OnBlockerCheck" Tag="{Binding}"
-                                                          ToolTip="Tick when it is no longer blocking" />
+                                                          ToolTip="Tick when it is no longer blocking (w clears the next one)" />
                                                 <StackPanel>
                                                     <TextBlock Text="{Binding Description}" FontSize="12.5" TextWrapping="Wrap" />
                                                     <TextBlock FontSize="11" Margin="0,3,0,0" Foreground="{StaticResource Muted}">
@@ -599,17 +956,37 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                            <TextBlock Text="Nothing blocking" FontSize="12" Foreground="{StaticResource Muted}"
-                                       Visibility="{Binding Selected.Blockers.Count, Converter={StaticResource CountVisInv}}" />
+                            <Border Background="{StaticResource Bg}" CornerRadius="5" Padding="10,8">
+                                <StackPanel>
+                                    <TextBox x:Name="FormBlockerWhat" Tag="form:blocker" Style="{StaticResource FlatInput}" FontSize="12.5"
+                                             Text="{Binding NewBlockerWhat, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="What is it waiting for?" />
+                                    <TextBlock Text="What is it waiting for?" Style="{StaticResource FormHint}" />
+                                    <Grid Margin="0,6,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="110" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox Grid.Column="0" Tag="form:blocker" Style="{StaticResource PersonBox}"
+                                                  ItemsSource="{Binding KnownPeople}"
+                                                  Text="{Binding NewBlockerWho, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBox Grid.Column="1" Tag="form:blocker" Margin="6,0,0,0" Style="{StaticResource FlatInput}" FontSize="12.5"
+                                                 Text="{Binding NewBlockerDue, UpdateSourceTrigger=PropertyChanged}" ToolTip="Due (optional)" />
+                                        <Button Grid.Column="2" Content="Add" Margin="6,0,0,0"
+                                                Style="{StaticResource FormButton}" Click="OnFormBlockerAdd" />
+                                    </Grid>
+                                    <TextBlock Text="Who it is on · due (optional) · Enter adds and moves the card to Waiting" Style="{StaticResource FormHint}" />
+                                </StackPanel>
+                            </Border>
 
                             <!-- assigned to others -->
-                            <TextBlock Text="ASSIGNED TO OTHERS  (Shift+A adds · c chases)" FontSize="10" FontWeight="Bold"
-                                       Foreground="{StaticResource Muted}" Margin="0,18,0,6" />
+                            <TextBlock Text="ASSIGNED TO OTHERS  (Shift+A · c chases)" Style="{StaticResource FormLabel}" />
                             <ItemsControl ItemsSource="{Binding Selected.Assignments}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border x:Name="Row" Background="{StaticResource Raised}" CornerRadius="5"
-                                                Padding="10,8" Margin="0,0,0,5">
+                                                Padding="10,7" Margin="0,0,0,5">
                                             <DockPanel>
                                                 <CheckBox DockPanel.Dock="Left" VerticalAlignment="Top" Margin="0,2,8,0"
                                                           IsChecked="{Binding IsDone, Mode=OneWay}" Focusable="False"
@@ -643,15 +1020,41 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                            <TextBlock Text="Nobody assigned" FontSize="12" Foreground="{StaticResource Muted}"
-                                       Visibility="{Binding Selected.Assignments.Count, Converter={StaticResource CountVisInv}}" />
+                            <Border Background="{StaticResource Bg}" CornerRadius="5" Padding="10,8">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="110" />
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="FormAssignWho" Grid.Column="0" Tag="form:assign" Style="{StaticResource PersonBox}"
+                                                  ItemsSource="{Binding KnownPeople}"
+                                                  Text="{Binding NewAssignWho, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBox Grid.Column="1" Tag="form:assign" Margin="6,0,0,0" Style="{StaticResource FlatInput}" FontSize="12.5"
+                                                 Text="{Binding NewAssignDue, UpdateSourceTrigger=PropertyChanged}" ToolTip="Due (optional)" />
+                                    </Grid>
+                                    <TextBlock Text="Who · due (optional) - add an address as Name &lt;name@company.com&gt; to chase by email" Style="{StaticResource FormHint}" TextWrapping="Wrap" />
+                                    <DockPanel Margin="0,6,0,0">
+                                        <Button DockPanel.Dock="Right" Content="Assign" Margin="6,0,0,0"
+                                                Style="{StaticResource FormButton}" Click="OnFormAssignAdd" />
+                                        <TextBox Tag="form:assign" Style="{StaticResource FlatInput}" FontSize="12.5"
+                                                 Text="{Binding NewAssignWhat, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="What they need to do" />
+                                    </DockPanel>
+                                    <TextBlock Text="What they need to do · Enter assigns and moves the card to Waiting" Style="{StaticResource FormHint}" />
+                                </StackPanel>
+                            </Border>
 
                             <!-- notes -->
-                            <TextBlock Text="NOTES  (t edits)" FontSize="10" FontWeight="Bold"
-                                       Foreground="{StaticResource Muted}" Margin="0,18,0,6" />
-                            <Border Background="{StaticResource Raised}" CornerRadius="5" Padding="10,8">
-                                <TextBlock Text="{Binding Selected.Notes}" TextWrapping="Wrap" FontSize="12.5" MinHeight="16" />
-                            </Border>
+                            <TextBlock Text="NOTES  (t)" Style="{StaticResource FormLabel}" />
+                            <TextBox x:Name="FormNotes" Tag="form:notes" Style="{StaticResource FlatInput}" FontSize="12.5"
+                                     AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70" VerticalContentAlignment="Top"
+                                     Text="{Binding NotesDraft, UpdateSourceTrigger=PropertyChanged}" />
+                            <DockPanel Margin="0,4,0,0">
+                                <Button DockPanel.Dock="Right" Content="Save notes"
+                                        Style="{StaticResource FormButton}" Click="OnFormNotesSave" />
+                                <TextBlock Text="Ctrl+Enter saves" Style="{StaticResource FormHint}" VerticalAlignment="Center" />
+                            </DockPanel>
                         </StackPanel>
                     </ScrollViewer>
 
@@ -665,6 +1068,186 @@
                     <Image Grid.Column="2" x:Name="ActionBodySnapshot" Stretch="Fill" />
                     <wv2:WebView2 Grid.Column="2" x:Name="ActionBodyView" DefaultBackgroundColor="#16181D" />
                 </Grid>
+            </Grid>
+
+            <!-- ========== CALENDAR ========== -->
+            <Grid DataContext="{Binding Calendar}"
+                  Visibility="{Binding DataContext.Section, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource SectionVis}, ConverterParameter=Calendar}">
+                <Grid.Resources>
+                    <!-- one heading per day: Today, Tomorrow, Thu 25 Sep -->
+                    <CollectionViewSource x:Key="AgendaDays" Source="{Binding Rows}">
+                        <CollectionViewSource.GroupDescriptions>
+                            <PropertyGroupDescription PropertyName="Day" />
+                        </CollectionViewSource.GroupDescriptions>
+                    </CollectionViewSource>
+                </Grid.Resources>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="400" MinWidth="280" />
+                    <ColumnDefinition Width="4" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Background="{StaticResource Panel}">
+                    <Grid>
+                        <ListBox x:Name="AgendaList"
+                                 ItemsSource="{Binding Source={StaticResource AgendaDays}}"
+                                 SelectedItem="{Binding Selected, Mode=TwoWay}"
+                                 ItemContainerStyle="{StaticResource MailRowContainer}"
+                                 Background="Transparent" BorderThickness="0" Focusable="False"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 VirtualizingPanel.IsVirtualizing="True"
+                                 VirtualizingPanel.IsVirtualizingWhenGrouping="True"
+                                 PreviewMouseLeftButtonUp="OnAgendaClick">
+                            <ListBox.GroupStyle>
+                                <GroupStyle>
+                                    <GroupStyle.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Name}" FontSize="10.5" FontWeight="Bold"
+                                                       Margin="14,14,0,6" Foreground="{StaticResource Muted}" />
+                                        </DataTemplate>
+                                    </GroupStyle.HeaderTemplate>
+                                </GroupStyle>
+                            </ListBox.GroupStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid x:Name="Row" Margin="0,1">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="4" />
+                                            <ColumnDefinition Width="58" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- on now -->
+                                        <Border Grid.Column="0" Width="3" CornerRadius="2" Background="{StaticResource Accent}"
+                                                Visibility="{Binding IsNow, Converter={StaticResource BoolVis}}" />
+
+                                        <StackPanel Grid.Column="1" Margin="10,6,0,6">
+                                            <TextBlock x:Name="TimeText" Text="{Binding Time}" FontSize="12.5" Foreground="{StaticResource Text}" />
+                                            <TextBlock x:Name="LengthText" Text="{Binding Length}" FontSize="10.5" Margin="0,2,0,0"
+                                                       Foreground="{StaticResource Muted}" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="2" Margin="6,6,8,6">
+                                            <TextBlock x:Name="SubjectText" Text="{Binding Subject}" FontSize="13"
+                                                       TextTrimming="CharacterEllipsis" Foreground="{StaticResource Text}" />
+                                            <TextBlock x:Name="LocationText" Text="{Binding Location}" FontSize="11.5" Margin="0,2,0,0"
+                                                       TextTrimming="CharacterEllipsis" Foreground="{StaticResource Muted}"
+                                                       Visibility="{Binding HasLocation, Converter={StaticResource BoolVis}}" />
+                                        </StackPanel>
+
+                                        <Border Grid.Column="3" x:Name="TagChip" Background="#33E0AF68" CornerRadius="3" Padding="5,0"
+                                                Margin="0,8,10,0" VerticalAlignment="Top"
+                                                Visibility="{Binding HasTag, Converter={StaticResource BoolVis}}">
+                                            <TextBlock x:Name="TagText" Text="{Binding Tag}" FontSize="9" FontWeight="Bold"
+                                                       Foreground="{StaticResource Warn}" />
+                                        </Border>
+                                    </Grid>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsPast}" Value="True">
+                                            <Setter TargetName="Row" Property="Opacity" Value="0.5" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Event.IsDeclined}" Value="True">
+                                            <Setter TargetName="SubjectText" Property="TextDecorations" Value="Strikethrough" />
+                                            <Setter TargetName="Row" Property="Opacity" Value="0.55" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                            <Setter TargetName="Row" Property="Opacity" Value="1" />
+                                            <Setter TargetName="TimeText" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                            <Setter TargetName="SubjectText" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                            <Setter TargetName="LengthText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                            <Setter TargetName="LocationText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                            <Setter TargetName="TagText" Property="Foreground" Value="#8A5A00" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <TextBlock Text="Nothing on your calendar" FontSize="13" Foreground="{StaticResource Muted}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Visibility="{Binding Rows.Count, Converter={StaticResource CountVisInv}}" />
+                    </Grid>
+                </Border>
+
+                <GridSplitter Grid.Column="1" Width="4" Background="{StaticResource Border}" HorizontalAlignment="Stretch" />
+
+                <!-- the selected meeting -->
+                <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" Padding="22,18"
+                              Visibility="{Binding Selected, Converter={StaticResource NullVis}}">
+                    <StackPanel MaxWidth="760" HorizontalAlignment="Left">
+                        <TextBlock Text="{Binding Selected.Subject}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Selected.When}" FontSize="13" Margin="0,8,0,0" />
+                        <TextBlock Text="{Binding Selected.Location}" FontSize="12.5" Margin="0,4,0,0" TextWrapping="Wrap"
+                                   Foreground="{StaticResource Muted}"
+                                   Visibility="{Binding Selected.HasLocation, Converter={StaticResource BoolVis}}" />
+                        <TextBlock Text="{Binding Selected.About}" FontSize="12.5" Margin="0,4,0,0" TextWrapping="Wrap"
+                                   Foreground="{StaticResource Muted}"
+                                   Visibility="{Binding Selected.About, Converter={StaticResource NullVis}}" />
+
+                        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                            <Button Content="Join" Click="OnAgendaJoin" Margin="0,0,8,0" Style="{StaticResource ReportButton}" Tag="on"
+                                    ToolTip="Open the meeting link (Enter)"
+                                    Visibility="{Binding Detail.JoinUrl, Converter={StaticResource NullVis}}" />
+                            <Button Content="Open in Outlook" Click="OnAgendaOpen" Margin="0,0,8,0" Style="{StaticResource ReportButton}"
+                                    ToolTip="o" />
+                            <Button Content="Answer…" Click="OnAgendaAnswer" Style="{StaticResource ReportButton}"
+                                    ToolTip="Accept, maybe or decline (y)"
+                                    Visibility="{Binding Selected.CanRespond, Converter={StaticResource BoolVis}}" />
+                        </StackPanel>
+
+                        <!-- who is coming -->
+                        <TextBlock Text="ATTENDEES" FontSize="10" FontWeight="Bold" Margin="0,22,0,8"
+                                   Foreground="{StaticResource Muted}"
+                                   Visibility="{Binding Detail.Attendees.Count, Converter={StaticResource CountVis}, FallbackValue=Collapsed}" />
+                        <ItemsControl ItemsSource="{Binding Detail.Attendees}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{StaticResource Raised}" CornerRadius="10" Padding="9,2" Margin="0,0,6,6"
+                                            ToolTip="{Binding Address}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="Mark" Text="·" FontSize="11.5" Margin="0,0,5,0" Foreground="{StaticResource Muted}" />
+                                            <TextBlock Text="{Binding Display}" FontSize="11.5" />
+                                            <TextBlock x:Name="Optional" Text=" (optional)" FontSize="11" Foreground="{StaticResource Muted}"
+                                                       Visibility="{Binding IsOptional, Converter={StaticResource BoolVis}}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding Response}" Value="Accepted">
+                                            <Setter TargetName="Mark" Property="Text" Value="✓" />
+                                            <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource Ok}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Response}" Value="Organized">
+                                            <Setter TargetName="Mark" Property="Text" Value="★" />
+                                            <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource Accent}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Response}" Value="Tentative">
+                                            <Setter TargetName="Mark" Property="Text" Value="?" />
+                                            <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource Warn}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Response}" Value="Declined">
+                                            <Setter TargetName="Mark" Property="Text" Value="✗" />
+                                            <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource Danger}" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- the invitation text -->
+                        <Border Background="{StaticResource Panel}" CornerRadius="6" Padding="14,12" Margin="0,16,0,0"
+                                Visibility="{Binding Detail.Body, Converter={StaticResource NullVis}}">
+                            <TextBlock Text="{Binding Detail.Body}" FontSize="12.5" TextWrapping="Wrap" LineHeight="19" />
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <TextBlock Grid.Column="2" Text="Select a meeting" Foreground="{StaticResource Muted}" FontSize="13"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Visibility="{Binding Selected, Converter={StaticResource NullVisInv}}" />
             </Grid>
         </Grid>
 
@@ -805,7 +1388,8 @@
                                        FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
                             <TextBlock Text="{Binding Triage.Composer.Subject}" FontSize="12"
                                        Margin="12,0,0,0" Foreground="{StaticResource Muted}"
-                                       TextTrimming="CharacterEllipsis" MaxWidth="560" />
+                                       TextTrimming="CharacterEllipsis" MaxWidth="560"
+                                       Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
                         </StackPanel>
                         <DockPanel Margin="0,10,0,0">
                             <TextBlock Text="To" Style="{StaticResource RecipientLabel}" />
@@ -821,6 +1405,13 @@
                             <TextBlock Text="Bcc" Style="{StaticResource RecipientLabel}" />
                             <TextBox x:Name="BccBox" Style="{StaticResource FlatInput}" FontSize="13"
                                      Text="{Binding Triage.Composer.BccLine, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                        <!-- a new message types its own subject; replies keep Outlook's -->
+                        <DockPanel Margin="0,5,0,0"
+                                   Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}">
+                            <TextBlock Text="Subj." Style="{StaticResource RecipientLabel}" />
+                            <TextBox x:Name="SubjectBox" Style="{StaticResource FlatInput}" FontSize="13"
+                                     Text="{Binding Triage.Composer.SubjectLine, UpdateSourceTrigger=PropertyChanged}" />
                         </DockPanel>
                     </StackPanel>
 
@@ -883,7 +1474,11 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+Shift+L later · Esc discard · @ mentions · ↑↓ Enter/Tab picks" />
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+Shift+L later · Esc discard · @ mentions · ↑↓ Enter/Tab picks"
+                                       Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
+                            <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
+                                       Text="Ctrl+Enter send · Ctrl+Shift+L later · Ctrl+Shift+S subject · Esc discard · @ mentions · ↑↓ Enter/Tab picks"
+                                       Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"
                                        Background="{StaticResource Raised}" />

@@ -20,10 +20,15 @@ public sealed record ContactEntry(string Name, string Address, int Weight)
 public sealed record AddressBookBatch(IReadOnlyList<ContactEntry> Entries, int Total);
 
 /// <summary>
-/// Recipient lines to write onto a draft before sending. A null line is left
-/// exactly as Outlook built it.
+/// Recipient lines, and for a new message the subject, to write onto a draft
+/// before sending. A null line is left exactly as Outlook built it.
 /// </summary>
 public sealed record RecipientOverrides(
     IReadOnlyList<string>? To,
     IReadOnlyList<string>? Cc,
-    IReadOnlyList<string>? Bcc);
+    IReadOnlyList<string>? Bcc)
+{
+    public string? Subject { get; init; }
+
+    public bool ChangesRecipients => To is not null || Cc is not null || Bcc is not null;
+}

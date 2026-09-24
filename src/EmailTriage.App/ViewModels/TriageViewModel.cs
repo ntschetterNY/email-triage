@@ -24,6 +24,7 @@ public sealed partial class TriageViewModel : ObservableObject
     private readonly FolderSearchService _folders;
     private readonly AppSettings _settings;
     private readonly IClock _clock;
+    private readonly ICalendarStore _calendar;
 
     private FolderRef _inbox;
     private FolderRef? _sent;
@@ -44,6 +45,10 @@ public sealed partial class TriageViewModel : ObservableObject
 
     [ObservableProperty] private MailRowViewModel? _selected;
     [ObservableProperty] private MailBody? _openBody;
+
+    /// <summary>The attachment file shown in the reading pane instead of the email, if any.</summary>
+    [ObservableProperty] private string? _previewPath;
+    [ObservableProperty] private string _previewName = "";
 
     /// <summary>Attachments from every message in the open conversation, newest first.</summary>
     [ObservableProperty] private IReadOnlyList<MailAttachment> _threadAttachments = Array.Empty<MailAttachment>();
@@ -69,9 +74,11 @@ public sealed partial class TriageViewModel : ObservableObject
         AppSettings settings,
         IClock clock,
         ContactDirectory contacts,
-        IScheduledSendRepository scheduled)
+        IScheduledSendRepository scheduled,
+        ICalendarStore calendar)
     {
         _store = store;
+        _calendar = calendar;
         _actions = actions;
         _snoozes = snoozes;
         _folders = folders;
@@ -236,9 +243,21 @@ public sealed partial class TriageViewModel : ObservableObject
         if (Selected is null || !Rows.Contains(Selected)) Selected = Rows.FirstOrDefault();
     }
 
+    public bool IsPreviewing => PreviewPath is not null;
+
+    partial void OnPreviewPathChanged(string? value) => OnPropertyChanged(nameof(IsPreviewing));
+
+    public void ClosePreview()
+    {
+        PreviewPath = null;
+        PreviewName = "";
+    }
+
     partial void OnSelectedChanged(MailRowViewModel? value)
     {
+        ClosePreview();
         _ = LoadBodyAsync(value);
+        _ = LoadInviteAsync(value);
     }
 
     private async Task LoadBodyAsync(MailRowViewModel? row)
@@ -507,6 +526,8 @@ public sealed partial class TriageViewModel : ObservableObject
         {
             case PaletteMode.Folder: RefreshFolderPalette(); break;
             case PaletteMode.Attachment: RefreshAttachmentPalette(); break;
+            case PaletteMode.Rsvp: RefreshRsvpPalette(); break;
+            case PaletteMode.Schedule: RefreshSchedulePalette(); break;
             default: RefreshSnoozePalette(); break;
         }
     }
@@ -553,8 +574,12 @@ public sealed partial class TriageViewModel : ObservableObject
             case PaletteMode.Attachment:
                 var pick = Palette.Selected?.Payload as MailAttachment;
                 Palette.Close();
-                if (pick is not null) await OpenAttachmentAsync(pick).ConfigureAwait(true);
+                if (pick is not null) await ShowAttachmentAsync(pick).ConfigureAwait(true);
                 break;
+            case PaletteMode.Rsvp: await ConfirmRsvpAsync().ConfigureAwait(true); break;
+
+            // Ctrl+Enter - "create" in the folder palette - invites people instead of blocking time.
+            case PaletteMode.Schedule: await ConfirmScheduleAsync(invite: forceCreate).ConfigureAwait(true); break;
             default: await ConfirmSnoozeAsync().ConfigureAwait(true); break;
         }
     }
@@ -571,8 +596,8 @@ public sealed partial class TriageViewModel : ObservableObject
             return Task.CompletedTask;
         }
 
-        // One attachment: skip the picker and just open it.
-        if (ThreadAttachments.Count == 1) return OpenAttachmentAsync(ThreadAttachments[0]);
+        // One attachment: skip the picker and just show it.
+        if (ThreadAttachments.Count == 1) return ShowAttachmentAsync(ThreadAttachments[0]);
 
         Palette.Open(
             PaletteMode.Attachment,
@@ -594,6 +619,59 @@ public sealed partial class TriageViewModel : ObservableObject
     }
 
     /// <summary>Saves the attachment locally and opens it in its usual program.</summary>
+    /// <summary>
+    /// Shows the attachment in the reading pane when it can (PDFs, images,
+    /// text), and otherwise opens it in its usual program.
+    /// </summary>
+    public async Task ShowAttachmentAsync(MailAttachment attachment)
+    {
+        if (!attachment.CanPreview || attachment.IsBlockedType)
+        {
+            await OpenAttachmentAsync(attachment).ConfigureAwait(true);
+            return;
+        }
+
+        if (OpenBody is not { } body) return;
+        var source = attachment.Source.IsEmpty ? body.Ref : attachment.Source;
+
+        try
+        {
+            PreviewPath = await _store.SaveAttachmentAsync(source, attachment.Index).ConfigureAwait(true);
+            PreviewName = attachment.Name;
+            Status = $"Previewing {attachment.Name} · Esc goes back to the email";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not preview {attachment.Name}: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Saves the attachment to the local cache and returns its path, for
+    /// dragging out to a folder. Null (with a status) for blocked types.
+    /// </summary>
+    public async Task<string?> SaveAttachmentForDragAsync(MailAttachment attachment)
+    {
+        if (OpenBody is not { } body) return null;
+
+        if (attachment.IsBlockedType)
+        {
+            Status = $"{attachment.Name} is a program or script - save it from Outlook if you trust it";
+            return null;
+        }
+
+        try
+        {
+            var source = attachment.Source.IsEmpty ? body.Ref : attachment.Source;
+            return await _store.SaveAttachmentAsync(source, attachment.Index).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not get {attachment.Name}: {ex.Message}";
+            return null;
+        }
+    }
+
     public async Task OpenAttachmentAsync(MailAttachment attachment)
     {
         if (OpenBody is not { } body) return;
@@ -818,6 +896,39 @@ public sealed partial class TriageViewModel : ObservableObject
 
     // ---- replies and forwards (r / Shift+R / f) ---------------------------
 
+    /// <summary>
+    /// Opens the composer on any mail - how the action board replies to a
+    /// task's conversation. Returns a problem to report, or null once open.
+    /// </summary>
+    public async Task<string?> StartReplyToAsync(MailRef mail, ReplyScope scope)
+    {
+        try
+        {
+            var draft = await _store.BuildReplyAsync(mail, scope).ConfigureAwait(true);
+            Composer.Open(draft);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"Could not start {(scope == ReplyScope.Forward ? "a forward" : "a reply")}: {ex.Message}";
+        }
+    }
+
+    /// <summary>Opens the composer on a blank message. Returns a problem to report, or null once open.</summary>
+    public async Task<string?> StartNewMailAsync()
+    {
+        try
+        {
+            var draft = await _store.BuildNewMailAsync().ConfigureAwait(true);
+            Composer.Open(draft);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"Could not start a new message: {ex.Message}";
+        }
+    }
+
     public async Task StartReplyAsync(ReplyScope scope)
     {
         if (Selected is not { } row) return;
@@ -931,6 +1042,7 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         if (Composer.IsOpen) { _ = Composer.DiscardAsync(); return; }
         if (Palette.IsOpen) { Palette.Close(); return; }
+        if (IsPreviewing) { ClosePreview(); Status = ""; return; }
         if (IsSearching) { IsSearching = false; SearchQuery = ""; }
     }
 }

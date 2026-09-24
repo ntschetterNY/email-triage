@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using EmailTriage.App.Services;
 using EmailTriage.Core.Abstractions;
@@ -24,6 +25,9 @@ public sealed partial class BoardColumn : ObservableObject
 
     [ObservableProperty] private bool _isActive;
 
+    /// <summary>A card is being dragged over this column.</summary>
+    [ObservableProperty] private bool _isDropTarget;
+
     public int Count => Items.Count;
 
     public void Fill(IEnumerable<ActionItem> items)
@@ -33,6 +37,12 @@ public sealed partial class BoardColumn : ObservableObject
         OnPropertyChanged(nameof(Count));
     }
 }
+
+/// <summary>Which form field a shortcut key should put the cursor in.</summary>
+public enum FormField { Blocker, Assignment, Notes, Due }
+
+/// <summary>A sort choice for the By person report.</summary>
+public sealed record SortChoice(WaitingSort Sort, string Label);
 
 /// <summary>A "waiting on" chip in the board's summary strip.</summary>
 public sealed record WaitingChip(string Person, int Count, bool AnyOverdue)
@@ -58,6 +68,13 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
     private readonly LruCache<string, Task<string>> _bodies = new(40, StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _bodyLoad;
+
+    /// <summary>
+    /// The newest message from someone else in each task's conversation, by
+    /// Message-ID: what a reply from the board answers, so it picks up the
+    /// latest in the thread rather than the mail that was first flagged.
+    /// </summary>
+    private readonly Dictionary<string, MailRef> _replyTargets = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyList<BoardColumn> Columns { get; } = new[]
     {
@@ -89,6 +106,49 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
     public ObservableCollection<string> KnownAssignees { get; } = new();
 
+    // ---- the form beside the board: click-and-type alternatives to the keys ----
+
+    [ObservableProperty] private string _newBlockerWhat = "";
+    [ObservableProperty] private string _newBlockerWho = "";
+    [ObservableProperty] private string _newBlockerDue = "";
+    [ObservableProperty] private string _newAssignWho = "";
+    [ObservableProperty] private string _newAssignWhat = "";
+    [ObservableProperty] private string _newAssignDue = "";
+    [ObservableProperty] private string _notesDraft = "";
+    [ObservableProperty] private string _dueDraft = "";
+
+    /// <summary>
+    /// Everyone tagged before, most used first, so tagging someone again
+    /// reuses the exact same name and the By person report groups them.
+    /// </summary>
+    public ObservableCollection<string> KnownPeople { get; } = new();
+
+    /// <summary>Raised when a shortcut asks for the cursor in a form field.</summary>
+    public event EventHandler<FormField>? FocusRequested;
+
+    public void RequestFocus(FormField field)
+    {
+        if (Selected is null) { Status = "Pick a card first"; return; }
+        FocusRequested?.Invoke(this, field);
+    }
+
+    // ---- By person report ------------------------------------------------------
+
+    [ObservableProperty] private bool _isByPerson;
+    [ObservableProperty] private SortChoice _reportSort;
+
+    public IReadOnlyList<SortChoice> SortChoices { get; } = new[]
+    {
+        new SortChoice(WaitingSort.MostOverdue, "Most overdue"),
+        new SortChoice(WaitingSort.MostItems, "Most items"),
+        new SortChoice(WaitingSort.LongestWait, "Longest waiting"),
+        new SortChoice(WaitingSort.Person, "Name A-Z"),
+    };
+
+    public ObservableCollection<PersonWaits> Report { get; } = new();
+
+    private IReadOnlyList<ActionItem> _all = Array.Empty<ActionItem>();
+
     public ActionItemsViewModel(
         IActionItemRepository repo, IMailStore store, IClock clock, AppSettings settings)
     {
@@ -96,6 +156,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         _store = store;
         _clock = clock;
         _settings = settings;
+        _reportSort = SortChoices[0];
         Columns[0].IsActive = true;
     }
 
@@ -115,6 +176,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
                 .Where(i => i.CompletedUtc is { } d && _clock.UtcNow - d < DoneWindow);
 
             var all = open.Concat(recentDone).ToList();
+            _all = all;
 
             WaitingOnPeople.Clear();
             foreach (var (person, count, overdue) in ActionWorkflow.WaitingOn(all))
@@ -142,6 +204,11 @@ public sealed partial class ActionItemsViewModel : ObservableObject
             KnownAssignees.Clear();
             foreach (var (name, email) in assignees)
                 KnownAssignees.Add(string.IsNullOrWhiteSpace(email) ? name : $"{name} <{email}>");
+
+            KnownPeople.Clear();
+            foreach (var person in WaitingReport.KnownPeople(all)) KnownPeople.Add(person);
+
+            RebuildReport();
 
             // Keep the same card selected across a reload, wherever it moved.
             var again = previous is null ? null : Columns.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == previous);
@@ -215,7 +282,111 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     partial void OnSelectedChanged(ActionItem? value)
     {
         OnPropertyChanged(nameof(HasSelection));
+
+        // The form always shows the card in hand; half-typed new entries are
+        // for the card they were started on, so they go.
+        NotesDraft = value?.Notes ?? "";
+        DueDraft = value?.DueUtc?.ToLocalTime().ToString("ddd d MMM HH:mm") ?? "";
+        NewBlockerWhat = NewBlockerWho = NewBlockerDue = "";
+        NewAssignWho = NewAssignWhat = NewAssignDue = "";
+
         _ = LoadBodyAsync(value);
+    }
+
+    // ---- form submits: the same saves the shortcut editors make ----------------
+
+    public async Task AddBlockerFromFormAsync()
+    {
+        if (!await SubmitAsync(EditorMode.Blocker, NewBlockerWhat, NewBlockerWho, NewBlockerDue).ConfigureAwait(true)) return;
+        NewBlockerWhat = NewBlockerWho = NewBlockerDue = "";
+    }
+
+    public async Task AddAssignmentFromFormAsync()
+    {
+        if (!await SubmitAsync(EditorMode.Assignment, NewAssignWho, NewAssignWhat, NewAssignDue).ConfigureAwait(true)) return;
+        NewAssignWho = NewAssignWhat = NewAssignDue = "";
+    }
+
+    public Task SaveNotesFromFormAsync() => SubmitAsync(EditorMode.Note, NotesDraft, "", "");
+
+    public Task SaveDueFromFormAsync() => SubmitAsync(EditorMode.Due, DueDraft, "", "");
+
+    /// <summary>Runs a form through the editor's save; true when it saved.</summary>
+    private async Task<bool> SubmitAsync(EditorMode mode, string primary, string secondary, string due)
+    {
+        if (Selected is null) { Status = "Pick a card first"; return false; }
+
+        Editor = mode;
+        FieldPrimary = primary;
+        FieldSecondary = secondary;
+        FieldDue = due;
+
+        await CommitEditorAsync().ConfigureAwait(true);
+
+        // The save closes the editor; if it is still open, it said why not.
+        var saved = Editor == EditorMode.None;
+        if (!saved) CloseEditor();
+        return saved;
+    }
+
+    // ---- By person report --------------------------------------------------------
+
+    public void ToggleByPerson() => IsByPerson = !IsByPerson;
+
+    partial void OnReportSortChanged(SortChoice value) => RebuildReport();
+
+    private void RebuildReport()
+    {
+        var shown = HasFilter ? _all.Where(i => ActionWorkflow.Involves(i, PersonFilter)) : _all;
+        var groups = WaitingReport.ByPerson(WaitingReport.Rows(shown), ReportSort.Sort);
+
+        Report.Clear();
+        foreach (var g in groups) Report.Add(g);
+    }
+
+    /// <summary>From a report row back to its card on the board.</summary>
+    public void OpenFromReport(ActionItem item)
+    {
+        var onBoard = Columns.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == item.Id);
+        IsByPerson = false;
+        if (onBoard is not null) Select(onBoard);
+    }
+
+    /// <summary>Writes the report as a CSV and opens it (in Excel, usually).</summary>
+    public void ExportReport()
+    {
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Email Triage Reports");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, $"Waiting on - {_clock.Now:yyyy-MM-dd HHmm}.csv");
+
+            // A byte-order mark so Excel reads names with accents correctly.
+            File.WriteAllText(path, WaitingReport.ToCsv(Report, _clock.UtcNow), new System.Text.UTF8Encoding(true));
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            Status = $"Report saved to {path}";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not export the report: {ex.Message}";
+        }
+    }
+
+    /// <summary>Opens the report as an unsent email in Outlook, to address and send there.</summary>
+    public async Task EmailReportAsync()
+    {
+        try
+        {
+            await _store.CreateAndShowDraftAsync(
+                Array.Empty<string>(),
+                $"Waiting on - {_clock.Now:ddd d MMM}",
+                WaitingReport.ToHtml(Report, _clock.UtcNow)).ConfigureAwait(true);
+            Status = "Report opened as a draft in Outlook - add recipients and send it there";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not create the report email: {ex.Message}";
+        }
     }
 
     // ---- the email behind the card ------------------------------------------
@@ -244,30 +415,113 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Reads the email, re-finding it by Message-ID if it has been filed since
-    /// it was flagged, and remembers where it went.
+    /// Renders the task's whole conversation, newest first, re-finding the
+    /// flagged mail by Message-ID if it has been filed since.
     /// </summary>
     private async Task<string> RenderBodyAsync(ActionItem item)
     {
-        MailBody body;
-        try
-        {
-            body = await _store.GetBodyAsync(new MailRef(item.EntryId, item.StoreId)).ConfigureAwait(true);
-        }
-        catch
-        {
-            var found = await _store.FindByMessageIdAsync(item.InternetMessageId, null).ConfigureAwait(true);
-            if (found is null)
-                return HtmlPresenter.Render(Placeholder("The email could not be found - it may have been deleted."), true);
+        var mail = await ResolveAsync(item).ConfigureAwait(true);
+        if (mail is null)
+            return HtmlPresenter.Render(Placeholder("The email could not be found - it may have been deleted."), true);
 
-            await _repo.UpdateLocationAsync(item.InternetMessageId, found.Value.EntryId, found.Value.StoreId).ConfigureAwait(true);
-            item.EntryId = found.Value.EntryId;
-            item.StoreId = found.Value.StoreId;
-            body = await _store.GetBodyAsync(found.Value).ConfigureAwait(true);
+        IReadOnlyList<MailSummary> thread;
+        try { thread = await _store.GetConversationAsync(mail.Value, _settings.ThreadMessageLimit).ConfigureAwait(true); }
+        catch { thread = Array.Empty<MailSummary>(); }
+
+        _replyTargets[item.InternetMessageId] = thread.FirstOrDefault(m => !m.IsSent)?.Ref ?? mail.Value;
+
+        var bodies = new List<MailBody>();
+        foreach (var m in thread)
+        {
+            try { bodies.Add(await _store.GetBodyAsync(m.Ref).ConfigureAwait(true)); }
+            catch { /* one unreadable message should not hide the rest */ }
         }
+        if (bodies.Count == 0) bodies.Add(await _store.GetBodyAsync(mail.Value).ConfigureAwait(true));
 
         var blockRemote = _settings.BlockRemoteImages;
-        return await Task.Run(() => HtmlPresenter.Render(body, blockRemote)).ConfigureAwait(true);
+        return await Task.Run(() => HtmlPresenter.RenderThread(bodies, blockRemote)).ConfigureAwait(true);
+    }
+
+    /// <summary>Where the flagged mail is now, updating the stored location if it moved.</summary>
+    private async Task<MailRef?> ResolveAsync(ActionItem item)
+    {
+        var known = new MailRef(item.EntryId, item.StoreId);
+        if (!known.IsEmpty && await _store.GetSavedDraftStateAsync(new DraftRef(item.EntryId, item.StoreId)).ConfigureAwait(true)
+                is not SavedDraftState.Missing)
+            return known;
+
+        var found = await _store.FindByMessageIdAsync(item.InternetMessageId, null).ConfigureAwait(true);
+        if (found is null) return null;
+
+        await _repo.UpdateLocationAsync(item.InternetMessageId, found.Value.EntryId, found.Value.StoreId).ConfigureAwait(true);
+        item.EntryId = found.Value.EntryId;
+        item.StoreId = found.Value.StoreId;
+        return found;
+    }
+
+    /// <summary>
+    /// The mail a reply from the board should answer: the newest message from
+    /// someone else in the task's conversation.
+    /// </summary>
+    public async Task<MailRef?> ReplyTargetAsync()
+    {
+        if (Selected is not { } item) return null;
+
+        // Opening the card loads the thread; wait for it if it is still coming.
+        if (_bodies.TryGet(item.InternetMessageId, out var page))
+        {
+            try { await page.ConfigureAwait(true); } catch { }
+        }
+
+        return _replyTargets.TryGetValue(item.InternetMessageId, out var target)
+            ? target
+            : await ResolveAsync(item).ConfigureAwait(true);
+    }
+
+    /// <summary>After sending in a task's conversation, show the thread with the new message.</summary>
+    public void RefreshSelectedThread()
+    {
+        if (Selected is not { } item) return;
+        _bodies.Remove(item.InternetMessageId);
+        _replyTargets.Remove(item.InternetMessageId);
+        _ = LoadBodyAsync(item);
+    }
+
+    /// <summary>Moves a card straight to a stage - where a drag-and-drop lands it.</summary>
+    public async Task MoveToStageAsync(ActionItem item, ActionStage to)
+    {
+        Select(item);
+
+        var from = item.IsComplete ? ActionStage.Done : item.Stage;
+        if (to == from) return;
+
+        if (to == ActionStage.Done || from == ActionStage.Done)
+        {
+            if (to == ActionStage.Done || to == ActionStage.Doing)
+            {
+                await ToggleCompleteAsync().ConfigureAwait(true);
+                return;
+            }
+
+            // Reopening straight into To do or Waiting.
+            await _repo.UpdateStageAsync(item.Id, to).ConfigureAwait(true);
+            Status = $"Reopened in {Title(to)}";
+            await LoadAsync().ConfigureAwait(true);
+            return;
+        }
+
+        try
+        {
+            await _repo.UpdateStageAsync(item.Id, to).ConfigureAwait(true);
+            Status = to == ActionStage.Waiting && !item.IsWaiting
+                ? "Moved to Waiting · add who it is on with b (blocked by) or Shift+A (assign)"
+                : $"Moved to {Title(to)}";
+            await LoadAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not move it: {ex.Message}";
+        }
     }
 
     private static MailBody Placeholder(string text) => new()

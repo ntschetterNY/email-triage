@@ -103,4 +103,13 @@ public class ConversationGrouperTests
     {
         Assert.Equal(expected, ConversationGrouper.NormaliseSubject(subject));
     }
+
+    [Theory]
+    [InlineData("RE: FW: [External] Q3 Budget", "Q3 Budget")]
+    [InlineData("Re:  Site walk   Thursday", "Site walk Thursday")]
+    [InlineData("Invoice RE: April", "Invoice RE: April")]
+    public void Prefixes_strip_keeping_case(string subject, string expected)
+    {
+        Assert.Equal(expected, ConversationGrouper.StripPrefixes(subject));
+    }
 }

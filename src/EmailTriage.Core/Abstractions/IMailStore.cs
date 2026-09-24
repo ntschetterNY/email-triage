@@ -49,6 +49,12 @@ public interface IMailStore : IAsyncDisposable
         MailRef mail, ReplyScope scope, CancellationToken ct = default);
 
     /// <summary>
+    /// An empty message held open like a reply, for the composer to fill in and
+    /// send. Its <see cref="ReplyDraft.InReplyTo"/> is empty.
+    /// </summary>
+    Task<ReplyDraft> BuildNewMailAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Prepends the user's text above the quoted history and sends. The draft is
     /// released afterwards and its <see cref="DraftRef"/> becomes invalid.
     /// Any line set in <paramref name="recipients"/> replaces what Outlook put
@@ -69,6 +75,13 @@ public interface IMailStore : IAsyncDisposable
     Task<SavedDraftState> GetSavedDraftStateAsync(DraftRef saved, CancellationToken ct = default);
 
     Task SendSavedDraftAsync(DraftRef saved, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every sent or received message in the mail's conversation, wherever it
+    /// is filed, newest first, with <see cref="MailSummary.IsSent"/> marking
+    /// your own. At least the mail itself when the store has no conversations.
+    /// </summary>
+    Task<IReadOnlyList<MailSummary>> GetConversationAsync(MailRef mail, int max, CancellationToken ct = default);
 
     /// <summary>Opens any mail item in its own Outlook window.</summary>
     Task ShowItemAsync(MailRef mail, CancellationToken ct = default);

@@ -15,7 +15,8 @@ fast filing, a real action list, and snooze.
 | **Move** | `v` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. |
 | **Snooze** | `h` parks a mail and puts it back in your inbox at a time you pick. |
 | **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. |
-| **Reply** | `Enter` reply-all, `r` reply-to-sender, sent from inside the app. |
+| **Write** | `Enter` reply-all, `r` reply-to-sender, `Ctrl+N` a new message, all sent from inside the app. |
+| **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. A Calendar tab lists what's coming, and the top bar counts down to your next meeting. |
 
 ## Requirements
 
@@ -59,7 +60,7 @@ their own letters.
 | `j` / `↓` | Next message |
 | `k` / `↑` | Previous message |
 | `Home` / `Ctrl+↑`, `End` / `Ctrl+↓` | First / last message |
-| `Tab` | Switch between Triage and Action items |
+| `Tab` / `Shift+Tab` | Next / previous tab: Triage, Action items, Calendar |
 | `/` | Filter the list |
 | `F5` | Refresh |
 
@@ -78,6 +79,7 @@ their own letters.
 ### Replying
 | Key | |
 |---|---|
+| `Ctrl+N` | New message, from any tab (or the **New email** button). `Ctrl+Shift+S` jumps to its subject |
 | `Enter` | Reply to everyone |
 | `r` | Reply to the sender only |
 | `f` | Forward |
@@ -99,6 +101,15 @@ their own letters.
 | `Shift+P` | Cycle priority |
 | `o` | Open the original in Outlook |
 | `#` / `Delete` | Delete the card |
+
+### Calendar
+| Key | |
+|---|---|
+| `y` | Answer an invitation: `Enter` accepts, `↓` for maybe or decline. Type first to send a note with it. On a cancellation, takes it off your calendar |
+| `s` | Put the mail (or the card, on the board) on your calendar: `Enter` blocks the time for you, `Ctrl+Enter` invites the people on the thread |
+| `Ctrl+J` | Join the meeting on now or about to start, from any tab |
+| `Enter` | On the Calendar tab: join the meeting (Teams, Zoom, Meet, Webex), or open it in Outlook if it has no link |
+| `o` | On the Calendar tab: open the meeting in Outlook |
 
 Every binding lives in `%APPDATA%\EmailTriage\keybindings.json`, written on first run.
 A file from before the Superhuman layout is upgraded on the next start: its copies of
@@ -132,6 +143,35 @@ notes, blockers, and assignments.
 Assignments are **local by default**. Nothing is sent when you assign someone. When
 you want to actually tell them, the app opens a pre-filled draft in Outlook for you to
 review and send yourself.
+
+### Calendar
+Meeting invitations, cancellations and responses now show in the triage list, tagged
+`INVITE`, `CANCELLED`, `ACCEPTED` and so on. Before, the list left them out, so they sat
+unseen in the Outlook Inbox. Opening an invitation shows a card with the date and time,
+your current answer, and whether it clashes with anything already on your calendar.
+Outlook pencils an invitation in as soon as it arrives, so that entry itself doesn't
+count as a clash.
+
+`y` answers. The answer goes to the organizer (with your note, if you typed one) and the
+invitation is archived. Declining takes the meeting off your calendar, as Outlook does.
+An answer is an email, so `z` can't unsend it; it only brings the invitation back. On
+the Calendar tab, `y` answers the meeting directly. A recurring meeting is answered for
+the whole series.
+
+`s` puts a mail on your calendar. Type a time the way you would for snooze, with an
+optional length or range: `tomorrow 2pm 1h`, `fri 10-11:30am`. Or type just a length
+(`45m`) to be offered free slots in your working day, which runs from `MorningHour` to
+`EveningHour` in settings. `Enter` blocks the time as an appointment with the email
+attached, and `z` removes it. `Ctrl+Enter` makes it a meeting with everyone on the
+thread instead. That opens in Outlook for you to check and send, because an invitation
+goes to other people.
+
+The top bar shows the meeting on now or next, with a countdown. It turns amber five
+minutes before a meeting. Click it to see the meeting in the Calendar tab. The Calendar
+tab lists the next `CalendarDaysAhead` days (14 by default), with attendees, their
+answers and the invitation text. Settings also cover `DefaultEventMinutes` (30),
+`BlockReminderMinutes` (5), and `JoinLeadMinutes` (10), which is how close a meeting
+must be for `Ctrl+J` to join it rather than the one you're in.
 
 ### Identity
 Outlook `EntryID`s change whenever an item moves between stores, which is what breaks
@@ -174,9 +214,10 @@ loses your notes and pending snoozes, not your mail.
 dotnet test
 ```
 
-64 tests over the fuzzy matcher, the snooze date parser, folder ranking, the snooze
-scheduler (including catch-up after downtime and stale-EntryID recovery), and the
-SQLite repositories. The COM layer is not unit-tested - it needs a real Outlook - which
+Tests over the fuzzy matcher, the snooze date parser, folder ranking, the snooze
+scheduler (including catch-up after downtime and stale-EntryID recovery), the SQLite
+repositories, and the calendar logic: reading typed times and lengths, clashes, free
+slots, and finding join links. The COM layer is not unit-tested - it needs a real Outlook - which
 is exactly why it sits behind `IMailStore` and everything else is tested against a fake.
 
 ## Known limits
@@ -185,3 +226,5 @@ is exactly why it sits behind `IMailStore` and everything else is tested against
 - Snoozes fire only while the app is running; overdue ones are swept on next launch.
 - No body-preview text in the list (see above).
 - Single inbox - the default account's. Folder search spans all stores.
+- Only the default calendar. Shared and secondary calendars aren't read, so they don't
+  count toward clashes or free slots.

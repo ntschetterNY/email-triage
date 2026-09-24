@@ -40,6 +40,18 @@ public sealed class AppSettings
     public int AfternoonHour { get; set; } = 13;
     public int EveningHour { get; set; } = 18;
 
+    /// <summary>How far ahead the Calendar tab looks.</summary>
+    public int CalendarDaysAhead { get; set; } = 14;
+
+    /// <summary>Length of a calendar block when none is typed ("tomorrow 2pm" rather than "tomorrow 2pm 1h").</summary>
+    public int DefaultEventMinutes { get; set; } = 30;
+
+    /// <summary>Reminder on blocks made from mail; 0 for none.</summary>
+    public int BlockReminderMinutes { get; set; } = 5;
+
+    /// <summary>How soon before a meeting the join key picks it over the one you are in.</summary>
+    public int JoinLeadMinutes { get; set; } = 10;
+
     public SnoozeDayShape DayShape => new()
     {
         Morning = TimeSpan.FromHours(MorningHour),

@@ -17,6 +17,16 @@ internal static class ComUtil
 {
     /// <summary>Outlook item classes we care about.</summary>
     public const int OlMail = 43;
+    public const int OlAppointment = 26;
+    public const int OlMeetingRequest = 53;
+    public const int OlMeetingCancellation = 54;
+    public const int OlMeetingResponseNegative = 55;
+    public const int OlMeetingResponsePositive = 56;
+    public const int OlMeetingResponseTentative = 57;
+
+    /// <summary>Mail, and the meeting messages that arrive in the Inbox alongside it.</summary>
+    public static bool IsMailLike(int itemClass) =>
+        itemClass == OlMail || itemClass is >= OlMeetingRequest and <= OlMeetingResponseTentative;
 
     /// <summary>olFolderInbox</summary>
     public const int FolderInbox = 6;

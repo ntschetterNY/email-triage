@@ -23,6 +23,18 @@ public sealed record MailAttachment(int Index, string Name, long Size)
     /// </summary>
     public bool IsBlockedType => BlockedExtensions.Contains(Path.GetExtension(Name));
 
+    /// <summary>
+    /// Types the reading pane can show itself: PDFs through the browser's own
+    /// viewer, plus images and plain text. SVG and HTML are left out on
+    /// purpose - they can carry script.
+    /// </summary>
+    public bool CanPreview => PreviewExtensions.Contains(Path.GetExtension(Name));
+
+    private static readonly HashSet<string> PreviewExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".txt", ".csv", ".log",
+    };
+
     private static readonly HashSet<string> BlockedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".ade", ".adp", ".app", ".application", ".appref-ms", ".bas", ".bat", ".cer", ".chm", ".cmd",

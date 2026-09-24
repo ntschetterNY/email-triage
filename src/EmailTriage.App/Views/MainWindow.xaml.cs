@@ -46,11 +46,12 @@ public partial class MainWindow : Window
             RecipientField.To => ToBox,
             RecipientField.Cc => CcBox,
             RecipientField.Bcc => BccBox,
+            RecipientField.Subject => SubjectBox,
             _ => ComposerBox,
         });
 
         // Suggestions belong to the line being typed in; moving elsewhere drops them.
-        foreach (var box in new[] { ToBox, CcBox, BccBox, ComposerBox })
+        foreach (var box in new[] { ToBox, CcBox, BccBox, SubjectBox, ComposerBox })
             box.GotKeyboardFocus += (_, _) => viewModel.Triage.Composer.CloseSuggestions();
 
         // "@" in the message searches contacts. Text and caret both matter:
@@ -58,6 +59,8 @@ public partial class MainWindow : Window
         ComposerBox.TextChanged += (_, _) => UpdateMentionSearch();
         ComposerBox.SelectionChanged += (_, _) => UpdateMentionSearch();
         viewModel.Actions.PropertyChanged += OnActionsChanged;
+        viewModel.Actions.FocusRequested += OnFocusRequested;
+        viewModel.Calendar.PropertyChanged += OnCalendarChanged;
 
         Loaded += async (_, _) => await InitialiseWebViewAsync();
     }
@@ -75,8 +78,16 @@ public partial class MainWindow : Window
             Label = label,
         };
 
-        return ViewModel.Section == Section.Triage
-            ? new[]
+        // The first of several actions that has a key, for commands that moved.
+        object HintFirst(string label, params TriageAction[] actions) => new
+        {
+            Key = actions.Select(keys.Describe).FirstOrDefault(k => k.Length > 0) ?? "",
+            Label = label,
+        };
+
+        return ViewModel.Section switch
+        {
+            Section.Triage => new[]
             {
                 Hint("next/prev", TriageAction.NextMail, TriageAction.PrevMail),
                 Hint("action", TriageAction.MarkActionRequired),
@@ -84,7 +95,9 @@ public partial class MainWindow : Window
                 Hint("move", TriageAction.MoveToFolder),
                 Hint("archive", TriageAction.Archive),
                 Hint("later", TriageAction.Snooze),
-                Hint("reply all", TriageAction.ReplyAll),
+                Hint("schedule", TriageAction.ScheduleTime),
+                // Reply all lives on Enter (Confirm) in the Superhuman layout.
+                HintFirst("reply all", TriageAction.ReplyAll, TriageAction.Confirm),
                 Hint("reply", TriageAction.ReplySender),
                 Hint("forward", TriageAction.Forward),
                 Hint("attachment", TriageAction.OpenAttachment),
@@ -92,23 +105,40 @@ public partial class MainWindow : Window
                 Hint("search", TriageAction.Search),
                 Hint("undo", TriageAction.Undo),
                 Hint("help", TriageAction.ShowHelp),
-            }
-            : new[]
+            },
+            Section.Calendar => new[]
+            {
+                Hint("next/prev", TriageAction.NextMail, TriageAction.PrevMail),
+                Hint("join / open", TriageAction.Confirm),
+                Hint("outlook", TriageAction.OpenInOutlook),
+                Hint("answer", TriageAction.Rsvp),
+                Hint("join now", TriageAction.JoinMeeting),
+                Hint("undo", TriageAction.Undo),
+                Hint("refresh", TriageAction.Refresh),
+                Hint("help", TriageAction.ShowHelp),
+            },
+            _ => new[]
             {
                 Hint("column", TriageAction.PrevColumn, TriageAction.NextColumn),
                 Hint("card", TriageAction.NextMail, TriageAction.PrevMail),
                 Hint("stage", TriageAction.StageBack, TriageAction.StageForward),
+                Hint("by person", TriageAction.ToggleBoardView),
+                Hint("reply all", TriageAction.Confirm),
+                Hint("reply", TriageAction.ReplySender),
+                Hint("forward", TriageAction.Forward),
                 Hint("blocked by", TriageAction.AddBlocker),
                 Hint("assign", TriageAction.AddAssignment),
                 Hint("clear", TriageAction.ClearWait),
                 Hint("chase", TriageAction.Chase),
                 Hint("due", TriageAction.SetDue),
+                Hint("schedule", TriageAction.ScheduleTime),
                 Hint("notes", TriageAction.AddNote),
                 Hint("done", TriageAction.ToggleComplete),
                 Hint("priority", TriageAction.CyclePriority),
                 Hint("outlook", TriageAction.OpenInOutlook),
                 Hint("help", TriageAction.ShowHelp),
-            };
+            },
+        };
     }
 
     // ---- WebView2 ---------------------------------------------------------
@@ -172,9 +202,16 @@ public partial class MainWindow : Window
         core.Settings.IsPasswordAutosaveEnabled = false;
 
         // Links open in the real browser rather than hijacking the pane.
+        // Attachment previews are served from the local cache under a private host.
+        var attachments = EmailTriage.Outlook.OutlookMailStore.DefaultAttachmentFolder;
+        Directory.CreateDirectory(attachments);
+        core.SetVirtualHostNameToFolderMapping(
+            AttachmentHost, attachments, CoreWebView2HostResourceAccessKind.DenyCors);
+
         core.NavigationStarting += (_, e) =>
         {
             if (e.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return;
+            if (e.Uri.StartsWith($"https://{AttachmentHost}/", StringComparison.OrdinalIgnoreCase)) return;
             e.Cancel = true;
             OpenExternally(e.Uri);
         };
@@ -279,12 +316,193 @@ public partial class MainWindow : Window
             string.IsNullOrEmpty(html) ? "<html><body style='background:#16181d'></body></html>" : html);
     }
 
+    // ---- action form and report ----------------------------------------------
+
+    private async void OnFormDueSave(object sender, RoutedEventArgs e) => await SubmitFormAsync("form:due");
+    private async void OnFormBlockerAdd(object sender, RoutedEventArgs e) => await SubmitFormAsync("form:blocker");
+    private async void OnFormAssignAdd(object sender, RoutedEventArgs e) => await SubmitFormAsync("form:assign");
+    private async void OnFormNotesSave(object sender, RoutedEventArgs e) => await SubmitFormAsync("form:notes");
+
+    private async Task SubmitFormAsync(string form)
+    {
+        switch (form)
+        {
+            case "form:due": await ViewModel.Actions.SaveDueFromFormAsync(); break;
+            case "form:blocker": await ViewModel.Actions.AddBlockerFromFormAsync(); break;
+            case "form:assign": await ViewModel.Actions.AddAssignmentFromFormAsync(); break;
+            case "form:notes": await ViewModel.Actions.SaveNotesFromFormAsync(); break;
+        }
+    }
+
+    /// <summary>The form a focused field belongs to, from the Tag on it or an ancestor.</summary>
+    private string? FormOf(DependencyObject? element)
+    {
+        for (var e = element; e is not null; e = System.Windows.Media.VisualTreeHelper.GetParent(e))
+        {
+            if (e is FrameworkElement { Tag: string tag } && tag.StartsWith("form:", StringComparison.Ordinal)) return tag;
+            if (ReferenceEquals(e, ActionForm)) return null;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// While typing in the action form, keys are text: Enter saves that form
+    /// (Ctrl+Enter for the multi-line notes), Esc leaves the field, and
+    /// nothing else is taken as a shortcut. Decided synchronously, so the key
+    /// is marked handled before the field can also act on it.
+    /// </summary>
+    /// <returns>True when the form owns the key; <paramref name="submit"/> names a form to save.</returns>
+    private bool TryHandleFormKey(KeyEventArgs e, out string? submit)
+    {
+        submit = null;
+        if (Keyboard.FocusedElement is not DependencyObject focused || FormOf(focused) is not { } form) return false;
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+
+        if (key == Key.Escape)
+        {
+            e.Handled = true;
+            Focus();
+            return true;
+        }
+
+        if (key == Key.Return && (form != "form:notes" || ctrl))
+        {
+            e.Handled = true;
+
+            // An open drop-down gets Enter first, to take the highlighted name.
+            if (FindParent<ComboBox>(focused) is { IsDropDownOpen: true } combo) combo.IsDropDownOpen = false;
+            else submit = form;
+            return true;
+        }
+
+        return true; // the field has it; not a shortcut
+    }
+
+    private static T? FindParent<T>(DependencyObject? e) where T : DependencyObject
+    {
+        for (; e is not null; e = System.Windows.Media.VisualTreeHelper.GetParent(e))
+            if (e is T match) return match;
+        return null;
+    }
+
+    private void OnFocusRequested(object? sender, FormField field)
+    {
+        Control target = field switch
+        {
+            FormField.Blocker => FormBlockerWhat,
+            FormField.Assignment => FormAssignWho,
+            FormField.Notes => FormNotes,
+            _ => FormDue,
+        };
+
+        ViewModel.Actions.IsByPerson = false;
+        target.BringIntoView();
+        FocusLater(target);
+    }
+
+    private void OnShowBoard(object sender, RoutedEventArgs e) { ViewModel.Actions.IsByPerson = false; Focus(); }
+    private void OnShowByPerson(object sender, RoutedEventArgs e) { ViewModel.Actions.IsByPerson = true; Focus(); }
+    private void OnReportExport(object sender, RoutedEventArgs e) { ViewModel.Actions.ExportReport(); Focus(); }
+    private async void OnReportEmail(object sender, RoutedEventArgs e) { await ViewModel.Actions.EmailReportAsync(); Focus(); }
+
+    private void OnReportRowClick(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is EmailTriage.Core.Models.ActionItem item)
+            ViewModel.Actions.OpenFromReport(item);
+        Focus();
+    }
+
+    private async void OnComposeClick(object sender, RoutedEventArgs e) => await ViewModel.ComposeAsync();
+
+    // ---- calendar ------------------------------------------------------------
+
+    /// <summary>The strip in the top bar: show that meeting in the Calendar tab.</summary>
+    private void OnStripClick(object sender, MouseButtonEventArgs e)
+    {
+        var ev = ViewModel.Calendar.StripEvent;
+        ViewModel.Section = Section.Calendar;
+        if (ev is not null) ViewModel.Calendar.Select(ev);
+        Focus();
+    }
+
+    // Keep the keyboard on the window, where the calendar keys live.
+    private void OnAgendaClick(object sender, MouseButtonEventArgs e) => Focus();
+
+    private async void OnAgendaJoin(object sender, RoutedEventArgs e) { await ViewModel.Calendar.ActivateAsync(); Focus(); }
+    private async void OnAgendaOpen(object sender, RoutedEventArgs e) { await ViewModel.Calendar.OpenInOutlookAsync(); Focus(); }
+    private void OnAgendaAnswer(object sender, RoutedEventArgs e) => ViewModel.AnswerSelectedMeeting();
+
+    private void OnCalendarChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(CalendarViewModel.Selected)) return;
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (ViewModel.Calendar.Selected is { } row) AgendaList.ScrollIntoView(row);
+        });
+    }
+
     // ---- action board clicks -----------------------------------------------
+
+    private Point _cardPressedAt;
+    private EmailTriage.Core.Models.ActionItem? _cardPressed;
+
+    private void OnBoardCardMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _cardPressed = (sender as FrameworkElement)?.DataContext as EmailTriage.Core.Models.ActionItem;
+        _cardPressedAt = e.GetPosition(this);
+    }
+
+    /// <summary>Starts a drag once the mouse has moved far enough to not be a click.</summary>
+    private void OnBoardCardMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_cardPressed is not { } item || e.LeftButton != MouseButtonState.Pressed) return;
+
+        var moved = e.GetPosition(this) - _cardPressedAt;
+        if (Math.Abs(moved.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(moved.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+        _cardPressed = null;
+        ViewModel.Actions.Select(item);
+        DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(typeof(EmailTriage.Core.Models.ActionItem), item), DragDropEffects.Move);
+        foreach (var column in ViewModel.Actions.Columns) column.IsDropTarget = false;
+    }
 
     private void OnBoardCardClick(object sender, MouseButtonEventArgs e)
     {
+        _cardPressed = null;
         if ((sender as FrameworkElement)?.DataContext is EmailTriage.Core.Models.ActionItem item)
             ViewModel.Actions.Select(item);
+        Focus();
+    }
+
+    private void OnColumnDragOver(object sender, DragEventArgs e)
+    {
+        var ok = e.Data.GetDataPresent(typeof(EmailTriage.Core.Models.ActionItem));
+        e.Effects = ok ? DragDropEffects.Move : DragDropEffects.None;
+        if (ok && (sender as FrameworkElement)?.Tag is BoardColumn column)
+        {
+            foreach (var c in ViewModel.Actions.Columns) c.IsDropTarget = c == column;
+        }
+        e.Handled = true;
+    }
+
+    private void OnColumnDragLeave(object sender, DragEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is BoardColumn column) column.IsDropTarget = false;
+    }
+
+    private async void OnColumnDrop(object sender, DragEventArgs e)
+    {
+        foreach (var c in ViewModel.Actions.Columns) c.IsDropTarget = false;
+
+        if ((sender as FrameworkElement)?.Tag is BoardColumn column &&
+            e.Data.GetData(typeof(EmailTriage.Core.Models.ActionItem)) is EmailTriage.Core.Models.ActionItem item)
+        {
+            await ViewModel.Actions.MoveToStageAsync(item, column.Stage);
+        }
         Focus();
     }
 
@@ -392,7 +610,11 @@ public partial class MainWindow : Window
         switch (e.PropertyName)
         {
             case nameof(TriageViewModel.BodyHtml):
-                RenderBody(ViewModel.Triage.BodyHtml);
+                if (!ViewModel.Triage.IsPreviewing) RenderBody(ViewModel.Triage.BodyHtml);
+                break;
+
+            case nameof(TriageViewModel.PreviewPath):
+                ShowPreviewOrBody();
                 break;
 
             case nameof(TriageViewModel.Selected):
@@ -418,13 +640,90 @@ public partial class MainWindow : Window
         else Dispatcher.BeginInvoke(Focus);
     }
 
-    private async void OnAttachmentClick(object sender, RoutedEventArgs e)
+    // Pressing on a chip starts saving the file, so a drag that follows has it
+    // on disk by the time Explorer asks for it.
+    private Point _chipPressedAt;
+    private EmailTriage.Core.Models.MailAttachment? _chipPressed;
+    private Task<string?>? _chipSave;
+    private bool _chipDragged;
+
+    private void OnAttachmentMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if ((sender as FrameworkElement)?.Tag is EmailTriage.Core.Models.MailAttachment attachment)
-            await ViewModel.Triage.OpenAttachmentAsync(attachment);
+        _chipPressed = (sender as FrameworkElement)?.Tag as EmailTriage.Core.Models.MailAttachment;
+        _chipPressedAt = e.GetPosition(this);
+        _chipDragged = false;
+        _chipSave = _chipPressed is { IsBlockedType: false } a ? ViewModel.Triage.SaveAttachmentForDragAsync(a) : null;
+    }
+
+    private async void OnAttachmentMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_chipPressed is not { } attachment || e.LeftButton != MouseButtonState.Pressed) return;
+
+        var moved = e.GetPosition(this) - _chipPressedAt;
+        if (Math.Abs(moved.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(moved.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+        _chipPressed = null;
+        _chipDragged = true;
+
+        if (attachment.IsBlockedType)
+        {
+            await ViewModel.Triage.SaveAttachmentForDragAsync(attachment); // reports why not
+            return;
+        }
+
+        var path = _chipSave is null ? null : await _chipSave;
+        if (path is null || Mouse.LeftButton != MouseButtonState.Pressed) return;
+
+        // A plain file drop: Explorer, the desktop and synced SharePoint or
+        // OneDrive folders all take a copy of the file.
+        var data = new DataObject(DataFormats.FileDrop, new[] { path });
+        DragDrop.DoDragDrop((DependencyObject)sender, data, DragDropEffects.Copy);
+        ViewModel.Triage.Status = $"{attachment.Name} copied where you dropped it";
+    }
+
+    private async void OnAttachmentClick(object sender, MouseButtonEventArgs e)
+    {
+        var dragged = _chipDragged;
+        _chipPressed = null;
+        _chipDragged = false;
+
+        if (!dragged && (sender as FrameworkElement)?.Tag is EmailTriage.Core.Models.MailAttachment attachment)
+            await ViewModel.Triage.ShowAttachmentAsync(attachment);
 
         // Keep the keyboard on the window, where the triage keys live.
         Focus();
+    }
+
+    private async void OnAttachmentOpenClick(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        _chipPressed = null;
+        if ((sender as FrameworkElement)?.Tag is EmailTriage.Core.Models.MailAttachment attachment)
+            await ViewModel.Triage.OpenAttachmentAsync(attachment);
+        Focus();
+    }
+
+    /// <summary>Private host the panes map onto the attachment cache, for in-app previews.</summary>
+    private const string AttachmentHost = "attachments.example";
+
+    private void ShowPreviewOrBody()
+    {
+        if (!_webViewReady || BodyView.CoreWebView2 is null) return;
+
+        if (ViewModel.Triage.PreviewPath is not { } path)
+        {
+            RenderBody(ViewModel.Triage.BodyHtml);
+            return;
+        }
+
+        var root = EmailTriage.Outlook.OutlookMailStore.DefaultAttachmentFolder;
+        var relative = Path.GetRelativePath(root, path);
+        if (relative.StartsWith("..")) return; // only ever serve the attachment cache
+
+        var url = $"https://{AttachmentHost}/" +
+                  string.Join('/', relative.Split(Path.DirectorySeparatorChar).Select(Uri.EscapeDataString));
+        BodyView.CoreWebView2.Navigate(url);
     }
 
     private void UpdateMentionSearch()
@@ -529,7 +828,7 @@ public partial class MainWindow : Window
 
         _ = UpdateAirspaceAsync();
         if (ViewModel.Triage.Composer.IsOpen)
-            FocusLater(ViewModel.Triage.Composer.IsForward ? ToBox : ComposerBox);
+            FocusLater(ViewModel.Triage.Composer.StartsWithRecipients ? ToBox : ComposerBox);
         else Dispatcher.BeginInvoke(Focus);
     }
 
@@ -567,6 +866,13 @@ public partial class MainWindow : Window
     {
         base.OnPreviewKeyDown(e);
         if (e.Handled) return;
+
+        // Typing in the action form: its own keys, never shortcuts.
+        if (ViewModel.Section == Section.Actions && TryHandleFormKey(e, out var submit))
+        {
+            if (submit is not null) await SubmitFormAsync(submit);
+            return;
+        }
 
         var stroke = KeyStroke.FromEvent(e);
         if (stroke.IsEmpty) return;

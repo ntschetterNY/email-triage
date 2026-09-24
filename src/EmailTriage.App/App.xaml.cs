@@ -74,7 +74,11 @@ public partial class App : Application
         services.AddSingleton<ScheduledSender>();
         services.AddSingleton<IFolderUsageRepository, FolderUsageRepository>();
 
-        services.AddSingleton<IMailStore, OutlookMailStore>();
+        services.AddSingleton<OutlookMailStore>();
+        services.AddSingleton<IMailStore>(sp => sp.GetRequiredService<OutlookMailStore>());
+
+        // The same instance: one connection to Outlook, one COM thread.
+        services.AddSingleton<ICalendarStore>(sp => sp.GetRequiredService<OutlookMailStore>());
         services.AddSingleton<FolderSearchService>();
         services.AddSingleton(sp => new ContactDirectory(
             sp.GetRequiredService<IMailStore>(),
@@ -91,6 +95,7 @@ public partial class App : Application
 
         services.AddSingleton<TriageViewModel>();
         services.AddSingleton<ActionItemsViewModel>();
+        services.AddSingleton<CalendarViewModel>();
         services.AddSingleton<MainViewModel>();
         services.AddSingleton<MainWindow>();
     }

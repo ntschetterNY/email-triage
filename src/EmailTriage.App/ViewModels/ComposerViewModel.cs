@@ -11,7 +11,7 @@ namespace EmailTriage.App.ViewModels;
 public sealed record SentEventArgs(string Message, MailRef InReplyTo, bool MarkDone);
 
 /// <summary>Where suggestions are showing: a recipient line, or an @mention in the message.</summary>
-public enum RecipientField { None, To, Cc, Bcc, Body }
+public enum RecipientField { None, To, Cc, Bcc, Body, Subject }
 
 /// <summary>
 /// The inline reply and forward box. Outlook builds the draft - quoted history,
@@ -100,13 +100,28 @@ public sealed partial class ComposerViewModel : ObservableObject
         null => "",
         ReplyScope.All => "Reply all",
         ReplyScope.Forward => "Forward",
+        ReplyScope.New => "New message",
         _ => "Reply to sender",
     };
 
     /// <summary>A forward starts with no recipients, so focus goes to the To line.</summary>
     public bool IsForward => Draft?.Scope == ReplyScope.Forward;
 
-    public string Subject => Draft?.Subject ?? "";
+    /// <summary>A new message: the subject is typed, not inherited.</summary>
+    public bool IsNew => Draft?.Scope == ReplyScope.New;
+
+    /// <summary>Forwards and new messages have nobody on them yet, so they open on the To line.</summary>
+    public bool StartsWithRecipients => IsForward || IsNew;
+
+    /// <summary>The subject line of a new message; replies keep Outlook's.</summary>
+    [ObservableProperty] private string _subjectLine = "";
+
+    public string Subject => IsNew ? SubjectLine : Draft?.Subject ?? "";
+
+    // Sending with no subject asks once first, as Outlook does.
+    private bool _noSubjectConfirmed;
+
+    partial void OnSubjectLineChanged(string value) => _noSubjectConfirmed = false;
 
     /// <summary>Raised once a message is away or scheduled, with a line for the status bar.</summary>
     public event EventHandler<SentEventArgs>? Sent;
@@ -141,6 +156,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         _settingLines = true;
         ToLine = _initialTo = RecipientLine.Format(draft.To);
         CcLine = _initialCc = RecipientLine.Format(draft.Cc);
+        SubjectLine = draft.Subject;
         BccLine = _initialBcc = "";
         _settingLines = false;
         _mentions.Clear();
@@ -148,6 +164,8 @@ public sealed partial class ComposerViewModel : ObservableObject
 
         OnPropertyChanged(nameof(Header));
         OnPropertyChanged(nameof(IsForward));
+        OnPropertyChanged(nameof(IsNew));
+        OnPropertyChanged(nameof(StartsWithRecipients));
         OnPropertyChanged(nameof(Subject));
 
         // Last, so the view sees the right IsForward when it picks what to focus.
@@ -279,7 +297,22 @@ public sealed partial class ComposerViewModel : ObservableObject
         }
 
         // Forwarding with no note of your own is normal; an empty reply is not.
-        if (!IsForward && string.IsNullOrWhiteSpace(BodyText))
+        if (IsNew)
+        {
+            if (string.IsNullOrWhiteSpace(SubjectLine) && string.IsNullOrWhiteSpace(BodyText))
+            {
+                Status = "Nothing to send - add a subject or a message.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(SubjectLine) && !_noSubjectConfirmed)
+            {
+                _noSubjectConfirmed = true;
+                Status = "No subject - send again to send it anyway, or Ctrl+Shift+S to add one.";
+                return;
+            }
+        }
+        else if (!IsForward && string.IsNullOrWhiteSpace(BodyText))
         {
             Status = "Nothing to send - type a reply first.";
             return;
@@ -301,8 +334,11 @@ public sealed partial class ComposerViewModel : ObservableObject
         var overrides = new RecipientOverrides(
             ToLine != _initialTo ? to : null,
             CcLine != _initialCc ? cc : null,
-            BccLine != _initialBcc ? bcc : null);
-        var changes = overrides is { To: null, Cc: null, Bcc: null } ? null : overrides;
+            BccLine != _initialBcc ? bcc : null)
+        {
+            Subject = IsNew ? SubjectLine.Trim() : null,
+        };
+        var changes = overrides is { ChangesRecipients: false, Subject: null } ? null : overrides;
 
         IsSending = true;
         Status = sendAt is null ? "Sending..." : "Scheduling...";
@@ -321,7 +357,7 @@ public sealed partial class ComposerViewModel : ObservableObject
                 {
                     DraftEntryId = saved.EntryId,
                     DraftStoreId = saved.StoreId,
-                    Subject = Draft.Subject,
+                    Subject = Subject,
                     Recipients = string.Join("; ", to.Concat(cc)),
                     SendAtUtc = when.ToUniversalTime(),
                     HoldIfReplied = HoldIfReplied,
@@ -371,7 +407,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         ScheduleText = "";
 
         _settingLines = true;
-        ToLine = CcLine = BccLine = "";
+        ToLine = CcLine = BccLine = SubjectLine = "";
         _settingLines = false;
         _mentions.Clear();
         CloseSuggestions();

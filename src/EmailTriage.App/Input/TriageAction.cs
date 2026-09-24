@@ -36,6 +36,9 @@ public enum TriageAction
     /// <summary>Forward, typing the recipients in. Bound to `f`.</summary>
     Forward,
 
+    /// <summary>Write a new message from scratch, from any tab. Bound to Ctrl+N, as in Outlook.</summary>
+    Compose,
+
     /// <summary>Pick one of the open message's attachments to open. Bound to `v`.</summary>
     OpenAttachment,
 
@@ -72,4 +75,21 @@ public enum TriageAction
 
     /// <summary>Draft a chase email to whoever holds the hand-off.</summary>
     Chase,
+
+    /// <summary>Switch the action tab between the board and the By person report.</summary>
+    ToggleBoardView,
+
+    // Calendar
+
+    /// <summary>Accept, tentatively accept or decline an invitation, optionally with a note.</summary>
+    Rsvp,
+
+    /// <summary>Put the mail or task on the calendar: time for yourself, or a meeting with the people on it.</summary>
+    ScheduleTime,
+
+    /// <summary>Join the meeting under way or about to start, from anywhere.</summary>
+    JoinMeeting,
+
+    /// <summary>The tab before this one; the reverse of SwitchSection.</summary>
+    PrevSection,
 }

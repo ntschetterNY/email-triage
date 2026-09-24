@@ -239,9 +239,9 @@ public sealed partial class OutlookMailStore : IMailStore
                     row = table.GetNextRow();
                     if (row is null) break;
 
-                    var messageClass = ComUtil.Str(() => row!["MessageClass"]);
-                    if (!messageClass.StartsWith("IPM.Note", StringComparison.OrdinalIgnoreCase))
-                        continue;
+                    // Mail and meeting messages; reports, tasks and the like stay out.
+                    var kind = MailKinds.FromMessageClass(ComUtil.Str(() => row!["MessageClass"]));
+                    if (kind is null) continue;
 
                     results.Add(new MailSummary
                     {
@@ -255,6 +255,7 @@ public sealed partial class OutlookMailStore : IMailStore
                         HasAttachments = ComUtil.Bool(() => row![PropHasAttach]),
                         Categories = ComUtil.ParseCategories(ComUtil.Str(() => row!["Categories"])),
                         ConversationKey = ConversationKeyFrom(ComUtil.Try<object?>(() => row![PropConversationId])),
+                        Kind = kind.Value,
                     });
                 }
                 finally { ComUtil.Release(row); }
@@ -285,7 +286,7 @@ public sealed partial class OutlookMailStore : IMailStore
             {
                 try
                 {
-                    if (ComUtil.Int(() => item!.Class) == ComUtil.OlMail)
+                    if (ComUtil.IsMailLike(ComUtil.Int(() => item!.Class)))
                         results.Add(SummaryFromItem((object)item!, storeId));
                 }
                 finally
@@ -316,6 +317,7 @@ public sealed partial class OutlookMailStore : IMailStore
         HasAttachments = ComUtil.Int(() => mail.Attachments.Count) > 0,
             Categories = ComUtil.ParseCategories(ComUtil.Str(() => mail.Categories)),
             ConversationKey = ComUtil.Str(() => mail.ConversationID),
+            Kind = MailKinds.FromMessageClass(ComUtil.Str(() => mail.MessageClass)) ?? MailKind.Mail,
         };
     }
 

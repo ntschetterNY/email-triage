@@ -10,4 +10,7 @@ public enum ReplyScope
 
     /// <summary>Forward to recipients the user types in (bound to `f`).</summary>
     Forward,
+
+    /// <summary>A new message, answering nothing (bound to Ctrl+N).</summary>
+    New,
 }

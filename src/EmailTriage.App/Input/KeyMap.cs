@@ -59,6 +59,9 @@ public sealed class KeyMap
         // Replying. Reply all is Enter, which is Confirm everywhere else.
         ("r",           TriageAction.ReplySender),
         ("f",           TriageAction.Forward),
+
+        // Superhuman composes on `c`, but that is the board's chase; Ctrl+N is Outlook's own.
+        ("ctrl+n",      TriageAction.Compose),
         ("ctrl+o",      TriageAction.OpenAttachment),
 
         // Action list
@@ -79,9 +82,16 @@ public sealed class KeyMap
         ("d",           TriageAction.SetDue),
         ("w",           TriageAction.ClearWait),
         ("c",           TriageAction.Chase),
+        ("g",           TriageAction.ToggleBoardView),
+
+        // Calendar: y answers an invitation, s schedules time for a mail or task
+        ("y",           TriageAction.Rsvp),
+        ("s",           TriageAction.ScheduleTime),
+        ("ctrl+j",      TriageAction.JoinMeeting),
 
         // Shell
         ("tab",         TriageAction.SwitchSection),
+        ("shift+tab",   TriageAction.PrevSection),
         ("/",           TriageAction.Search),
         ("f5",          TriageAction.Refresh),
         ("shift+oem2",  TriageAction.ShowHelp),

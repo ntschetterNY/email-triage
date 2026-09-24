@@ -7,7 +7,7 @@ using EmailTriage.Core.Services;
 
 namespace EmailTriage.App.ViewModels;
 
-public enum Section { Triage, Actions }
+public enum Section { Triage, Actions, Calendar }
 
 /// <summary>
 /// Owns startup, section switching and key routing. Keys are dispatched here
@@ -26,6 +26,7 @@ public sealed partial class MainViewModel : ObservableObject
     public KeyMap Keys { get; }
     public TriageViewModel Triage { get; }
     public ActionItemsViewModel Actions { get; }
+    public CalendarViewModel Calendar { get; }
 
     [ObservableProperty] private Section _section = Section.Triage;
     [ObservableProperty] private bool _isHelpVisible;
@@ -44,7 +45,8 @@ public sealed partial class MainViewModel : ObservableObject
         KeyMap keys,
         ContactDirectory contacts,
         ScheduledSender sender,
-        IScheduledSendRepository scheduled)
+        IScheduledSendRepository scheduled,
+        CalendarViewModel calendar)
     {
         _contacts = contacts;
         _sender = sender;
@@ -55,10 +57,30 @@ public sealed partial class MainViewModel : ObservableObject
 
         Triage = triage;
         Actions = actions;
+        Calendar = calendar;
         Keys = keys;
+
+        // The status bar shows the tab on screen, and keeps up as that tab's line changes.
+        Triage.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(TriageViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
+        Actions.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(ActionItemsViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
+        Calendar.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(CalendarViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
+
+        // Answering, blocking time or undoing a block: the agenda and strip reread.
+        Triage.CalendarChanged += (_, _) => _ = Calendar.RefreshQuietlyAsync();
 
         Triage.Composer.Sent += async (_, sent) =>
         {
+            // Sent from the action board: stay there and show the thread with it in.
+            if (Section == Section.Actions)
+            {
+                Actions.Status = sent.Message;
+                Actions.RefreshSelectedThread();
+            }
+            else if (Section == Section.Calendar)
+            {
+                Calendar.Status = sent.Message;
+            }
+
             // Ctrl+Shift+Enter: send & mark done, archiving the conversation replied to.
             var status = sent.Message;
             if (sent.MarkDone)
@@ -73,7 +95,30 @@ public sealed partial class MainViewModel : ObservableObject
         };
     }
 
-    public string StatusText => Section == Section.Triage ? Triage.Status : Actions.Status;
+    public string StatusText => Section switch
+    {
+        Section.Actions => Actions.Status,
+        Section.Calendar => Calendar.Status,
+        _ => Triage.Status,
+    };
+
+    /// <summary>A new message, from any tab: Ctrl+N or the button in the top bar.</summary>
+    public async Task ComposeAsync()
+    {
+        if (Triage.Composer.IsOpen) return;
+        if (await Triage.StartNewMailAsync().ConfigureAwait(true) is { } problem) SetStatus(problem);
+    }
+
+    /// <summary>Reports on the status line of whichever tab is showing.</summary>
+    private void SetStatus(string message)
+    {
+        switch (Section)
+        {
+            case Section.Actions: Actions.Status = message; break;
+            case Section.Calendar: Calendar.Status = message; break;
+            default: Triage.Status = message; break;
+        }
+    }
 
     public async Task InitialiseAsync()
     {
@@ -136,6 +181,11 @@ public sealed partial class MainViewModel : ObservableObject
 
             await Triage.LoadAsync().ConfigureAwait(true);
             await Actions.LoadAsync().ConfigureAwait(true);
+
+            // The strip in the top bar needs the calendar whichever tab is showing.
+            await Calendar.RefreshQuietlyAsync().ConfigureAwait(true);
+            Calendar.Start();
+
             await RefreshSnoozeCountAsync().ConfigureAwait(true);
             await RefreshScheduledCountAsync().ConfigureAwait(true);
         }
@@ -200,7 +250,12 @@ public sealed partial class MainViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(StatusText));
         if (value == Section.Triage) _refreshHeld = false;
-        _ = value == Section.Actions ? Actions.LoadAsync() : Triage.LoadAsync();
+        _ = value switch
+        {
+            Section.Actions => Actions.LoadAsync(),
+            Section.Calendar => Calendar.LoadAsync(),
+            _ => Triage.LoadAsync(),
+        };
     }
 
     /// <summary>
@@ -269,6 +324,7 @@ public sealed partial class MainViewModel : ObservableObject
                 case System.Windows.Input.Key.C: composer.RequestFocus(RecipientField.Cc); return true;
                 case System.Windows.Input.Key.B: composer.RequestFocus(RecipientField.Bcc); return true;
                 case System.Windows.Input.Key.M: composer.RequestFocus(RecipientField.Body); return true;
+                case System.Windows.Input.Key.S when composer.IsNew: composer.RequestFocus(RecipientField.Subject); return true;
             }
         }
 
@@ -302,7 +358,7 @@ public sealed partial class MainViewModel : ObservableObject
         // Confirm - so it must be caught before the action switch.
         if (ctrlEnter)
         {
-            await Triage.ConfirmPaletteAsync(forceCreate: true).ConfigureAwait(true);
+            await ConfirmPaletteAsync(forceCreate: true).ConfigureAwait(true);
             return true;
         }
 
@@ -313,7 +369,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return true;
 
             case TriageAction.Confirm:
-                await Triage.ConfirmPaletteAsync(forceCreate: false).ConfigureAwait(true);
+                await ConfirmPaletteAsync(forceCreate: false).ConfigureAwait(true);
                 return true;
 
             case TriageAction.NextMail:
@@ -330,6 +386,17 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// The answer and schedule palettes also open from the board and the
+    /// Calendar tab; what they report belongs on the line of the tab showing.
+    /// </summary>
+    private async Task ConfirmPaletteAsync(bool forceCreate)
+    {
+        var before = Triage.Status;
+        await Triage.ConfirmPaletteAsync(forceCreate).ConfigureAwait(true);
+        if (Section != Section.Triage && Triage.Status != before) SetStatus(Triage.Status);
+    }
+
     private async Task<bool> HandleEditorKeyAsync(TriageAction action, bool ctrlEnter)
     {
         if (ctrlEnter) { await Actions.CommitEditorAsync().ConfigureAwait(true); return true; }
@@ -342,28 +409,51 @@ public sealed partial class MainViewModel : ObservableObject
         switch (action)
         {
             case TriageAction.SwitchSection:
-                Section = Section == Section.Triage ? Section.Actions : Section.Triage;
+                Section = (Section)(((int)Section + 1) % SectionCount);
+                return true;
+
+            case TriageAction.PrevSection:
+                Section = (Section)(((int)Section + SectionCount - 1) % SectionCount);
                 return true;
 
             case TriageAction.ShowHelp:
                 IsHelpVisible = true;
                 return true;
 
+            case TriageAction.JoinMeeting:
+                SetStatus(await Calendar.JoinNowAsync().ConfigureAwait(true));
+                return true;
+
+            case TriageAction.Compose:
+                await ComposeAsync().ConfigureAwait(true);
+                return true;
+
             case TriageAction.Refresh:
-                if (Section == Section.Triage) await Triage.LoadAsync().ConfigureAwait(true);
-                else await Actions.LoadAsync().ConfigureAwait(true);
+                switch (Section)
+                {
+                    case Section.Triage: await Triage.LoadAsync().ConfigureAwait(true); break;
+                    case Section.Actions: await Actions.LoadAsync().ConfigureAwait(true); break;
+                    case Section.Calendar: await Calendar.LoadAsync().ConfigureAwait(true); break;
+                }
                 await RefreshSnoozeCountAsync().ConfigureAwait(true);
                 return true;
 
             case TriageAction.Cancel:
-                Triage.CancelOverlays();
+                // On the board, Esc drops the "waiting on" filter.
+                if (Section == Section.Actions) await Actions.ClearFilterAsync().ConfigureAwait(true);
+                else if (Section == Section.Triage) Triage.CancelOverlays();
                 return true;
         }
 
-        return Section == Section.Triage
-            ? await HandleTriageKeyAsync(action).ConfigureAwait(true)
-            : await HandleActionsKeyAsync(action).ConfigureAwait(true);
+        return Section switch
+        {
+            Section.Actions => await HandleActionsKeyAsync(action).ConfigureAwait(true),
+            Section.Calendar => await HandleCalendarKeyAsync(action).ConfigureAwait(true),
+            _ => await HandleTriageKeyAsync(action).ConfigureAwait(true),
+        };
     }
+
+    private static readonly int SectionCount = Enum.GetValues<Section>().Length;
 
     private async Task<bool> HandleTriageKeyAsync(TriageAction action)
     {
@@ -428,9 +518,98 @@ public sealed partial class MainViewModel : ObservableObject
                 Triage.IsSearching = true;
                 return true;
 
+            case TriageAction.Rsvp:
+                Triage.OpenRsvpForSelected();
+                return true;
+
+            case TriageAction.ScheduleTime:
+                Triage.OpenScheduleForSelected();
+                return true;
+
             default:
                 return false;
         }
+    }
+
+    private async Task<bool> HandleCalendarKeyAsync(TriageAction action)
+    {
+        switch (action)
+        {
+            case TriageAction.NextMail: Calendar.Move(1); return true;
+            case TriageAction.PrevMail: Calendar.Move(-1); return true;
+            case TriageAction.PageDown: Calendar.Move(10); return true;
+            case TriageAction.PageUp: Calendar.Move(-10); return true;
+            case TriageAction.FirstMail: Calendar.MoveToEnd(false); return true;
+            case TriageAction.LastMail: Calendar.MoveToEnd(true); return true;
+
+            // Enter goes to the meeting: its Teams or Zoom link, else Outlook.
+            case TriageAction.Confirm: await Calendar.ActivateAsync().ConfigureAwait(true); return true;
+            case TriageAction.OpenInOutlook: await Calendar.OpenInOutlookAsync().ConfigureAwait(true); return true;
+
+            case TriageAction.Rsvp:
+                AnswerSelectedMeeting();
+                return true;
+
+            // Undoes a block made with s, like everywhere else.
+            case TriageAction.Undo:
+                await Triage.UndoAsync().ConfigureAwait(true);
+                Calendar.Status = Triage.Status;
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>y on the Calendar tab: answer the meeting straight from the calendar.</summary>
+    public void AnswerSelectedMeeting()
+    {
+        if (Calendar.Selected?.Event is not { } ev) return;
+
+        if (!ev.CanRespond)
+        {
+            Calendar.Status = ev.IsOrganizer
+                ? "This is your own meeting - there is nobody to answer"
+                : "Nothing to answer - this is an appointment, not an invitation";
+            return;
+        }
+
+        Triage.OpenRsvpPalette(new RsvpTarget(
+            ev.Ref,
+            string.IsNullOrWhiteSpace(ev.Subject) ? "(no subject)" : ev.Subject,
+            $"{ev.Start:ddd d MMM} {CalendarMath.TimeRange(ev.Start, ev.End, ev.IsAllDay)}",
+            ev.Organizer,
+            ev.Response,
+            IsSeries: ev.IsRecurring));
+    }
+
+    /// <summary>s on the board: time on the calendar to get the task done.</summary>
+    private async Task ScheduleFromBoardAsync()
+    {
+        if (Actions.Selected is not { } item) return;
+
+        var mail = await Actions.ReplyTargetAsync().ConfigureAwait(true);
+        Triage.OpenSchedulePalette(new ScheduleTarget(
+            ConversationGrouper.StripPrefixes(item.Subject),
+            mail,
+            item.SenderAddress.Contains('@') ? new[] { item.SenderAddress } : Array.Empty<string>(),
+            $"Action item from {item.SenderName}." + (mail is null ? "" : " The email is attached."),
+            OfferUndo: false));
+    }
+
+    private async Task ReplyFromBoardAsync(ReplyScope scope)
+    {
+        if (!Actions.HasSelection) return;
+
+        Actions.Status = "Opening the conversation...";
+        var target = await Actions.ReplyTargetAsync().ConfigureAwait(true);
+        if (target is null)
+        {
+            Actions.Status = "Could not find this task's email - it may have been deleted";
+            return;
+        }
+
+        Actions.Status = await Triage.StartReplyToAsync(target.Value, scope).ConfigureAwait(true) ?? "";
     }
 
     private async Task<bool> HandleActionsKeyAsync(TriageAction action)
@@ -444,14 +623,31 @@ public sealed partial class MainViewModel : ObservableObject
 
             case TriageAction.StageBack: await Actions.StepStageAsync(-1).ConfigureAwait(true); return true;
             case TriageAction.StageForward: await Actions.StepStageAsync(1).ConfigureAwait(true); return true;
-            case TriageAction.SetDue: Actions.OpenEditor(EditorMode.Due); return true;
+            case TriageAction.SetDue: Actions.RequestFocus(FormField.Due); return true;
+            case TriageAction.ToggleBoardView: Actions.ToggleByPerson(); return true;
             case TriageAction.ClearWait: await Actions.ClearNextWaitAsync().ConfigureAwait(true); return true;
             case TriageAction.Chase: await Actions.ChaseAsync().ConfigureAwait(true); return true;
             case TriageAction.Cancel: await Actions.ClearFilterAsync().ConfigureAwait(true); return true;
 
-            case TriageAction.AddNote: Actions.OpenEditor(EditorMode.Note); return true;
-            case TriageAction.AddBlocker: Actions.OpenEditor(EditorMode.Blocker); return true;
-            case TriageAction.AddAssignment: Actions.OpenEditor(EditorMode.Assignment); return true;
+            // Email the task's conversation without leaving the board.
+            case TriageAction.Confirm:
+            case TriageAction.ReplyAll:
+                await ReplyFromBoardAsync(ReplyScope.All).ConfigureAwait(true);
+                return true;
+            case TriageAction.ReplySender:
+                await ReplyFromBoardAsync(ReplyScope.SenderOnly).ConfigureAwait(true);
+                return true;
+            case TriageAction.Forward:
+                await ReplyFromBoardAsync(ReplyScope.Forward).ConfigureAwait(true);
+                return true;
+
+            // The shortcuts put the cursor in the form beside the board, so the
+            // keyboard and the mouse fill in the same fields.
+            case TriageAction.ScheduleTime: await ScheduleFromBoardAsync().ConfigureAwait(true); return true;
+
+            case TriageAction.AddNote: Actions.RequestFocus(FormField.Notes); return true;
+            case TriageAction.AddBlocker: Actions.RequestFocus(FormField.Blocker); return true;
+            case TriageAction.AddAssignment: Actions.RequestFocus(FormField.Assignment); return true;
 
             case TriageAction.ToggleComplete:
                 await Actions.ToggleCompleteAsync().ConfigureAwait(true);
@@ -478,11 +674,20 @@ public sealed partial class MainViewModel : ObservableObject
     public string ReplyAllKey =>
         Keys.Describe(TriageAction.ReplyAll) is { Length: > 0 } own ? own : Keys.Describe(TriageAction.Confirm);
 
+    /// <summary>The key for answering an invitation, for the card in the reading pane.</summary>
+    public string RsvpKey => Keys.Describe(TriageAction.Rsvp);
+
+    /// <summary>The key that joins the meeting on now, for the strip's tooltip.</summary>
+    public string JoinKey => Keys.Describe(TriageAction.JoinMeeting);
+
+    /// <summary>The new-message key, for the button's tooltip.</summary>
+    public string ComposeKey => Keys.Describe(TriageAction.Compose);
+
     /// <summary>Rows for the help overlay, grouped for readability.</summary>
     public IReadOnlyList<(string Group, string Keys, string Description)> HelpRows => new[]
     {
         ("Move",    $"{Keys.Describe(TriageAction.NextMail)} / {Keys.Describe(TriageAction.PrevMail)}", "Next / previous message"),
-        ("Move",    Keys.Describe(TriageAction.SwitchSection), "Switch between Triage and Action items"),
+        ("Move",    $"{Keys.Describe(TriageAction.SwitchSection)} / {Keys.Describe(TriageAction.PrevSection)}", "Next / previous tab: Triage, Action items, Calendar"),
         ("Move",    Keys.Describe(TriageAction.Search), "Filter the list"),
 
         ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - send to the action list"),
@@ -494,6 +699,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.OpenAttachment), "Open an attachment (or click it in the header)"),
         ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move or snooze"),
 
+        ("Reply",   Keys.Describe(TriageAction.Compose), "New message, from any tab (Ctrl+Shift+S jumps to its subject)"),
         ("Reply",   ReplyAllKey, "Reply to everyone"),
         ("Reply",   Keys.Describe(TriageAction.ReplySender), "Reply to the sender only"),
         ("Reply",   Keys.Describe(TriageAction.Forward), "Forward (type the To line, Tab to the message)"),
@@ -506,6 +712,9 @@ public sealed partial class MainViewModel : ObservableObject
         ("Board",   $"{Keys.Describe(TriageAction.PrevColumn)} {Keys.Describe(TriageAction.NextColumn)}  /  {Keys.Describe(TriageAction.NextMail)} {Keys.Describe(TriageAction.PrevMail)}", "Between columns  /  up and down a column"),
         ("Board",   $"{Keys.Describe(TriageAction.StageBack)} {Keys.Describe(TriageAction.StageForward)}", "Move the card back / forward a stage"),
         ("Board",   Keys.Describe(TriageAction.SetDue), "Set a due date"),
+        ("Board",   $"{Keys.Describe(TriageAction.Confirm)} / {Keys.Describe(TriageAction.ReplySender)} / {Keys.Describe(TriageAction.Forward)}", "Reply all / reply / forward in the task's conversation"),
+        ("Board",   "Mouse", "Drag a card to another column to move it"),
+        ("Board",   Keys.Describe(TriageAction.ToggleBoardView), "Board / By person report (sort, export to Excel, email it)"),
         ("Board",   Keys.Describe(TriageAction.ClearWait), "Clear the next blocker or hand-off (back to Doing when none are left)"),
         ("Board",   Keys.Describe(TriageAction.Chase), "Draft a chase email to whoever has it"),
         ("Actions", Keys.Describe(TriageAction.AddNote), "Edit notes"),
@@ -514,6 +723,12 @@ public sealed partial class MainViewModel : ObservableObject
         ("Actions", Keys.Describe(TriageAction.ToggleComplete), "Mark done"),
         ("Actions", Keys.Describe(TriageAction.CyclePriority), "Cycle priority"),
         ("Actions", Keys.Describe(TriageAction.OpenInOutlook), "Open the original in Outlook"),
+
+        ("Calendar", Keys.Describe(TriageAction.Rsvp), "Answer an invitation - accept, maybe or decline, with a note if you type one"),
+        ("Calendar", Keys.Describe(TriageAction.ScheduleTime), "Put the mail or task on your calendar (Ctrl+Enter invites its people instead)"),
+        ("Calendar", Keys.Describe(TriageAction.JoinMeeting), "Join the meeting on now or about to start - from any tab"),
+        ("Calendar", Keys.Describe(TriageAction.Confirm), "On the Calendar tab: join the meeting, or open it in Outlook"),
+        ("Calendar", Keys.Describe(TriageAction.OpenInOutlook), "On the Calendar tab: open the meeting in Outlook"),
 
         ("General", Keys.Describe(TriageAction.Refresh), "Refresh"),
         ("General", Keys.Describe(TriageAction.ShowHelp), "This help"),

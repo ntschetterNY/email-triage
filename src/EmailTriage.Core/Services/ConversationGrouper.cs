@@ -36,7 +36,13 @@ public static partial class ConversationGrouper
     /// "RE: FW: [External] Budget" and "Budget" are the same thread: strips
     /// reply and forward prefixes and gateway tags like [External].
     /// </summary>
-    public static string NormaliseSubject(string subject)
+    public static string NormaliseSubject(string subject) => StripPrefixes(subject).ToLowerInvariant();
+
+    /// <summary>
+    /// The subject as a person would title it: prefixes and tags gone, case
+    /// kept. Names a calendar entry made from the mail.
+    /// </summary>
+    public static string StripPrefixes(string subject)
     {
         var s = subject;
         string previous;
@@ -48,7 +54,7 @@ public static partial class ConversationGrouper
         }
         while (s != previous);
 
-        return WhitespaceRegex().Replace(s, " ").Trim().ToLowerInvariant();
+        return WhitespaceRegex().Replace(s, " ").Trim();
     }
 
     [GeneratedRegex(@"^\s*(re|fw|fwd|aw|wg|sv|vs)\s*(\[\d+\])?\s*:\s*", RegexOptions.IgnoreCase)]

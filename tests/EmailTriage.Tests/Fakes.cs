@@ -97,6 +97,9 @@ public sealed class FakeMailStore : IMailStore
         MailRef mail, ReplyScope scope, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");
 
+    public Task<ReplyDraft> BuildNewMailAsync(CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by these tests.");
+
     public Task SendReplyAsync(
         DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");
@@ -128,6 +131,9 @@ public sealed class FakeMailStore : IMailStore
     }
 
     public Task ShowItemAsync(MailRef mail, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<IReadOnlyList<MailSummary>> GetConversationAsync(MailRef mail, int max, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<MailSummary>>(Array.Empty<MailSummary>());
 
     public Task ShowSavedDraftAsync(DraftRef saved, CancellationToken ct = default)
     {

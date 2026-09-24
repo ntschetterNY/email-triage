@@ -47,6 +47,19 @@ public sealed partial class MailRowViewModel : ObservableObject
 
     public bool HasAttachments => Thread.HasAttachments;
 
+    /// <summary>"INVITE", "CANCELLED", "ACCEPTED"... for meeting messages; empty for mail.</summary>
+    public string KindTag => Summary.Kind switch
+    {
+        MailKind.MeetingRequest => "INVITE",
+        MailKind.MeetingCancellation => "CANCELLED",
+        MailKind.MeetingAccepted => "ACCEPTED",
+        MailKind.MeetingTentative => "MAYBE",
+        MailKind.MeetingDeclined => "DECLINED",
+        _ => "",
+    };
+
+    public bool HasKindTag => KindTag.Length > 0;
+
     public string When => FormatWhen(Thread.LastActivityUtc.ToLocalTime());
 
     /// <summary>Relative for recent mail, absolute once it is older than a week.</summary>
@@ -78,5 +91,7 @@ public sealed partial class MailRowViewModel : ObservableObject
         OnPropertyChanged(nameof(IsUnread));
         OnPropertyChanged(nameof(When));
         OnPropertyChanged(nameof(HasAttachments));
+        OnPropertyChanged(nameof(KindTag));
+        OnPropertyChanged(nameof(HasKindTag));
     }
 }

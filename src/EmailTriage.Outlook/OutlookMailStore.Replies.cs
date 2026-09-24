@@ -69,6 +69,30 @@ public sealed partial class OutlookMailStore
             }
         }, ct);
 
+    public Task<ReplyDraft> BuildNewMailAsync(CancellationToken ct = default) =>
+        _sta.InvokeAsync(() =>
+        {
+            EnsureConnected();
+
+            // olMailItem = 0. Held open like a reply: nothing is saved to
+            // Drafts unless it is scheduled, and discarding leaves no trace.
+            var mail = (object?)_app!.CreateItem(0)
+                ?? throw new InvalidOperationException("Outlook could not create a new message.");
+
+            var token = Guid.NewGuid().ToString("N");
+            _openDrafts[token] = mail;
+
+            return new ReplyDraft
+            {
+                Ref = new DraftRef(token, ""),
+                Scope = ReplyScope.New,
+                Subject = "",
+                To = Array.Empty<Recipient>(),
+                Cc = Array.Empty<Recipient>(),
+                InReplyTo = default,
+            };
+        }, ct);
+
     public Task SendReplyAsync(
         DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default) =>
         _sta.InvokeAsync(() =>
@@ -115,7 +139,9 @@ public sealed partial class OutlookMailStore
 
         var item = (dynamic)stored;
 
-        if (recipients is not null)
+        if (recipients?.Subject is { } subject) item.Subject = subject;
+
+        if (recipients is { ChangesRecipients: true })
         {
             static string Join(IReadOnlyList<string> list) =>
                 string.Join("; ", list.Where(a => !string.IsNullOrWhiteSpace(a)));

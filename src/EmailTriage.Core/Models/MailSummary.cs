@@ -32,6 +32,9 @@ public sealed record MailSummary
     /// <summary>True for your own messages, read from Sent Items.</summary>
     public bool IsSent { get; init; }
 
+    /// <summary>Ordinary mail, or a meeting request, cancellation or response.</summary>
+    public MailKind Kind { get; init; } = MailKind.Mail;
+
     public string DisplaySender =>
         string.IsNullOrWhiteSpace(SenderName) ? SenderAddress : SenderName;
 }
