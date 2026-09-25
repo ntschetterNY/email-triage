@@ -9,53 +9,152 @@ public sealed partial class OutlookMailStore
     /// <summary>Guards against pathological or looping folder structures.</summary>
     private const int MaxFolderDepth = 12;
 
-    public Task<IReadOnlyList<FolderNode>> GetFolderIndexAsync(CancellationToken ct = default) =>
-        _sta.InvokeAsync<IReadOnlyList<FolderNode>>(() =>
+    /// <summary>Store.ExchangeStoreType for public folders: never mail move targets.</summary>
+    private const int ExchangePublicFolderStore = 2;
+
+    /// <summary>Store.ExchangeStoreType for a PST or other non-Exchange store.</summary>
+    private const int NotExchangeStore = 3;
+
+    private sealed record StoreInfo(int Index, string Name, string StoreId, string RootPath, int TopLevelCount);
+
+    /// <summary>
+    /// Builds the flat folder index. Every property read is a cross-process
+    /// round trip to outlook.exe, and a real mailbox runs to hundreds of
+    /// folders, so this is the slowest thing the app does. Two consequences:
+    /// the walk reads as few properties per folder as it can, and it is split
+    /// into one dispatcher job per top-level folder so a move or create the
+    /// user triggers meanwhile is not stuck behind the whole walk.
+    /// </summary>
+    public async Task<IReadOnlyList<FolderNode>> GetFolderIndexAsync(CancellationToken ct = default)
+    {
+        var stores = await _sta.InvokeAsync(ListStores, ct).ConfigureAwait(false);
+        var nodes = new List<FolderNode>(512);
+
+        foreach (var store in stores)
         {
-            EnsureConnected();
-
-            var nodes = new List<FolderNode>(256);
-            dynamic? stores = null;
-
-            try
+            for (int i = 1; i <= store.TopLevelCount; i++)
             {
-                stores = _session!.Stores;
-                int storeCount = ComUtil.Int(() => stores!.Count);
-
-                for (int i = 1; i <= storeCount; i++)
-                {
-                    dynamic? store = null, root = null;
-                    try
-                    {
-                        store = stores![i];
-                        var storeName = ComUtil.Str(() => store!.DisplayName);
-
-                        // Public folders and shared archives can be enormous and
-                        // slow to enumerate; skip anything not cached locally.
-                        root = ComUtil.Try<object?>(() => store!.GetRootFolder());
-                        if (root is null) continue;
-
-                        WalkFolders((object)root!, storeName, 0, nodes, ct);
-                    }
-                    catch
-                    {
-                        // A store that will not open (offline archive, bad
-                        // credentials) should not sink the whole index.
-                    }
-                    finally { ComUtil.ReleaseAll(root, store); }
-                }
+                ct.ThrowIfCancellationRequested();
+                var top = i;
+                var chunk = await _sta.InvokeAsync(() => WalkTopLevel(store, top, ct), ct)
+                    .ConfigureAwait(false);
+                nodes.AddRange(chunk);
             }
-            finally { ComUtil.Release(stores); }
+        }
 
-            return nodes;
-        }, ct);
+        return nodes;
+    }
 
-    private static void WalkFolders(
-        object folderObj, string storeName, int depth, List<FolderNode> into, CancellationToken ct)
+    /// <summary>Stores worth indexing, the default mailbox first.</summary>
+    private IReadOnlyList<StoreInfo> ListStores()
+    {
+        EnsureConnected();
+
+        var result = new List<StoreInfo>();
+        dynamic? stores = null, defaultStore = null;
+        try
+        {
+            defaultStore = ComUtil.Try<object?>(() => _session!.DefaultStore);
+            var defaultId = defaultStore is null ? "" : ComUtil.Str(() => defaultStore!.StoreID);
+
+            stores = _session!.Stores;
+            int storeCount = ComUtil.Int(() => stores!.Count);
+
+            for (int i = 1; i <= storeCount; i++)
+            {
+                dynamic? store = null, root = null, folders = null;
+                try
+                {
+                    store = stores![i];
+                    var storeId = ComUtil.Str(() => store!.StoreID);
+                    var isDefault = storeId.Length > 0 && storeId == defaultId;
+                    var exchangeType = ComUtil.Int(() => store!.ExchangeStoreType, -1);
+
+                    if (exchangeType == ExchangePublicFolderStore) continue;
+
+                    // Exchange stores that are not cached locally (the Online
+                    // Archive, most shared mailboxes) are read over the network
+                    // folder by folder: minutes for a big one. An Online Archive
+                    // also mirrors the mailbox's folder names, so indexing it
+                    // doubles every search hit. PSTs and the default mailbox
+                    // are always kept.
+                    if (!isDefault && exchangeType != NotExchangeStore &&
+                        !ComUtil.Bool(() => store!.IsCachedExchange)) continue;
+
+                    root = ComUtil.Try<object?>(() => store!.GetRootFolder());
+                    if (root is null) continue;
+
+                    folders = root!.Folders;
+                    result.Add(new StoreInfo(
+                        i,
+                        ComUtil.Str(() => store!.DisplayName),
+                        storeId,
+                        ComUtil.Str(() => root!.FolderPath).TrimStart('\\'),
+                        ComUtil.Int(() => folders!.Count)));
+                }
+                catch
+                {
+                    // A store that will not open (offline archive, bad
+                    // credentials) should not sink the whole index.
+                }
+                finally { ComUtil.ReleaseAll(folders, root, store); }
+            }
+
+            return result
+                .OrderByDescending(s => s.StoreId.Length > 0 && s.StoreId == defaultId)
+                .ToList();
+        }
+        finally { ComUtil.ReleaseAll(stores, defaultStore); }
+    }
+
+    private List<FolderNode> WalkTopLevel(StoreInfo store, int index, CancellationToken ct)
+    {
+        EnsureConnected();
+
+        var nodes = new List<FolderNode>();
+        dynamic? stores = null, s = null, root = null, folders = null, top = null;
+        try
+        {
+            stores = _session!.Stores;
+            s = stores![store.Index];
+            root = s!.GetRootFolder();
+            folders = root!.Folders;
+            top = folders![index];
+
+            AddAndDescend((object)top!, store, store.RootPath, 0, nodes, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { /* skip an unreadable branch, keep the rest */ }
+        finally { ComUtil.ReleaseAll(top, folders, root, s, stores); }
+
+        return nodes;
+    }
+
+    private static void AddAndDescend(
+        object folderObj, StoreInfo store, string parentPath, int depth,
+        List<FolderNode> into, CancellationToken ct)
     {
         dynamic folder = folderObj;
         if (depth > MaxFolderDepth) return;
         ct.ThrowIfCancellationRequested();
+
+        // Path and store id are derived rather than read: each read is a
+        // round trip, and FolderPath is just the parent's path plus the name.
+        var name = ComUtil.Str(() => folder.Name);
+        var path = parentPath.Length == 0 ? name : parentPath + "\\" + name;
+
+        // Only folders that hold mail are move targets.
+        if (ComUtil.Int(() => folder.DefaultItemType, -1) == ComUtil.DefaultItemTypeMail)
+        {
+            into.Add(new FolderNode
+            {
+                Ref = new FolderRef(ComUtil.Str(() => folder.EntryID), store.StoreId, "\\\\" + path),
+                Name = name,
+                Path = path,
+                Depth = depth,
+                StoreName = store.Name,
+            });
+        }
 
         dynamic? children = null;
         try
@@ -69,22 +168,7 @@ public sealed partial class OutlookMailStore
                 try
                 {
                     child = children![i];
-
-                    // Only folders that hold mail are move targets.
-                    if (ComUtil.Int(() => child!.DefaultItemType, -1) == ComUtil.DefaultItemTypeMail)
-                    {
-                        into.Add(new FolderNode
-                        {
-                            Ref = ToFolderRef((object)child!),
-                            Name = ComUtil.Str(() => child!.Name),
-                            Path = ComUtil.Str(() => child!.FolderPath).TrimStart('\\'),
-                            Depth = depth,
-                            StoreName = storeName,
-                            ItemCount = ComUtil.Int(() => child!.Items.Count),
-                        });
-                    }
-
-                    WalkFolders((object)child!, storeName, depth + 1, into, ct);
+                    AddAndDescend((object)child!, store, path, depth + 1, into, ct);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch { /* skip an unreadable branch, keep the rest */ }
@@ -144,7 +228,6 @@ public sealed partial class OutlookMailStore
             Path = path,
             Depth = Math.Max(0, path.Count(c => c == '\\') - 1),
             StoreName = storeName,
-            ItemCount = ComUtil.Int(() => folder.Items.Count),
         };
     }
 

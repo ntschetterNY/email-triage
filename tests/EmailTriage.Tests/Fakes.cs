@@ -93,6 +93,9 @@ public sealed class FakeMailStore : IMailStore
     public Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");
 
+    public Task<string> SaveAttachmentAsync(MailRef mail, int index, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by these tests.");
+
     public Task<ReplyDraft> BuildReplyAsync(
         MailRef mail, ReplyScope scope, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");

@@ -299,6 +299,8 @@ public sealed partial class OutlookMailStore : IMailStore
                 item = GetItem(mail);
 
                 var (to, cc) = ReadRecipients((object)item!);
+                var html = NullIfEmpty(ComUtil.Str(() => item!.HTMLBody));
+                var (attachments, inline) = ReadAttachments((object)item!, mail, html);
 
                 return new MailBody
                 {
@@ -307,11 +309,12 @@ public sealed partial class OutlookMailStore : IMailStore
                     SenderName = ComUtil.Str(() => item!.SenderName),
                     SenderAddress = ComUtil.SenderSmtp((object)item!),
                     ReceivedUtc = ComUtil.Date(() => item!.ReceivedTime),
-                    Html = NullIfEmpty(ComUtil.Str(() => item!.HTMLBody)),
+                    Html = html,
                     PlainText = ComUtil.Str(() => item!.Body),
                     To = to,
                     Cc = cc,
-                    AttachmentNames = ReadAttachmentNames((object)item!),
+                    Attachments = attachments,
+                    InlineImages = inline,
                 };
             }
             finally { ComUtil.Release(item); }
@@ -373,15 +376,24 @@ public sealed partial class OutlookMailStore : IMailStore
         return (to, cc);
     }
 
-    private static IReadOnlyList<string> ReadAttachmentNames(object mailObj)
+    /// <summary>
+    /// Splits the attachments into the ones the HTML embeds by <c>cid:</c> -
+    /// pasted photos, signature logos - and real attachments. Embedded ones are
+    /// written to the inline image cache so the body can show them; real ones
+    /// are only listed, so opening a mail never copies a large PDF to disk.
+    /// </summary>
+    private static (IReadOnlyList<AttachmentInfo> Attachments, IReadOnlyList<InlineImage> Inline)
+        ReadAttachments(object mailObj, MailRef mail, string? html)
     {
-        dynamic mail = mailObj;
-        var names = new List<string>();
-        dynamic? attachments = null;
+        dynamic item = mailObj;
+        var listed = new List<AttachmentInfo>();
+        var inline = new List<InlineImage>();
+        var hasCid = html is not null && html.IndexOf("cid:", StringComparison.OrdinalIgnoreCase) >= 0;
 
+        dynamic? attachments = null;
         try
         {
-            attachments = mail.Attachments;
+            attachments = item.Attachments;
             int count = ComUtil.Int(() => attachments!.Count);
 
             for (int i = 1; i <= count; i++)
@@ -391,16 +403,96 @@ public sealed partial class OutlookMailStore : IMailStore
                 {
                     a = attachments![i];
                     var name = ComUtil.Str(() => a!.FileName);
-                    if (!string.IsNullOrWhiteSpace(name)) names.Add(name);
+
+                    var contentId = hasCid
+                        ? ComUtil.MapiString((object)a!, ComUtil.PropAttachContentId).Trim('<', '>')
+                        : "";
+
+                    if (contentId.Length > 0 &&
+                        html!.IndexOf("cid:" + contentId, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        var relative = SaveToCache((object)a!, mail, name, i);
+                        if (relative is not null) inline.Add(new InlineImage(contentId, relative));
+                        continue;
+                    }
+
+                    // Embedded OLE objects and the like have no file name and
+                    // cannot be opened meaningfully outside Outlook.
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+
+                    listed.Add(new AttachmentInfo(i, name, ComUtil.Int(() => a!.Size)));
                 }
+                catch { /* one unreadable attachment should not hide the rest */ }
                 finally { ComUtil.Release(a); }
             }
         }
         catch { }
         finally { ComUtil.Release(attachments); }
 
-        return names;
+        return (listed, inline);
     }
+
+    /// <summary>Saves an embedded image, returning its path relative to the cache root.</summary>
+    private static string? SaveToCache(object attachmentObj, MailRef mail, string name, int index)
+    {
+        dynamic a = attachmentObj;
+
+        // One folder per message, named by a hash: EntryIds are long and not
+        // filename-safe. The index prefix keeps two "image001.png" apart.
+        var folderName = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(mail.EntryId)))[..16];
+        var folder = Path.Combine(InlineImageCache.Root, folderName);
+        var fileName = $"{index}_{SafeFileName(name, "image")}";
+        var path = Path.Combine(folder, fileName);
+
+        try
+        {
+            if (!File.Exists(path))
+            {
+                Directory.CreateDirectory(folder);
+                a.SaveAsFile(path);
+            }
+            return folderName + "/" + fileName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public Task<string> SaveAttachmentAsync(MailRef mail, int index, CancellationToken ct = default) =>
+        _sta.InvokeAsync(() =>
+        {
+            EnsureConnected();
+
+            dynamic? item = null, attachments = null, a = null;
+            try
+            {
+                item = GetItem(mail);
+                attachments = item!.Attachments;
+                a = attachments![index];
+
+                // A fresh folder per open, so two attachments with the same
+                // name never overwrite each other.
+                var folder = Path.Combine(
+                    Path.GetTempPath(), "EmailTriage", "Attachments", Guid.NewGuid().ToString("N")[..8]);
+                Directory.CreateDirectory(folder);
+
+                var path = Path.Combine(folder, SafeFileName(ComUtil.Str(() => a!.FileName), "attachment"));
+                a!.SaveAsFile(path);
+                return path;
+            }
+            finally { ComUtil.ReleaseAll(a, attachments, item); }
+        }, ct);
+
+    /// <summary>
+    /// Replaces characters that are unsafe in a file name, or that would
+    /// break the virtual-host URL the reading pane loads inline images from.
+    /// </summary>
+    private static string SafeFileName(string name, string fallback) =>
+        string.Concat((string.IsNullOrWhiteSpace(name) ? fallback : name)
+            .Select(c => Path.GetInvalidFileNameChars().Contains(c) || c is ' ' or '#' or '%' or '?' ? '_' : c));
 
     public async ValueTask DisposeAsync()
     {

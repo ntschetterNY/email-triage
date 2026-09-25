@@ -34,6 +34,13 @@ public enum TriageAction
     ReplySender,
 
     ToggleRead,
+
+    /// <summary>Load web images for the open message, which are blocked by default.</summary>
+    ShowImages,
+
+    /// <summary>Pick one of the open message's attachments and open it.</summary>
+    OpenAttachment,
+
     Archive,
     Delete,
     Search,

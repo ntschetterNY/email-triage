@@ -13,7 +13,7 @@ public sealed record PaletteEntry(
     public bool HasSecondary => !string.IsNullOrWhiteSpace(Secondary);
 }
 
-public enum PaletteMode { Folder, Snooze }
+public enum PaletteMode { Folder, Snooze, Attachment }
 
 /// <summary>
 /// The type-and-pick overlay shared by the move (`k`) and snooze (`g`)

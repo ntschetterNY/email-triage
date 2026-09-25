@@ -25,6 +25,12 @@ public interface IMailStore : IAsyncDisposable
 
     Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default);
 
+    /// <summary>
+    /// Saves one attachment to a private temp folder and returns the file's
+    /// path, for the caller to open.
+    /// </summary>
+    Task<string> SaveAttachmentAsync(MailRef mail, int index, CancellationToken ct = default);
+
     /// <summary>Flattened index of every mail folder across every open store.</summary>
     Task<IReadOnlyList<FolderNode>> GetFolderIndexAsync(CancellationToken ct = default);
 

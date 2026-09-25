@@ -18,12 +18,16 @@ public static partial class HtmlPresenter
     public static string Render(MailBody body, bool blockRemoteImages, bool darkTheme = true)
     {
         var content = !string.IsNullOrWhiteSpace(body.Html)
-            ? StripDangerousMarkup(body.Html!)
+            ? ResolveInlineImages(StripDangerousMarkup(body.Html!), body.InlineImages)
             : PlainTextToHtml(body.PlainText);
 
-        // img-src data: allows embedded/inline images through while still
-        // refusing anything fetched over the network.
-        var imgPolicy = blockRemoteImages ? "data: cid:" : "data: cid: https: http:";
+        // Embedded images are served from the local cache folder the reading
+        // pane maps to InlineImageCache.HostName; anything else fetched over
+        // the network stays blocked unless the user asks for it.
+        var inlineHost = $"https://{InlineImageCache.HostName}";
+        var imgPolicy = blockRemoteImages
+            ? $"data: {inlineHost}"
+            : $"data: {inlineHost} https: http:";
 
         var csp =
             "default-src 'none'; " +
@@ -59,14 +63,59 @@ public static partial class HtmlPresenter
                 border-left: 3px solid {{(darkTheme ? "#3a3f4b" : "#d0d0d0")}};
                 color: {{(darkTheme ? "#9aa0ac" : "#555")}};
               }
-              /* Mail HTML routinely hard-codes white backgrounds on its own
-                 tables, which looks broken inside a dark shell. */
-              {{(darkTheme ? "[bgcolor], [style*='background'] { background-color: transparent !important; }" : "")}}
+              {{(darkTheme ? DarkOverrides : "")}}
             </style>
             </head>
             <body>{{content}}</body>
             </html>
             """;
+    }
+
+    /// <summary>
+    /// Mail is written for a white page: it hard-codes black text (inline
+    /// styles, &lt;font color&gt;) and white table backgrounds. Clearing only
+    /// the backgrounds leaves black-on-dark, so text colours are overridden
+    /// too. Links keep an accent so they still read as links; images are
+    /// untouched.
+    /// </summary>
+    private const string DarkOverrides = """
+        body *:not(img):not(svg) {
+          color: #d6d9e0 !important;
+          background-color: transparent !important;
+          border-color: #3a3f4b !important;
+        }
+        body a, body a * { color: #7aa2f7 !important; }
+        body blockquote, body blockquote * { color: #9aa0ac !important; }
+        body hr { background-color: #3a3f4b !important; }
+        """;
+
+    /// <summary>
+    /// True when the body pulls images from the web - the ones the default
+    /// policy blocks - so the UI can offer to load them.
+    /// </summary>
+    public static bool HasRemoteImages(MailBody body) =>
+        body.Html is not null && RemoteImageRegex().IsMatch(body.Html);
+
+    /// <summary>
+    /// Points each <c>cid:</c> reference at the copy of that image saved in
+    /// the inline cache. References with no saved image are left as they are
+    /// and simply do not load.
+    /// </summary>
+    private static string ResolveInlineImages(string html, IReadOnlyList<InlineImage> images)
+    {
+        if (images.Count == 0) return html;
+
+        var byId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var image in images) byId.TryAdd(image.ContentId, image.RelativePath);
+
+        return CidRegex().Replace(html, m =>
+        {
+            var id = Uri.UnescapeDataString(m.Groups[1].Value);
+            if (!byId.TryGetValue(id, out var relative)) return m.Value;
+
+            var escaped = string.Join('/', relative.Split('/').Select(Uri.EscapeDataString));
+            return $"https://{InlineImageCache.HostName}/{escaped}";
+        });
     }
 
     /// <summary>
@@ -104,6 +153,12 @@ public static partial class HtmlPresenter
 
     [GeneratedRegex(@"<meta[^>]+http-equiv\s*=\s*[""']?refresh[""']?[^>]*>", RegexOptions.IgnoreCase)]
     private static partial Regex MetaRefreshRegex();
+
+    [GeneratedRegex(@"cid:([^""'\s>)]+)", RegexOptions.IgnoreCase)]
+    private static partial Regex CidRegex();
+
+    [GeneratedRegex(@"<img\b[^>]*\bsrc\s*=\s*[""']?\s*https?:", RegexOptions.IgnoreCase)]
+    private static partial Regex RemoteImageRegex();
 
     /// <summary>
     /// Wraps the user's reply text as HTML to sit above Outlook's quoted history.

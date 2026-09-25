@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using EmailTriage.App.Input;
 using EmailTriage.App.ViewModels;
+using EmailTriage.Core.Models;
 using Microsoft.Web.WebView2.Core;
 
 namespace EmailTriage.App.Views;
@@ -80,6 +81,14 @@ public partial class MainWindow : Window
             core.Settings.IsGeneralAutofillEnabled = false;
             core.Settings.IsPasswordAutosaveEnabled = false;
 
+            // Embedded images are saved to this folder and referenced through
+            // a virtual host. Allow is needed because the mail document itself
+            // is not on that host; the folder only ever holds extracted images.
+            Directory.CreateDirectory(InlineImageCache.Root);
+            core.SetVirtualHostNameToFolderMapping(
+                InlineImageCache.HostName, InlineImageCache.Root,
+                CoreWebView2HostResourceAccessKind.Allow);
+
             // Links open in the real browser rather than hijacking the pane.
             core.NavigationStarting += (_, e) =>
             {
@@ -132,12 +141,28 @@ public partial class MainWindow : Window
             string.IsNullOrEmpty(html) ? "<html><body></body></html>" : html);
     }
 
+    /// <summary>
+    /// WebView2 is a native child window, so it always paints above WPF
+    /// content regardless of z-order ("airspace"). Hide it while an overlay
+    /// that covers the reading pane is up, or the overlay ends up behind it.
+    /// </summary>
+    private void UpdateBodyViewVisibility()
+    {
+        var covered = ViewModel.IsHelpVisible
+                   || ViewModel.Triage.Palette.IsOpen
+                   || ViewModel.Triage.Composer.IsOpen;
+
+        BodyView.Visibility = covered ? Visibility.Hidden : Visibility.Visible;
+    }
+
     // ---- view model reactions --------------------------------------------
 
     private void OnViewModelChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(MainViewModel.Section))
             Dispatcher.BeginInvoke(() => Focus());
+        else if (e.PropertyName is nameof(MainViewModel.IsHelpVisible))
+            UpdateBodyViewVisibility();
     }
 
     private void OnTriageChanged(object? sender, PropertyChangedEventArgs e)
@@ -166,6 +191,7 @@ public partial class MainWindow : Window
     {
         if (e.PropertyName != nameof(PaletteViewModel.IsOpen)) return;
 
+        UpdateBodyViewVisibility();
         if (ViewModel.Triage.Palette.IsOpen) FocusLater(PaletteBox);
         else Dispatcher.BeginInvoke(Focus);
     }
@@ -174,6 +200,7 @@ public partial class MainWindow : Window
     {
         if (e.PropertyName != nameof(ComposerViewModel.IsOpen)) return;
 
+        UpdateBodyViewVisibility();
         if (ViewModel.Triage.Composer.IsOpen) FocusLater(ComposerBox);
         else Dispatcher.BeginInvoke(Focus);
     }

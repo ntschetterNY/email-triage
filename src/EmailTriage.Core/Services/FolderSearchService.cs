@@ -43,6 +43,26 @@ public sealed class FolderSearchService
         if (!force && _index.Count > 0 && DateTimeOffset.UtcNow - _indexedAt < IndexLifetime)
             return;
 
+        // A stale index is still a good index: folders rarely change, and a
+        // full re-read of a large mailbox takes minutes. Serve what we have and
+        // refresh behind it rather than making the palette wait.
+        if (!force && _index.Count > 0)
+        {
+            if (_refreshGate.CurrentCount > 0) _ = RefreshQuietlyAsync();
+            return;
+        }
+
+        await RefreshAsync(force, ct).ConfigureAwait(false);
+    }
+
+    private async Task RefreshQuietlyAsync()
+    {
+        try { await RefreshAsync(force: true, CancellationToken.None).ConfigureAwait(false); }
+        catch { /* keep serving the previous index */ }
+    }
+
+    private async Task RefreshAsync(bool force, CancellationToken ct)
+    {
         await _refreshGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -101,7 +121,7 @@ public sealed class FolderSearchService
             // Score the leaf name and the full path separately: a hit on the
             // folder's own name should beat an incidental hit on its parents.
             int? nameScore = FuzzyMatcher.Score(query, folder.Name, out var namePos);
-            int? pathScore = FuzzyMatcher.Score(query, folder.Path, out _);
+            int? pathScore = FuzzyMatcher.Score(query, WithoutStoreRoot(folder.Path), out _);
 
             if (nameScore is null && pathScore is null) continue;
 
@@ -126,6 +146,17 @@ public sealed class FolderSearchService
             .ThenBy(r => r.Folder.Path, StringComparer.OrdinalIgnoreCase)
             .Take(limit)
             .ToList();
+    }
+
+    /// <summary>
+    /// Drops the leading store segment ("someone@example.com\"). It is on every
+    /// path, and a subsequence matcher finds most short queries somewhere in an
+    /// email address, so leaving it in lets nearly every folder "match".
+    /// </summary>
+    private static string WithoutStoreRoot(string path)
+    {
+        var idx = path.IndexOf('\\');
+        return idx < 0 ? path : path[(idx + 1)..];
     }
 
     /// <summary>

@@ -33,6 +33,10 @@ internal static class ComUtil
     public const string PropRecipientSmtpAddress =
         "http://schemas.microsoft.com/mapi/proptag/0x39FE001F";
 
+    /// <summary>PR_ATTACH_CONTENT_ID: what an HTML body's cid: references point at.</summary>
+    public const string PropAttachContentId =
+        "http://schemas.microsoft.com/mapi/proptag/0x3712001F";
+
     /// <summary>
     /// Releases a runtime callable wrapper. Skipping this is what leaves
     /// outlook.exe running invisibly after the app closes.

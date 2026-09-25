@@ -7,6 +7,7 @@ using EmailTriage.App.ViewModels;
 using EmailTriage.App.Views;
 using EmailTriage.Core.Abstractions;
 using EmailTriage.Core.Data;
+using EmailTriage.Core.Models;
 using EmailTriage.Core.Services;
 using EmailTriage.Outlook;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,6 +38,9 @@ public partial class App : Application
             KeyMap.WriteDefaultConfig();
 
             _services.GetRequiredService<Database>().Migrate();
+
+            // Embedded images from last session; re-extracted as mail is opened.
+            InlineImageCache.Reset();
 
             _store = _services.GetRequiredService<IMailStore>();
             _scheduler = _services.GetRequiredService<SnoozeScheduler>();

@@ -1,3 +1,4 @@
+using System.Windows.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
 using EmailTriage.App.Input;
 using EmailTriage.App.Services;
@@ -125,7 +126,7 @@ public sealed partial class MainViewModel : ObservableObject
         // Modal surfaces claim the keyboard first: while one is open, ordinary
         // letters are text the user is typing, not commands.
         if (Triage.Composer.IsOpen) return await HandleComposerKeyAsync(action, ctrlEnter).ConfigureAwait(true);
-        if (Triage.Palette.IsOpen) return await HandlePaletteKeyAsync(action, ctrlEnter).ConfigureAwait(true);
+        if (Triage.Palette.IsOpen) return await HandlePaletteKeyAsync(stroke, action, ctrlEnter).ConfigureAwait(true);
         if (Actions.Editor != EditorMode.None) return await HandleEditorKeyAsync(action, ctrlEnter).ConfigureAwait(true);
 
         if (IsHelpVisible)
@@ -156,8 +157,24 @@ public sealed partial class MainViewModel : ObservableObject
         return false;
     }
 
-    private async Task<bool> HandlePaletteKeyAsync(TriageAction action, bool ctrlEnter)
+    private async Task<bool> HandlePaletteKeyAsync(KeyStroke stroke, TriageAction action, bool ctrlEnter)
     {
+        // Ctrl+Enter has no binding of its own, so it resolves to None; check
+        // it before the action switch or "create and move" never fires.
+        if (ctrlEnter)
+        {
+            await Triage.ConfirmPaletteAsync(forceCreate: true).ConfigureAwait(true);
+            return true;
+        }
+
+        // Only the arrow keys move the selection here. NextMail/PrevMail are
+        // also bound to j and p, which are letters the user needs to type.
+        if (stroke.Modifiers == ModifierKeys.None)
+        {
+            if (stroke.Key == Key.Down) { Triage.Palette.MoveSelection(1); return true; }
+            if (stroke.Key == Key.Up) { Triage.Palette.MoveSelection(-1); return true; }
+        }
+
         switch (action)
         {
             case TriageAction.Cancel:
@@ -165,15 +182,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return true;
 
             case TriageAction.Confirm:
-                await Triage.ConfirmPaletteAsync(ctrlEnter).ConfigureAwait(true);
-                return true;
-
-            case TriageAction.NextMail:
-                Triage.Palette.MoveSelection(1);
-                return true;
-
-            case TriageAction.PrevMail:
-                Triage.Palette.MoveSelection(-1);
+                await Triage.ConfirmPaletteAsync(forceCreate: false).ConfigureAwait(true);
                 return true;
 
             default:
@@ -257,6 +266,14 @@ public sealed partial class MainViewModel : ObservableObject
                 await Triage.ToggleReadAsync().ConfigureAwait(true);
                 return true;
 
+            case TriageAction.ShowImages:
+                Triage.ShowRemoteImages();
+                return true;
+
+            case TriageAction.OpenAttachment:
+                Triage.OpenAttachmentPalette();
+                return true;
+
             case TriageAction.Archive:
                 await Triage.ArchiveAsync().ConfigureAwait(true);
                 return true;
@@ -320,6 +337,9 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.Archive), "Archive"),
         ("Triage",  Keys.Describe(TriageAction.ToggleRead), "Toggle read / unread"),
         ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move or snooze"),
+
+        ("Read",    Keys.Describe(TriageAction.ShowImages), "Load web images for this message"),
+        ("Read",    Keys.Describe(TriageAction.OpenAttachment), "Open an attachment"),
 
         ("Reply",   Keys.Describe(TriageAction.ReplyAll), "Reply to everyone"),
         ("Reply",   Keys.Describe(TriageAction.ReplySender), "Reply to the sender only"),

@@ -52,6 +52,10 @@ public sealed class KeyMap
         ("u",           TriageAction.ToggleRead),
         ("delete",      TriageAction.Delete),
 
+        // Reading
+        ("i",           TriageAction.ShowImages),
+        ("v",           TriageAction.OpenAttachment),
+
         // Replying
         ("r",           TriageAction.ReplyAll),
         ("shift+r",     TriageAction.ReplySender),

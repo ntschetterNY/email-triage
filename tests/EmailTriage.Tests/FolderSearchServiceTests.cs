@@ -85,6 +85,16 @@ public class FolderSearchServiceTests
     }
 
     [Fact]
+    public async Task The_store_name_does_not_make_every_folder_match()
+    {
+        var (service, _, _) = Build();
+        await service.EnsureIndexedAsync();
+
+        // Every letter of "mbx" is in the "Mailbox" root, and in no folder below it.
+        Assert.Empty(service.Search("mbx"));
+    }
+
+    [Fact]
     public async Task Newly_created_folders_are_searchable_without_a_reindex()
     {
         var (service, _, _) = Build();

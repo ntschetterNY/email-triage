@@ -42,6 +42,11 @@ public sealed partial class TriageViewModel : ObservableObject
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private bool _isSearching;
 
+    /// <summary>True when the open message has web images the policy is holding back.</summary>
+    [ObservableProperty] private bool _hasBlockedImages;
+
+    private bool _remoteImagesShown;
+
     private List<MailRowViewModel> _allRows = new();
 
     public TriageViewModel(
@@ -94,6 +99,10 @@ public sealed partial class TriageViewModel : ObservableObject
 
             Status = $"{Rows.Count} message{(Rows.Count == 1 ? "" : "s")}"
                    + $"  ·  {Rows.Count(r => r.IsUnread)} unread";
+
+            // Reading a large folder tree takes a while; start now, after the
+            // inbox is on screen, so the move palette is ready when needed.
+            if (!_folders.IsIndexed) _ = WarmFolderIndexAsync();
         }
         catch (Exception ex)
         {
@@ -141,6 +150,7 @@ public sealed partial class TriageViewModel : ObservableObject
         {
             OpenBody = null;
             BodyHtml = "";
+            HasBlockedImages = false;
             return;
         }
 
@@ -153,7 +163,8 @@ public sealed partial class TriageViewModel : ObservableObject
             if (cts.IsCancellationRequested) return;
 
             OpenBody = body;
-            BodyHtml = HtmlPresenter.Render(body, _settings.BlockRemoteImages);
+            _remoteImagesShown = false;
+            RenderOpenBody();
 
             await MarkReadAfterDwellAsync(row, cts.Token).ConfigureAwait(true);
         }
@@ -161,6 +172,96 @@ public sealed partial class TriageViewModel : ObservableObject
         catch (Exception ex)
         {
             if (!cts.IsCancellationRequested) Status = $"Could not open that message: {ex.Message}";
+        }
+    }
+
+    private void RenderOpenBody()
+    {
+        if (OpenBody is not { } body) return;
+
+        var block = _settings.BlockRemoteImages && !_remoteImagesShown;
+        HasBlockedImages = block && HtmlPresenter.HasRemoteImages(body);
+        BodyHtml = HtmlPresenter.Render(body, block);
+    }
+
+    /// <summary>
+    /// Loads web images for the open message only - the equivalent of
+    /// Outlook's "download pictures". The next message is blocked again.
+    /// </summary>
+    public void ShowRemoteImages()
+    {
+        if (OpenBody is null || !HasBlockedImages) return;
+        _remoteImagesShown = true;
+        RenderOpenBody();
+    }
+
+    // ---- attachments ------------------------------------------------------
+
+    /// <summary>
+    /// Types Windows would run as programs. Outlook blocks these too; opening
+    /// one from a mail is the classic way malware gets in.
+    /// </summary>
+    private static readonly HashSet<string> BlockedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".exe", ".com", ".bat", ".cmd", ".scr", ".pif", ".msi", ".msp", ".js", ".jse",
+        ".vbs", ".vbe", ".wsf", ".wsh", ".ps1", ".psm1", ".hta", ".cpl", ".lnk", ".reg",
+        ".jar", ".application", ".appref-ms", ".gadget", ".msc", ".inf", ".scf", ".url",
+    };
+
+    public void OpenAttachmentPalette()
+    {
+        if (OpenBody is not { } body) return;
+
+        if (body.Attachments.Count == 0)
+        {
+            Status = "This message has no attachments";
+            return;
+        }
+
+        Palette.Open(
+            PaletteMode.Attachment,
+            "Open attachment",
+            "Enter open · Esc cancel",
+            body.Subject);
+
+        RefreshPalette();
+    }
+
+    private void RefreshAttachmentPalette()
+    {
+        var attachments = OpenBody?.Attachments ?? Array.Empty<AttachmentInfo>();
+        var query = Palette.Query.Trim();
+
+        Palette.SetEntries(attachments
+            .Select(a => (Attachment: a, Score: FuzzyMatcher.Score(query, a.FileName, out var pos), Pos: pos))
+            .Where(x => x.Score is not null)
+            .OrderByDescending(x => x.Score)
+            .Select(x => new PaletteEntry(x.Attachment.FileName, x.Attachment.SizeText, x.Attachment, x.Pos)));
+    }
+
+    [CommunityToolkit.Mvvm.Input.RelayCommand]
+    public async Task OpenAttachmentAsync(AttachmentInfo attachment)
+    {
+        if (OpenBody is not { } body) return;
+
+        if (BlockedExtensions.Contains(System.IO.Path.GetExtension(attachment.FileName)))
+        {
+            Status = $"{attachment.FileName} is a program or script - open it from Outlook if you trust it";
+            return;
+        }
+
+        try
+        {
+            Status = $"Opening {attachment.FileName}...";
+            var path = await _store.SaveAttachmentAsync(body.Ref, attachment.Index).ConfigureAwait(true);
+
+            System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            Status = $"Opened {attachment.FileName}";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not open {attachment.FileName}: {ex.Message}";
         }
     }
 
@@ -270,6 +371,16 @@ public sealed partial class TriageViewModel : ObservableObject
 
     // ---- move palette (k) -------------------------------------------------
 
+    private async Task WarmFolderIndexAsync()
+    {
+        try
+        {
+            await _folders.EnsureIndexedAsync().ConfigureAwait(true);
+            RefreshPalette();
+        }
+        catch { /* the palette retries on open and reports failures there */ }
+    }
+
     public async Task OpenFolderPaletteAsync()
     {
         if (Selected is not { } row) return;
@@ -296,12 +407,20 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         if (!Palette.IsOpen) return;
 
-        if (Palette.Mode == PaletteMode.Folder) RefreshFolderPalette();
-        else RefreshSnoozePalette();
+        switch (Palette.Mode)
+        {
+            case PaletteMode.Folder: RefreshFolderPalette(); break;
+            case PaletteMode.Snooze: RefreshSnoozePalette(); break;
+            case PaletteMode.Attachment: RefreshAttachmentPalette(); break;
+        }
     }
 
     private void RefreshFolderPalette()
     {
+        // Until the index is in, an empty result means "not loaded yet", not
+        // "no such folder" - offering to create would make duplicates.
+        if (!_folders.IsIndexed) return;
+
         var matches = _folders.Search(Palette.Query);
 
         Palette.SetEntries(matches.Select(m => new PaletteEntry(
@@ -336,12 +455,32 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         if (!Palette.IsOpen) return;
 
-        if (Palette.Mode == PaletteMode.Folder) await ConfirmFolderAsync(forceCreate).ConfigureAwait(true);
-        else await ConfirmSnoozeAsync().ConfigureAwait(true);
+        switch (Palette.Mode)
+        {
+            case PaletteMode.Folder:
+                await ConfirmFolderAsync(forceCreate).ConfigureAwait(true);
+                break;
+
+            case PaletteMode.Snooze:
+                await ConfirmSnoozeAsync().ConfigureAwait(true);
+                break;
+
+            case PaletteMode.Attachment:
+                var picked = Palette.Selected?.Payload as AttachmentInfo?;
+                Palette.Close();
+                if (picked is { } attachment) await OpenAttachmentAsync(attachment).ConfigureAwait(true);
+                break;
+        }
     }
 
     private async Task ConfirmFolderAsync(bool forceCreate)
     {
+        if (!_folders.IsIndexed)
+        {
+            Status = "Still reading the folder list from Outlook - try again in a moment";
+            return;
+        }
+
         var typed = Palette.Query.Trim();
         var shouldCreate = forceCreate || (Palette.Selected is null && typed.Length > 0);
 
