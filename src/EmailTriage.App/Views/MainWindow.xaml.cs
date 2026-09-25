@@ -90,6 +90,7 @@ public partial class MainWindow : Window
             Section.Triage => new[]
             {
                 Hint("next/prev", TriageAction.NextMail, TriageAction.PrevMail),
+                Hint("expand", TriageAction.NextColumn, TriageAction.PrevColumn),
                 Hint("action", TriageAction.MarkActionRequired),
                 Hint("no action", TriageAction.MarkNoAction),
                 Hint("move", TriageAction.MoveToFolder),
@@ -640,6 +641,23 @@ public partial class MainWindow : Window
         _ = UpdateAirspaceAsync();
         if (ViewModel.Triage.Palette.IsOpen) FocusLater(PaletteBox);
         else Dispatcher.BeginInvoke(Focus);
+    }
+
+    // The arrow on a conversation row lists its messages; clicking one reads just it.
+    private async void OnExpandClick(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is MailRowViewModel row)
+            await ViewModel.Triage.ToggleExpandAsync(row);
+        Focus();
+    }
+
+    private void OnConversationMessageClick(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is ConversationMessageViewModel message)
+            ViewModel.Triage.FocusMessage(message);
+        Focus();
     }
 
     // Pressing on a chip starts saving the file, so a drag that follows has it

@@ -49,6 +49,12 @@ public sealed partial class TriageViewModel : ObservableObject
     [ObservableProperty] private MailRowViewModel? _selected;
     [ObservableProperty] private MailBody? _openBody;
 
+    /// <summary>
+    /// The one message picked under the expanded row, shown on its own with
+    /// its attachments; null shows the whole conversation.
+    /// </summary>
+    [ObservableProperty] private ConversationMessageViewModel? _focusedMessage;
+
     /// <summary>The attachment file shown in the reading pane instead of the email, if any.</summary>
     [ObservableProperty] private string? _previewPath;
     [ObservableProperty] private string _previewName = "";
@@ -536,11 +542,172 @@ public sealed partial class TriageViewModel : ObservableObject
         PreviewName = "";
     }
 
-    partial void OnSelectedChanged(MailRowViewModel? value)
+    partial void OnSelectedChanged(MailRowViewModel? oldValue, MailRowViewModel? newValue)
     {
+        // As in Outlook, a conversation folds back up once you move off it.
+        if (oldValue is not null && oldValue != newValue) CollapseRow(oldValue);
+        SetFocusedMessage(null);
+
         ClosePreview();
-        _ = LoadBodyAsync(value);
-        _ = LoadInviteAsync(value);
+        _ = LoadBodyAsync(newValue);
+        _ = LoadInviteAsync(newValue);
+    }
+
+    // ---- conversation view: expand a row, read its messages one by one ----
+
+    /// <summary>How many messages an expanded row lists - Outlook's own scan limit.</summary>
+    private const int ExpandedMessageLimit = 300;
+
+    /// <summary>Changes the focused message without loading anything.</summary>
+    private void SetFocusedMessage(ConversationMessageViewModel? message)
+    {
+        if (FocusedMessage == message) return;
+        if (FocusedMessage is { } old) old.IsFocused = false;
+        if (message is not null) message.IsFocused = true;
+
+#pragma warning disable MVVMTK0034 // the field, so the change handler does not load the body a second time
+        _focusedMessage = message;
+#pragma warning restore MVVMTK0034
+        OnPropertyChanged(nameof(FocusedMessage));
+    }
+
+    public Task ToggleExpandAsync(MailRowViewModel row)
+    {
+        if (!row.IsExpanded) return ExpandAsync(row);
+
+        if (Selected != row) Selected = row;
+        else CollapseRow(row);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Lists every message in the row's conversation under it - including the
+    /// ones already archived or filed, which the Inbox view leaves out.
+    /// </summary>
+    public async Task ExpandAsync(MailRowViewModel? row = null)
+    {
+        row ??= Selected;
+        if (row is null || row.IsExpanded) return;
+        if (Selected != row) Selected = row;
+
+        row.IsExpanded = true;
+        FillMessages(row, row.Thread.Messages);
+
+        row.IsLoadingMessages = true;
+        try
+        {
+            var all = await _store.GetConversationAsync(row.Summary.Ref, ExpandedMessageLimit).ConfigureAwait(true);
+            if (row.IsExpanded) FillMessages(row, row.Thread.Messages.Concat(all));
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not read the rest of the conversation: {ex.Message}";
+        }
+        finally
+        {
+            row.IsLoadingMessages = false;
+        }
+    }
+
+    /// <summary>Newest first, one entry per message, keeping the entries already shown.</summary>
+    private static void FillMessages(MailRowViewModel row, IEnumerable<MailSummary> messages)
+    {
+        var existing = new Dictionary<string, ConversationMessageViewModel>(StringComparer.Ordinal);
+        foreach (var m in row.Messages) existing.TryAdd(m.Summary.Ref.EntryId, m);
+
+        var ordered = messages
+            .DistinctBy(m => string.IsNullOrEmpty(m.InternetMessageId) ? m.Ref.EntryId : m.InternetMessageId,
+                        StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(m => m.ReceivedUtc)
+            .Select(m => existing.GetValueOrDefault(m.Ref.EntryId) ?? new ConversationMessageViewModel(row, m))
+            .ToList();
+
+        row.Messages.Clear();
+        foreach (var m in ordered) row.Messages.Add(m);
+    }
+
+    private static void CollapseRow(MailRowViewModel row)
+    {
+        row.IsExpanded = false;
+        row.Messages.Clear();
+    }
+
+    /// <summary>
+    /// Left in the list: from a single message back to the whole
+    /// conversation, and from there folds the row up.
+    /// </summary>
+    public void CollapseSelected()
+    {
+        if (Selected is not { } row) return;
+
+        if (FocusedMessage is not null) FocusedMessage = null;
+        else if (row.IsExpanded) CollapseRow(row);
+    }
+
+    /// <summary>Shows one message from the expanded row, as clicking it in Outlook does.</summary>
+    public void FocusMessage(ConversationMessageViewModel message)
+    {
+        if (Selected != message.Row) Selected = message.Row;
+        FocusedMessage = message;
+    }
+
+    partial void OnFocusedMessageChanged(ConversationMessageViewModel? oldValue, ConversationMessageViewModel? newValue)
+    {
+        if (oldValue is not null) oldValue.IsFocused = false;
+        if (newValue is not null) newValue.IsFocused = true;
+
+        ClosePreview();
+        _ = newValue is null ? LoadBodyAsync(Selected) : LoadMessageAsync(newValue);
+    }
+
+    /// <summary>Just the one message in the reading pane, with its own attachments.</summary>
+    private async Task LoadMessageAsync(ConversationMessageViewModel message)
+    {
+        _bodyLoad?.Cancel();
+
+        var cts = new CancellationTokenSource();
+        _bodyLoad = cts;
+
+        var entryId = message.Summary.Ref.EntryId;
+        try
+        {
+            MailBody body;
+            try { body = await _bodies.GetOrAdd(entryId, _ => _store.GetBodyAsync(message.Summary.Ref)).ConfigureAwait(true); }
+            catch { _bodies.Remove(entryId); throw; }
+            if (cts.IsCancellationRequested) return;
+
+            var blockRemote = _settings.BlockRemoteImages;
+            var pageKey = "one:" + entryId;
+            string html;
+            try { html = await _pages.GetOrAdd(pageKey, _ => Task.Run(() => HtmlPresenter.Render(body, blockRemote))).ConfigureAwait(true); }
+            catch { _pages.Remove(pageKey); throw; }
+            if (cts.IsCancellationRequested) return;
+
+            OpenBody = body;
+            ThreadAttachments = body.Attachments;
+            BodyHtml = html;
+
+            if (!message.IsUnread || _settings.MarkReadAfterMs <= 0) return;
+
+            await Task.Delay(_settings.MarkReadAfterMs, cts.Token).ConfigureAwait(true);
+            if (cts.IsCancellationRequested || FocusedMessage != message) return;
+
+            await _store.SetReadAsync(message.Summary.Ref, true, cts.Token).ConfigureAwait(true);
+            message.IsUnread = false;
+
+            var row = message.Row;
+            row.Refresh(row.Thread with
+            {
+                Messages = row.Thread.Messages
+                    .Select(m => m.Ref.EntryId == entryId ? m with { IsUnread = false } : m)
+                    .ToList(),
+            });
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (!cts.IsCancellationRequested) Status = $"Could not open that message: {ex.Message}";
+        }
     }
 
     private async Task LoadBodyAsync(MailRowViewModel? row)
@@ -683,6 +850,22 @@ public sealed partial class TriageViewModel : ObservableObject
     public void Move(int delta)
     {
         if (Rows.Count == 0) return;
+
+        // Inside an expanded conversation, j/k step through its messages
+        // first: down from the row enters them, up from the first leaves them.
+        if (Selected is { IsExpanded: true } open && Math.Abs(delta) == 1 && open.Messages.Count > 0)
+        {
+            var at = FocusedMessage is null ? -1 : open.Messages.IndexOf(FocusedMessage);
+            var next = at + delta;
+            if (at >= 0 || delta > 0)
+            {
+                if (next < open.Messages.Count)
+                {
+                    FocusedMessage = next < 0 ? null : open.Messages[next];
+                    return;
+                }
+            }
+        }
 
         var index = Selected is null ? 0 : Rows.IndexOf(Selected) + delta;
         Selected = Rows[Math.Clamp(index, 0, Rows.Count - 1)];
@@ -1219,7 +1402,9 @@ public sealed partial class TriageViewModel : ObservableObject
         try
         {
             Status = scope == ReplyScope.Forward ? "Preparing forward..." : "Preparing reply...";
-            var draft = await _store.BuildReplyAsync(row.Summary.Ref, scope).ConfigureAwait(true);
+            // A message picked in the expanded conversation is the one answered, as in Outlook.
+            var target = FocusedMessage?.Summary.Ref ?? row.Summary.Ref;
+            var draft = await _store.BuildReplyAsync(target, scope).ConfigureAwait(true);
             Composer.Open(draft);
             Status = "";
         }

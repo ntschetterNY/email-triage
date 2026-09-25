@@ -487,6 +487,11 @@ public sealed partial class MainViewModel : ObservableObject
             case TriageAction.FirstMail: Triage.MoveToEnd(false); return true;
             case TriageAction.LastMail: Triage.MoveToEnd(true); return true;
 
+            // As in Outlook's conversation view: Right opens the conversation to
+            // list each message, Left goes back to the conversation and folds it.
+            case TriageAction.NextColumn: await Triage.ExpandAsync().ConfigureAwait(true); return true;
+            case TriageAction.PrevColumn: Triage.CollapseSelected(); return true;
+
             case TriageAction.MarkActionRequired:
                 await Triage.ToggleActionRequiredAsync(true).ConfigureAwait(true);
                 await Actions.LoadAsync().ConfigureAwait(true);
@@ -763,6 +768,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         ("Move",    $"{Keys.Describe(TriageAction.NextMail)} / {Keys.Describe(TriageAction.PrevMail)}", "Next / previous message"),
         ("Move",    $"{Keys.Describe(TriageAction.SwitchSection)} / {Keys.Describe(TriageAction.PrevSection)}", "Next / previous tab: Triage, Action items, Calendar"),
+        ("Move",    $"{Keys.Describe(TriageAction.NextColumn)} / {Keys.Describe(TriageAction.PrevColumn)}", "Expand a conversation to read (and see the attachments of) each message, even filed ones / fold it back"),
         ("Move",    Keys.Describe(TriageAction.Search), "Filter the list"),
         ("Move",    Keys.Describe(TriageAction.AiSearch), "Ask your inbox a question - Claude picks the matches (uses your Claude sign-in)"),
 

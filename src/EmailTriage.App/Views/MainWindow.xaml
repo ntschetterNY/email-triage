@@ -15,9 +15,11 @@
 
         <!-- ===== triage list row ===== -->
         <DataTemplate x:Key="MailRowTemplate" DataType="{x:Type vm:MailRowViewModel}">
+            <StackPanel>
             <Grid Margin="0,1">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="4" />
+                    <ColumnDefinition Width="18" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
@@ -27,7 +29,27 @@
                         Background="{StaticResource Accent}"
                         Visibility="{Binding IsUnread, Converter={StaticResource BoolVis}}" />
 
-                <StackPanel Grid.Column="1" Margin="10,6,8,6">
+                <!-- conversation arrow, as in Outlook: lists each message, filed ones too (Right / Left) -->
+                <Button Grid.Column="1" Click="OnExpandClick" Focusable="False" Cursor="Hand"
+                        VerticalAlignment="Top" Margin="2,7,0,0" Padding="2,0"
+                        ToolTip="Show each message in this conversation"
+                        Visibility="{Binding CanExpand, Converter={StaticResource BoolVis}}">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Hit" CornerRadius="3" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Hit" Property="Background" Value="#337AA2F7" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <TextBlock x:Name="ExpandGlyph" Text="&#x25B8;" FontSize="12" Foreground="{StaticResource Muted}" />
+                </Button>
+
+                <StackPanel Grid.Column="2" Margin="2,6,8,6">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock x:Name="SenderText" Text="{Binding Sender}" FontSize="12.5"
                                    TextTrimming="CharacterEllipsis" MaxWidth="240">
@@ -80,10 +102,54 @@
                                Foreground="{StaticResource Text}" />
                 </StackPanel>
 
-                <TextBlock x:Name="WhenText" Grid.Column="2" Text="{Binding When}" FontSize="11"
+                <TextBlock x:Name="WhenText" Grid.Column="3" Text="{Binding When}" FontSize="11"
                            Foreground="{StaticResource Muted}"
                            VerticalAlignment="Top" Margin="0,8,10,0" />
             </Grid>
+
+            <!-- the expanded conversation: click a message to read just it, with its attachments -->
+            <StackPanel Margin="22,0,6,6" Visibility="{Binding IsExpanded, Converter={StaticResource BoolVis}}">
+                <TextBlock Text="Finding the rest of the conversation..." FontSize="11" Margin="8,0,0,4"
+                           Foreground="{StaticResource SelectedMuted}"
+                           Visibility="{Binding IsLoadingMessages, Converter={StaticResource BoolVis}}" />
+                <ItemsControl ItemsSource="{Binding Messages}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:ConversationMessageViewModel}">
+                            <Border x:Name="MsgRow" Cursor="Hand" CornerRadius="4" Padding="8,4" Margin="0,1"
+                                    Background="Transparent" BorderThickness="2,0,0,0" BorderBrush="Transparent"
+                                    PreviewMouseLeftButtonDown="OnConversationMessageClick">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="MsgSender" Text="{Binding Sender}" FontSize="12"
+                                               TextTrimming="CharacterEllipsis" Foreground="{StaticResource SelectedText}" />
+                                    <TextBlock Grid.Column="1" Text="&#x1F4CE;" FontSize="10" Margin="6,0,0,0"
+                                               Foreground="{StaticResource SelectedMuted}"
+                                               Visibility="{Binding HasAttachments, Converter={StaticResource BoolVis}}" />
+                                    <TextBlock Grid.Column="2" Text="{Binding When}" FontSize="11" Margin="8,0,0,0"
+                                               Foreground="{StaticResource SelectedMuted}" />
+                                </Grid>
+                            </Border>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding IsUnread}" Value="True">
+                                    <Setter TargetName="MsgSender" Property="FontWeight" Value="SemiBold" />
+                                </DataTrigger>
+                                <Trigger SourceName="MsgRow" Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="MsgRow" Property="Background" Value="#14000000" />
+                                </Trigger>
+                                <DataTrigger Binding="{Binding IsFocused}" Value="True">
+                                    <Setter TargetName="MsgRow" Property="Background" Value="#26000000" />
+                                    <Setter TargetName="MsgRow" Property="BorderBrush" Value="{StaticResource SelectedText}" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+            </StackPanel>
 
             <!-- The selected row sits on light yellow, so its text turns dark to stay readable.
                  Template triggers outrank the sender's style triggers, so this wins for unread mail too. -->
@@ -97,6 +163,10 @@
                     <Setter TargetName="CountText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
                     <Setter TargetName="SentText" Property="Foreground" Value="#1F4FA8" />
                     <Setter TargetName="KindText" Property="Foreground" Value="#2E6B1F" />
+                    <Setter TargetName="ExpandGlyph" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsExpanded}" Value="True">
+                    <Setter TargetName="ExpandGlyph" Property="Text" Value="&#x25BE;" />
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
