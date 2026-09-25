@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using EmailTriage.App.Input;
+using EmailTriage.App.Services;
 using EmailTriage.App.ViewModels;
 using Microsoft.Web.WebView2.Core;
 
@@ -29,6 +30,7 @@ public partial class MainWindow : Window
         DataContext = viewModel;
 
         InitializeComponent();
+        Title = $"Email Triage {AppUpdater.DisplayVersion}";
 
         HelpList.ItemsSource = viewModel.HelpRows
             .Select(r => new { r.Group, r.Keys, r.Description })
