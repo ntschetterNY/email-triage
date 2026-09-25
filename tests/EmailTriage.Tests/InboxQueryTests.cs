@@ -30,6 +30,8 @@ public class InboxQueryTests
     [InlineData("subject:42 for")]
     [InlineData("subject:\"42 for\"")]
     [InlineData("inv from:acme")]
+    [InlineData("march invoice")]     // words in any order
+    [InlineData("doe")]
     public void Matches(string query) => Assert.True(Hit(query));
 
     [Theory]
@@ -39,6 +41,8 @@ public class InboxQueryTests
     [InlineData("subject:april")]
     [InlineData("from:acme subject:april")]
     [InlineData("zzz from:acme")]
+    [InlineData("iomh")]              // scattered letters are not a match any more
+    [InlineData("invoice april")]     // every word must be found
     public void DoesNotMatch(string query) => Assert.False(Hit(query));
 
     [Theory]
