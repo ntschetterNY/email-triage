@@ -941,17 +941,13 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
         try
         {
-            var found = await _store
-                .FindByMessageIdAsync(item.InternetMessageId, null).ConfigureAwait(true);
+            var found = await ResolveAsync(item).ConfigureAwait(true);
 
             if (found is null)
             {
-                Status = "Could not find that message - it may have been filed elsewhere";
+                Status = "Could not find that message - it may have been deleted";
                 return;
             }
-
-            await _repo.UpdateLocationAsync(
-                item.InternetMessageId, found.Value.EntryId, found.Value.StoreId).ConfigureAwait(true);
 
             await _store.ShowItemAsync(found.Value).ConfigureAwait(true);
             Status = "Opened in Outlook";

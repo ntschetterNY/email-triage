@@ -181,6 +181,10 @@ public sealed partial class OutlookMailStore : IMailStore
 
     private const string PropHasAttach = "http://schemas.microsoft.com/mapi/proptag/0x0E1B000B";
 
+    /// <summary>PR_DISPLAY_TO / PR_DISPLAY_CC: the recipient names, one string per line.</summary>
+    private const string PropDisplayToLine = "http://schemas.microsoft.com/mapi/proptag/0x0E04001F";
+    private const string PropDisplayCcLine = "http://schemas.microsoft.com/mapi/proptag/0x0E03001F";
+
     /// <summary>PR_CONVERSATION_ID: shared by every message in a thread, sent or received.</summary>
     private const string PropConversationId = "http://schemas.microsoft.com/mapi/proptag/0x30130102";
 
@@ -228,6 +232,9 @@ public sealed partial class OutlookMailStore : IMailStore
             columns.Add(ComUtil.PropInternetMessageId);
             columns.Add(PropHasAttach);
             columns.Add(PropConversationId);
+            columns.Add(PropDisplayToLine);
+            columns.Add(PropDisplayCcLine);
+            columns.Add(ComUtil.PropSenderSmtpAddress);
 
             table.Sort("ReceivedTime", 2 /* olDescending */);
 
@@ -249,7 +256,12 @@ public sealed partial class OutlookMailStore : IMailStore
                         InternetMessageId = ComUtil.Str(() => row![ComUtil.PropInternetMessageId]),
                         Subject = ComUtil.Str(() => row!["Subject"]),
                         SenderName = ComUtil.Str(() => row!["SenderName"]),
-                        SenderAddress = ComUtil.Str(() => row!["SenderEmailAddress"]),
+                        // Exchange senders come back as X.500 names; the SMTP column is what search and replies want.
+                        SenderAddress = ComUtil.Str(() => row![ComUtil.PropSenderSmtpAddress]) is { Length: > 0 } smtp
+                            ? smtp
+                            : ComUtil.Str(() => row!["SenderEmailAddress"]),
+                        DisplayTo = ComUtil.Str(() => row![PropDisplayToLine]),
+                        DisplayCc = ComUtil.Str(() => row![PropDisplayCcLine]),
                         ReceivedUtc = ComUtil.Date(() => row!["ReceivedTime"]),
                         IsUnread = ComUtil.Bool(() => row!["UnRead"]),
                         HasAttachments = ComUtil.Bool(() => row![PropHasAttach]),
@@ -315,6 +327,8 @@ public sealed partial class OutlookMailStore : IMailStore
         ReceivedUtc = ComUtil.Date(() => mail.ReceivedTime),
         IsUnread = ComUtil.Bool(() => mail.UnRead),
         HasAttachments = ComUtil.Int(() => mail.Attachments.Count) > 0,
+            DisplayTo = ComUtil.Str(() => mail.To),
+            DisplayCc = ComUtil.Str(() => mail.CC),
             Categories = ComUtil.ParseCategories(ComUtil.Str(() => mail.Categories)),
             ConversationKey = ComUtil.Str(() => mail.ConversationID),
             Kind = MailKinds.FromMessageClass(ComUtil.Str(() => mail.MessageClass)) ?? MailKind.Mail,
@@ -352,6 +366,33 @@ public sealed partial class OutlookMailStore : IMailStore
                 };
             }
             finally { ComUtil.Release(item); }
+        }, ct);
+
+    public Task<IReadOnlyDictionary<string, MailRecipients>> GetRecipientsAsync(
+        IReadOnlyList<MailRef> mail, CancellationToken ct = default) =>
+        _sta.InvokeAsync<IReadOnlyDictionary<string, MailRecipients>>(() =>
+        {
+            EnsureConnected();
+
+            var result = new Dictionary<string, MailRecipients>(StringComparer.Ordinal);
+            foreach (var m in mail)
+            {
+                if (ct.IsCancellationRequested) break;
+
+                dynamic? item = null;
+                try
+                {
+                    item = GetItem(m);
+                    var (to, cc) = ReadRecipients((object)item!);
+                    result[m.EntryId] = new MailRecipients(to, cc);
+                }
+                catch
+                {
+                    // Moved or deleted since the list was read; search just skips it.
+                }
+                finally { ComUtil.Release(item); }
+            }
+            return result;
         }, ct);
 
     /// <summary>Plain-text mail has an empty HTMLBody; treat that as "no HTML".</summary>

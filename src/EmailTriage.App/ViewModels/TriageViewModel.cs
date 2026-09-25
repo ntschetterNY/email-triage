@@ -42,6 +42,11 @@ public sealed partial class TriageViewModel : ObservableObject
     private readonly LruCache<string, Task<string>> _pages = new(24, StringComparer.Ordinal);
     private IReadOnlyList<SnoozeOption> _snoozePresets = Array.Empty<SnoozeOption>();
 
+    // Recipient addresses by EntryId, read on demand for "to:*@acme"-style
+    // searches. A message's recipients never change, so this lives all session.
+    private readonly Dictionary<string, MailRecipients> _recipients = new(StringComparer.Ordinal);
+    private bool _recipientsLoading;
+
     public ObservableCollection<MailRowViewModel> Rows { get; } = new();
     public PaletteViewModel Palette { get; } = new();
     public ComposerViewModel Composer { get; }
@@ -240,17 +245,115 @@ public sealed partial class TriageViewModel : ObservableObject
             return;
         }
 
-        var query = SearchQuery.Trim();
-
         // In ask mode the box holds a question, not a filter; the list stays
         // whole until Enter sends the question to Claude.
-        var source = query.Length == 0 || IsAiSearch
-            ? _allRows
-            : _allRows.Where(r =>
-                  FuzzyMatcher.Score(query, r.Subject) is not null ||
-                  FuzzyMatcher.Score(query, r.Sender) is not null).ToList();
+        var query = InboxQuery.Parse(IsAiSearch ? "" : SearchQuery);
+        if (query.NeedsAddresses) _ = LoadRecipientsAsync();
 
-        SyncRows(source);
+        SyncRows(query.IsEmpty
+            ? _allRows
+            : _allRows.Where(r => query.Matches(field => SearchValues(r, field))).ToList());
+    }
+
+    /// <summary>The text each search field can match in one conversation.</summary>
+    private IEnumerable<string> SearchValues(MailRowViewModel row, QueryField field)
+    {
+        switch (field)
+        {
+            case QueryField.Text:
+                yield return row.Subject;
+                yield return row.Sender;
+                yield break;
+
+            case QueryField.Subject:
+                foreach (var m in row.Thread.Messages) yield return m.Subject;
+                yield break;
+        }
+
+        // from: is the sender or anyone copied; to: is the To line. Display
+        // names come with every row; addresses once LoadRecipientsAsync has them.
+        foreach (var m in row.Thread.Messages)
+        {
+            _recipients.TryGetValue(m.Ref.EntryId, out var known);
+
+            if (field == QueryField.From)
+            {
+                yield return m.SenderName;
+                yield return m.SenderAddress;
+                yield return m.DisplayCc;
+                if (known is not null)
+                    foreach (var r in known.Cc) { yield return r.Name; yield return r.Address; }
+            }
+            else
+            {
+                yield return m.DisplayTo;
+                if (known is not null)
+                    foreach (var r in known.To) { yield return r.Name; yield return r.Address; }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads recipient addresses for every message in the list that does not
+    /// have them yet - a few at a time, so Outlook stays free for the reading
+    /// pane - and re-filters as each batch lands.
+    /// </summary>
+    private async Task LoadRecipientsAsync()
+    {
+        if (_recipientsLoading) return;
+        _recipientsLoading = true;
+
+        try
+        {
+            while (true)
+            {
+                var missing = _allRows
+                    .SelectMany(r => r.Thread.Messages)
+                    .Where(m => !_recipients.ContainsKey(m.Ref.EntryId))
+                    .ToList();
+                if (missing.Count == 0) break;
+
+                // Bodies already fetched carry their recipients; no need to ask Outlook again.
+                var ask = new List<MailRef>();
+                foreach (var m in missing)
+                {
+                    if (_bodies.TryGet(m.Ref.EntryId, out var body) && body.IsCompletedSuccessfully)
+                        _recipients[m.Ref.EntryId] = new MailRecipients(body.Result.To, body.Result.Cc);
+                    else if (ask.Count < 25)
+                        ask.Add(m.Ref);
+                }
+
+                if (ask.Count > 0)
+                {
+                    Status = $"Reading addresses for search... {missing.Count} left";
+                    var found = await _store.GetRecipientsAsync(ask).ConfigureAwait(true);
+
+                    // Unreadable messages get an empty entry so the loop moves past them.
+                    foreach (var mail in ask)
+                        _recipients[mail.EntryId] = found.GetValueOrDefault(mail.EntryId)
+                            ?? new MailRecipients(Array.Empty<Recipient>(), Array.Empty<Recipient>());
+                }
+
+                if (!IsSearching || !InboxQuery.Parse(SearchQuery).NeedsAddresses) break;
+                RefilterForSearch();
+            }
+
+            if (IsSearching) Status = $"{Rows.Count} match{(Rows.Count == 1 ? "" : "es")}";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not read addresses for search: {ex.Message}";
+        }
+        finally
+        {
+            _recipientsLoading = false;
+        }
+    }
+
+    private void RefilterForSearch()
+    {
+        ApplySearchFilter();
+        if (Selected is null || !Rows.Contains(Selected)) Selected = Rows.FirstOrDefault();
     }
 
     /// <summary>
@@ -276,11 +379,7 @@ public sealed partial class TriageViewModel : ObservableObject
         }
     }
 
-    partial void OnSearchQueryChanged(string value)
-    {
-        ApplySearchFilter();
-        if (Selected is null || !Rows.Contains(Selected)) Selected = Rows.FirstOrDefault();
-    }
+    partial void OnSearchQueryChanged(string value) => RefilterForSearch();
 
     // ---- AI search (Ctrl+/) and AI drafting (Ctrl+G) -----------------------
     //

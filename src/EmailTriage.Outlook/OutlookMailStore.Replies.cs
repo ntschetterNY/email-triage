@@ -161,6 +161,25 @@ public sealed partial class OutlookMailStore
             finally { ComUtil.Release(list); }
         }
 
+        if (recipients is { Attachments.Count: > 0 })
+        {
+            // All checked before any is added, so a file that has gone fails
+            // cleanly and a retry does not attach the others twice.
+            var missing = recipients.Attachments.FirstOrDefault(f => !File.Exists(f));
+            if (missing is not null)
+                throw new InvalidOperationException(
+                    $"\"{Path.GetFileName(missing)}\" is no longer there to attach. Remove it and add it again.");
+
+            dynamic? attachments = null;
+            try
+            {
+                attachments = item.Attachments;
+                foreach (var file in recipients.Attachments)
+                    ComUtil.Release(attachments!.Add(file));
+            }
+            finally { ComUtil.Release(attachments); }
+        }
+
         _openDrafts.TryRemove(draft.EntryId, out _);
 
         // Put the new text above Outlook's quoted history rather than
