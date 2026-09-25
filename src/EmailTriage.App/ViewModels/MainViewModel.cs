@@ -692,6 +692,13 @@ public sealed partial class MainViewModel : ObservableObject
         Actions.Status = await Triage.StartReplyToAsync(target.Value, scope).ConfigureAwait(true) ?? "";
     }
 
+    /// <summary>Ctrl+G on the board: reply all to the task's email and have Claude draft it.</summary>
+    private async Task AiDraftFromBoardAsync()
+    {
+        await ReplyFromBoardAsync(ReplyScope.All).ConfigureAwait(true);
+        if (Triage.Composer.IsOpen) await Triage.AiDraftAsync().ConfigureAwait(true);
+    }
+
     private async Task<bool> HandleActionsKeyAsync(TriageAction action)
     {
         switch (action)
@@ -719,6 +726,9 @@ public sealed partial class MainViewModel : ObservableObject
                 return true;
             case TriageAction.Forward:
                 await ReplyFromBoardAsync(ReplyScope.Forward).ConfigureAwait(true);
+                return true;
+            case TriageAction.AiDraftReply:
+                await AiDraftFromBoardAsync().ConfigureAwait(true);
                 return true;
 
             // The shortcuts put the cursor in the form beside the board, so the
