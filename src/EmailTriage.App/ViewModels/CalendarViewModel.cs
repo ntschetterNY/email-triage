@@ -339,6 +339,27 @@ public sealed partial class CalendarViewModel : ObservableObject
     }
 
     /// <summary>
+    /// A click on a meeting, in the strip or the agenda: shows it here and,
+    /// when it is on now or about to start, joins it in the same click.
+    /// Meetings further out only open, so browsing the agenda never dials in.
+    /// </summary>
+    public async Task ClickAsync(CalendarEvent ev)
+    {
+        Select(ev);
+        if (!IsJoinable(ev)) return;
+
+        var detail = await ReadDetailAsync(ev).ConfigureAwait(true);
+        if (detail?.JoinUrl is { } url) Status = Join(ev, url);
+    }
+
+    private bool IsJoinable(CalendarEvent ev)
+    {
+        var now = _clock.Now;
+        var lead = TimeSpan.FromMinutes(Math.Max(0, _settings.JoinLeadMinutes));
+        return !ev.IsAllDay && !ev.IsDeclined && ev.End > now && ev.Start - now <= lead;
+    }
+
+    /// <summary>
     /// Joins the meeting under way or about to start, wherever you are in the
     /// app. Returns what happened, for the status line of whichever tab is showing.
     /// </summary>

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using EmailTriage.App.Services;
 using EmailTriage.Core.Abstractions;
@@ -95,6 +96,30 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     public bool HasSuggestions => Suggestions.Count > 0;
 
+    /// <summary>Files dropped on the composer, attached to the draft as it is sent.</summary>
+    public ObservableCollection<ComposeAttachment> Attachments { get; } = new();
+
+    /// <summary>
+    /// Adds dropped files, skipping any already on the list. Folders are left
+    /// out: Outlook can only attach files.
+    /// </summary>
+    public void AddAttachments(IEnumerable<string> paths)
+    {
+        var skippedFolders = 0;
+        foreach (var path in paths)
+        {
+            if (Directory.Exists(path)) { skippedFolders++; continue; }
+            if (!File.Exists(path)) continue;
+            if (Attachments.Any(a => string.Equals(a.Path, path, StringComparison.OrdinalIgnoreCase))) continue;
+
+            Attachments.Add(new ComposeAttachment(path, new FileInfo(path).Length));
+        }
+
+        Status = skippedFolders == 0 ? "" : "Folders can't be attached - drop the files inside, or zip it first.";
+    }
+
+    public void RemoveAttachment(ComposeAttachment attachment) => Attachments.Remove(attachment);
+
     public string Header => Draft?.Scope switch
     {
         null => "",
@@ -160,6 +185,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         BccLine = _initialBcc = "";
         _settingLines = false;
         _mentions.Clear();
+        Attachments.Clear();
         CloseSuggestions();
 
         OnPropertyChanged(nameof(Header));
@@ -296,10 +322,12 @@ public sealed partial class ComposerViewModel : ObservableObject
             return;
         }
 
-        // Forwarding with no note of your own is normal; an empty reply is not.
+        // Forwarding with no note of your own is normal, as is sending just a
+        // file; an empty reply is not.
+        var hasFiles = Attachments.Count > 0;
         if (IsNew)
         {
-            if (string.IsNullOrWhiteSpace(SubjectLine) && string.IsNullOrWhiteSpace(BodyText))
+            if (string.IsNullOrWhiteSpace(SubjectLine) && string.IsNullOrWhiteSpace(BodyText) && !hasFiles)
             {
                 Status = "Nothing to send - add a subject or a message.";
                 return;
@@ -312,7 +340,7 @@ public sealed partial class ComposerViewModel : ObservableObject
                 return;
             }
         }
-        else if (!IsForward && string.IsNullOrWhiteSpace(BodyText))
+        else if (!IsForward && string.IsNullOrWhiteSpace(BodyText) && !hasFiles)
         {
             Status = "Nothing to send - type a reply first.";
             return;
@@ -337,8 +365,9 @@ public sealed partial class ComposerViewModel : ObservableObject
             BccLine != _initialBcc ? bcc : null)
         {
             Subject = IsNew ? SubjectLine.Trim() : null,
+            Attachments = Attachments.Select(a => a.Path).ToList(),
         };
-        var changes = overrides is { ChangesRecipients: false, Subject: null } ? null : overrides;
+        var changes = overrides is { ChangesRecipients: false, Subject: null, Attachments.Count: 0 } ? null : overrides;
 
         IsSending = true;
         Status = sendAt is null ? "Sending..." : "Scheduling...";
@@ -410,6 +439,15 @@ public sealed partial class ComposerViewModel : ObservableObject
         ToLine = CcLine = BccLine = SubjectLine = "";
         _settingLines = false;
         _mentions.Clear();
+        Attachments.Clear();
         CloseSuggestions();
     }
+}
+
+/// <summary>A file waiting to go out with the message being written.</summary>
+public sealed record ComposeAttachment(string Path, long Size)
+{
+    public string Name => System.IO.Path.GetFileName(Path);
+
+    public string SizeDisplay => MailAttachment.FormatSize(Size);
 }

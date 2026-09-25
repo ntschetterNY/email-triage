@@ -9,12 +9,14 @@ public sealed record MailAttachment(int Index, string Name, long Size)
     /// <summary>The message it belongs to - a thread shows attachments from several.</summary>
     public MailRef Source { get; init; }
 
-    public string SizeDisplay => Size switch
+    public string SizeDisplay => FormatSize(Size);
+
+    public static string FormatSize(long size) => size switch
     {
         <= 0 => "",
-        < 1024 => $"{Size} B",
-        < 1024 * 1024 => $"{Size / 1024.0:0} KB",
-        _ => $"{Size / (1024.0 * 1024):0.0} MB",
+        < 1024 => $"{size} B",
+        < 1024 * 1024 => $"{size / 1024.0:0} KB",
+        _ => $"{size / (1024.0 * 1024):0.0} MB",
     };
 
     /// <summary>

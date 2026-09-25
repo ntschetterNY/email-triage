@@ -421,17 +421,24 @@ public partial class MainWindow : Window
 
     // ---- calendar ------------------------------------------------------------
 
-    /// <summary>The strip in the top bar: show that meeting in the Calendar tab.</summary>
-    private void OnStripClick(object sender, MouseButtonEventArgs e)
+    /// <summary>The strip in the top bar: show that meeting in the Calendar tab, joining it if it is on.</summary>
+    private async void OnStripClick(object sender, MouseButtonEventArgs e)
     {
         var ev = ViewModel.Calendar.StripEvent;
         ViewModel.Section = Section.Calendar;
-        if (ev is not null) ViewModel.Calendar.Select(ev);
         Focus();
+        if (ev is not null) await ViewModel.Calendar.ClickAsync(ev);
     }
 
     // Keep the keyboard on the window, where the calendar keys live.
-    private void OnAgendaClick(object sender, MouseButtonEventArgs e) => Focus();
+    private async void OnAgendaClick(object sender, MouseButtonEventArgs e)
+    {
+        Focus();
+
+        // Only a click on a meeting row - not the scroll bar or a day heading.
+        var item = ItemsControl.ContainerFromElement(AgendaList, (DependencyObject)e.OriginalSource) as ListBoxItem;
+        if (item?.DataContext is AgendaRow row) await ViewModel.Calendar.ClickAsync(row.Event);
+    }
 
     private async void OnAgendaJoin(object sender, RoutedEventArgs e) { await ViewModel.Calendar.ActivateAsync(); Focus(); }
     private async void OnAgendaOpen(object sender, RoutedEventArgs e) { await ViewModel.Calendar.OpenInOutlookAsync(); Focus(); }
@@ -650,6 +657,47 @@ public partial class MainWindow : Window
         if ((sender as FrameworkElement)?.DataContext is MailRowViewModel row)
             await ViewModel.Triage.ToggleExpandAsync(row);
         Focus();
+    }
+
+    // ---- attaching files by dropping them on the composer -------------------
+
+    private static string[]? DroppedFiles(DragEventArgs e) =>
+        e.Data.GetDataPresent(DataFormats.FileDrop) ? e.Data.GetData(DataFormats.FileDrop) as string[] : null;
+
+    private void OnComposerDragOver(object sender, DragEventArgs e)
+    {
+        // Text dragged within the message still moves as text.
+        if (DroppedFiles(e) is null) return;
+
+        e.Effects = DragDropEffects.Copy;
+        e.Handled = true;
+        ComposerDropHint.Visibility = Visibility.Visible;
+    }
+
+    private void OnComposerDragLeave(object sender, DragEventArgs e)
+    {
+        // Leave also fires moving between the composer's own children; only
+        // hide the hint once the pointer is really outside it.
+        var element = (FrameworkElement)sender;
+        var at = e.GetPosition(element);
+        if (at.X > 0 && at.Y > 0 && at.X < element.ActualWidth && at.Y < element.ActualHeight) return;
+
+        ComposerDropHint.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnComposerDrop(object sender, DragEventArgs e)
+    {
+        ComposerDropHint.Visibility = Visibility.Collapsed;
+        if (DroppedFiles(e) is not { } files) return;
+
+        e.Handled = true;
+        ViewModel.Triage.Composer.AddAttachments(files);
+    }
+
+    private void OnComposeAttachmentRemoveClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is ComposeAttachment attachment)
+            ViewModel.Triage.Composer.RemoveAttachment(attachment);
     }
 
     private void OnConversationMessageClick(object sender, MouseButtonEventArgs e)

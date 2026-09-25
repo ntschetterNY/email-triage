@@ -29,6 +29,13 @@ public interface IMailStore : IAsyncDisposable
 
     Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default);
 
+    /// <summary>
+    /// The To and CC lines of each message, with SMTP addresses, keyed by
+    /// EntryId. Messages that cannot be opened are left out.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, MailRecipients>> GetRecipientsAsync(
+        IReadOnlyList<MailRef> mail, CancellationToken ct = default);
+
     /// <summary>Flattened index of every mail folder across every open store.</summary>
     Task<IReadOnlyList<FolderNode>> GetFolderIndexAsync(CancellationToken ct = default);
 

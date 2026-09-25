@@ -13,46 +13,7 @@ public sealed partial class OutlookMailStore
         _sta.InvokeAsync<IReadOnlyList<FolderNode>>(() =>
         {
             EnsureConnected();
-
-            var nodes = new List<FolderNode>(256);
-            dynamic? stores = null;
-
-            try
-            {
-                stores = _session!.Stores;
-                int storeCount = ComUtil.Int(() => stores!.Count);
-
-                for (int i = 1; i <= storeCount; i++)
-                {
-                    dynamic? store = null, root = null;
-                    try
-                    {
-                        store = stores![i];
-                        var storeName = ComUtil.Str(() => store!.DisplayName);
-
-                        // Public folders and shared archives can be enormous and
-                        // slow to enumerate; skip anything not cached locally.
-                        // Every folder in an online store is a round-trip to
-                        // Exchange, and walking one kept the palette waiting
-                        // for minutes.
-                        if (!IsLocallyAvailable((object)store!)) continue;
-
-                        root = ComUtil.Try<object?>(() => store!.GetRootFolder());
-                        if (root is null) continue;
-
-                        WalkFolders((object)root!, storeName, 0, nodes, ct);
-                    }
-                    catch
-                    {
-                        // A store that will not open (offline archive, bad
-                        // credentials) should not sink the whole index.
-                    }
-                    finally { ComUtil.ReleaseAll(root, store); }
-                }
-            }
-            finally { ComUtil.Release(stores); }
-
-            return nodes;
+            return MailFolders(ct);
         }, ct);
 
     /// <summary>
@@ -274,29 +235,87 @@ public sealed partial class OutlookMailStore
 
             if (string.IsNullOrWhiteSpace(internetMessageId)) return null;
 
-            dynamic? folder = null, items = null, found = null;
-            try
+            var filter =
+                $"@SQL=\"{ComUtil.PropInternetMessageId}\" = '{ComUtil.EscapeSql(internetMessageId)}'";
+
+            if (searchFolder is { IsEmpty: false } f)
+                return FindInFolder(() => _session!.GetFolderFromID(f.EntryId, f.StoreId), filter);
+
+            // The Inbox first, as that is where nearly everything still is; then
+            // every mail folder, so mail a rule or the user filed away is found too.
+            var inInbox = FindInFolder(() => _session!.GetDefaultFolder(ComUtil.FolderInbox), filter);
+            if (inInbox is not null) return inInbox;
+
+            foreach (var node in MailFolders(ct))
             {
-                folder = searchFolder is { IsEmpty: false } f
-                    ? _session!.GetFolderFromID(f.EntryId, f.StoreId)
-                    : _session!.GetDefaultFolder(ComUtil.FolderInbox);
-
-                items = folder!.Items;
-
-                var filter =
-                    $"@SQL=\"{ComUtil.PropInternetMessageId}\" = '{ComUtil.EscapeSql(internetMessageId)}'";
-
-                found = items!.Find(filter);
-                if (found is null) return null;
-
-                return new MailRef(
-                    ComUtil.Str(() => found!.EntryID),
-                    ComUtil.Str(() => found!.Parent.StoreID));
+                ct.ThrowIfCancellationRequested();
+                var hit = FindInFolder(() => _session!.GetFolderFromID(node.Ref.EntryId, node.Ref.StoreId), filter);
+                if (hit is not null) return hit;
             }
-            catch
-            {
-                return null;
-            }
-            finally { ComUtil.ReleaseAll(found, items, folder); }
+            return null;
         }, ct);
+
+    /// <summary>Every mail folder in the locally available stores, the same set the folder index shows.</summary>
+    private List<FolderNode> MailFolders(CancellationToken ct)
+    {
+        var nodes = new List<FolderNode>(256);
+        dynamic? stores = null;
+        try
+        {
+            stores = _session!.Stores;
+            int storeCount = ComUtil.Int(() => stores!.Count);
+            for (int i = 1; i <= storeCount; i++)
+            {
+                dynamic? store = null, root = null;
+                try
+                {
+                    store = stores![i];
+
+                    // Public folders and shared archives can be enormous and
+                    // slow to enumerate; skip anything not cached locally.
+                    // Every folder in an online store is a round-trip to
+                    // Exchange, and walking one kept the palette waiting
+                    // for minutes.
+                    if (!IsLocallyAvailable((object)store!)) continue;
+
+                    root = ComUtil.Try<object?>(() => store!.GetRootFolder());
+                    if (root is null) continue;
+
+                    WalkFolders((object)root!, ComUtil.Str(() => store!.DisplayName), 0, nodes, ct);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch
+                {
+                    // A store that will not open (offline archive, bad
+                    // credentials) should not sink the rest.
+                }
+                finally { ComUtil.ReleaseAll(root, store); }
+            }
+        }
+        finally { ComUtil.Release(stores); }
+        return nodes;
+    }
+
+    private static MailRef? FindInFolder(Func<object?> openFolder, string filter)
+    {
+        dynamic? folder = null, items = null, found = null;
+        try
+        {
+            folder = openFolder();
+            if (folder is null) return null;
+
+            items = folder.Items;
+            found = items!.Find(filter);
+            if (found is null) return null;
+
+            return new MailRef(
+                ComUtil.Str(() => found!.EntryID),
+                ComUtil.Str(() => found!.Parent.StoreID));
+        }
+        catch
+        {
+            return null;
+        }
+        finally { ComUtil.ReleaseAll(found, items, folder); }
+    }
 }

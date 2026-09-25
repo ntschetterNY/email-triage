@@ -331,14 +331,14 @@
                     </Button>
                 </StackPanel>
 
-                <!-- today strip: what is on now or next; click for the Calendar tab -->
+                <!-- today strip: what is on now or next; click opens it in the Calendar tab and joins it if on -->
                 <Border Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
                         Margin="16,0" Padding="10,3" CornerRadius="11" BorderThickness="1" Cursor="Hand"
                         MouseLeftButtonUp="OnStripClick"
                         Visibility="{Binding Calendar.StripText, Converter={StaticResource NullVis}}">
                     <Border.ToolTip>
                         <TextBlock>
-                            <Run Text="Click to see it in the Calendar tab ·" />
+                            <Run Text="Click to open it in the Calendar tab, and join if it is on ·" />
                             <Run Text="{Binding JoinKey, Mode=OneWay}" />
                             <Run Text="joins" />
                         </TextBlock>
@@ -457,6 +457,13 @@
                                            Foreground="{StaticResource Muted}"
                                            Text="Enter asks Claude"
                                            Visibility="{Binding Triage.IsAiSearch, Converter={StaticResource BoolVis}}" />
+                                <!-- filter mode: the field syntax InboxQuery understands -->
+                                <TextBlock DockPanel.Dock="Right" Margin="8,0,0,0"
+                                           VerticalAlignment="Center" FontSize="11"
+                                           Foreground="{StaticResource Muted}"
+                                           Text="from:  2:  subject:  * = anything"
+                                           ToolTip="from: sender or CC · 2: or to: the To line · subject: · * stands for anything, e.g. 2:*@acme"
+                                           Visibility="{Binding Triage.IsAiSearch, Converter={StaticResource BoolVisInv}}" />
                                 <TextBox x:Name="SearchBox" Style="{StaticResource FlatInput}"
                                          Text="{Binding Triage.SearchQuery, UpdateSourceTrigger=PropertyChanged}" />
                             </DockPanel>
@@ -1448,9 +1455,14 @@
         <!-- reply / forward composer (r / Shift+R / f) -->
         <Grid Grid.RowSpan="3" Background="#B0000000"
               Visibility="{Binding Triage.Composer.IsOpen, Converter={StaticResource BoolVis}}">
+            <!-- files dropped anywhere on it are attached; Preview events, because the
+                 text boxes would otherwise take the drop as text -->
             <Border Width="820" MaxHeight="660" VerticalAlignment="Center"
                     Background="{StaticResource Panel}" CornerRadius="9"
-                    BorderBrush="{StaticResource Border}" BorderThickness="1">
+                    BorderBrush="{StaticResource Border}" BorderThickness="1"
+                    AllowDrop="True"
+                    PreviewDragEnter="OnComposerDragOver" PreviewDragOver="OnComposerDragOver"
+                    PreviewDragLeave="OnComposerDragLeave" PreviewDrop="OnComposerDrop">
                 <Border.Effect>
                     <DropShadowEffect BlurRadius="32" ShadowDepth="6" Opacity="0.55" Color="Black" />
                 </Border.Effect>
@@ -1467,6 +1479,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
@@ -1543,7 +1556,54 @@
                         </ListBox>
                     </Border>
 
-                    <Border Grid.Row="2" Background="{StaticResource Raised}"
+                    <!-- files to attach: dropped on the composer, ✕ to take one off -->
+                    <ItemsControl Grid.Row="2" ItemsSource="{Binding Triage.Composer.Attachments}" Margin="18,0,18,8"
+                                  Visibility="{Binding Triage.Composer.Attachments.Count, Converter={StaticResource CountVis}}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,6,6" Background="{StaticResource Raised}" BorderBrush="{StaticResource Border}"
+                                        BorderThickness="1" CornerRadius="5" Padding="9,4,4,4" ToolTip="{Binding Path}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="📎" FontSize="11" Margin="0,0,5,0" Foreground="{StaticResource Muted}" />
+                                        <TextBlock Text="{Binding Name}" FontSize="12" MaxWidth="260"
+                                                   TextTrimming="CharacterEllipsis" Foreground="{StaticResource Text}" />
+                                        <TextBlock Text="{Binding SizeDisplay}" FontSize="11" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource Muted}" />
+                                        <Button Content="✕" Click="OnComposeAttachmentRemoveClick" Tag="{Binding}" Focusable="False"
+                                                Margin="6,0,0,0" Padding="4,0" Cursor="Hand" FontSize="10"
+                                                ToolTip="Don't attach this">
+                                            <Button.Template>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border x:Name="Remove" CornerRadius="3" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                                        <TextBlock Text="{TemplateBinding Content}" Foreground="{StaticResource Muted}" />
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="Remove" Property="Background" Value="#337AA2F7" />
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Button.Template>
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- shown while files are dragged over the composer -->
+                    <Border x:Name="ComposerDropHint" Grid.RowSpan="4" Panel.ZIndex="2" Visibility="Collapsed"
+                            CornerRadius="9" Background="#E6181B22" BorderBrush="{StaticResource Accent}"
+                            BorderThickness="2" IsHitTestVisible="False">
+                        <TextBlock Text="Drop to attach" FontSize="16" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="{StaticResource Accent}" />
+                    </Border>
+
+                    <Border Grid.Row="3" Background="{StaticResource Raised}"
                             CornerRadius="0,0,9,9" Padding="18,10">
                         <StackPanel>
                             <!-- send later (Ctrl+Shift+L) -->
@@ -1562,10 +1622,10 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Esc discard · @ mentions"
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Esc discard · @ mentions · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+S subject · Esc discard · @ mentions"
+                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+S subject · Esc discard · @ mentions · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"

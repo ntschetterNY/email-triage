@@ -30,5 +30,8 @@ public sealed record RecipientOverrides(
 {
     public string? Subject { get; init; }
 
+    /// <summary>Files on disk to attach, on top of any the draft already carries.</summary>
+    public IReadOnlyList<string> Attachments { get; init; } = Array.Empty<string>();
+
     public bool ChangesRecipients => To is not null || Cc is not null || Bcc is not null;
 }
