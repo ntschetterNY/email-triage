@@ -24,6 +24,13 @@ public static class AppUpdater
     public static Version CurrentVersion =>
         Assembly.GetEntryAssembly()?.GetName().Version ?? new Version(0, 0);
 
+    /// <summary>
+    /// For the title bar: "v1.0.4" for a release, "local build" for one made
+    /// on this machine, which is never stamped with a release number.
+    /// </summary>
+    public static string DisplayVersion =>
+        Repo is { Length: > 0 } ? $"v{CurrentVersion.ToString(3)}" : "local build";
+
     private static string? Repo =>
         Assembly.GetEntryAssembly()?
             .GetCustomAttributes<AssemblyMetadataAttribute>()
