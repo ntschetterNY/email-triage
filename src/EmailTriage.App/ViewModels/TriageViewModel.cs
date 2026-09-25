@@ -1386,6 +1386,52 @@ public sealed partial class TriageViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Files a follow-up set in the composer: the answered mail goes on the
+    /// action list (as if flagged with `a`, unless it is there already) and
+    /// the person gets a hand-off with the due date, which the board's chase
+    /// picks up. Returns a line for the status bar.
+    /// </summary>
+    public async Task<string> RecordFollowUpAsync(MailRef answered, FollowUpRequest followUp)
+    {
+        try
+        {
+            var summary = _allRows.SelectMany(r => r.InboxMessages).FirstOrDefault(m => m.Ref == answered)
+                ?? (await _store.GetConversationAsync(answered, 50).ConfigureAwait(true))
+                    .FirstOrDefault(m => m.Ref == answered);
+
+            if (summary is null) return "the follow-up could not be saved: that mail was not found";
+
+            var item = await _actions.GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
+            if (item is null || item.IsComplete)
+            {
+                await SetActionRequiredAsync(summary, true).ConfigureAwait(true);
+                item = await _actions.GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
+                if (item is null) return "the follow-up could not be saved";
+            }
+
+            var assignment = await _actions.AddAssignmentAsync(new Assignment
+            {
+                ActionItemId = item.Id,
+                PersonName = followUp.Person.Display,
+                PersonEmail = followUp.Person.Address,
+                Task = followUp.Task,
+                DueUtc = followUp.DueUtc,
+                CreatedUtc = _clock.UtcNow,
+            }).ConfigureAwait(true);
+
+            // They were told in the message itself, so the wait starts now and
+            // the board does not offer to "tell" them all over again.
+            await _actions.MarkAssignmentDraftedAsync(assignment.Id).ConfigureAwait(true);
+
+            return $"follow-up with {followUp.Person.Display} {followUp.DueUtc.ToLocalTime():ddd d MMM} is on the action board";
+        }
+        catch (Exception ex)
+        {
+            return $"the follow-up could not be saved: {ex.Message}";
+        }
+    }
+
     /// <summary>Opens the composer on a blank message. Returns a problem to report, or null once open.</summary>
     public async Task<string?> StartNewMailAsync()
     {

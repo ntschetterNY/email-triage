@@ -92,6 +92,8 @@ their own letters.
 | `Ctrl+Enter` | Send |
 | `Ctrl+Shift+Enter` | Send & mark done - archives the conversation |
 | `Ctrl+Shift+L` | Send later |
+| `Ctrl+Shift+F` | **Follow-up** - who owes what, by when; see below |
+| `Ctrl+Shift+T` | Follow-up: toggle tracking it as a task |
 | `Ctrl+Shift+O` / `C` / `B` / `M` | Jump to To / Cc / Bcc / the message |
 | `Esc` / `Ctrl+Shift+,` | Discard |
 | `@` | Mention someone in the message - pick with `↑↓` `Enter`/`Tab`; they are added to To if not already on it |
@@ -149,6 +151,21 @@ notes, blockers, and assignments.
 Assignments are **local by default**. Nothing is sent when you assign someone. When
 you want to actually tell them, the app opens a pre-filled draft in Outlook for you to
 review and send yourself.
+
+### Follow-ups from the reply box (`Ctrl+Shift+F`)
+`Ctrl+Shift+F` opens a row under the message: **Follow up** (a date: `fri`, `3d`,
+`14 oct`), **Who** and **What**. `Tab` moves through them. Leave the date empty, or
+press `Esc`, and nothing happens.
+
+- **Who** starts as the first person on the To line. A first name is enough: it
+  matches people on the message first, then your contacts.
+- **What** is optional ("send the revised drawings").
+- *Add a follow-up line to the email* (on by default) puts
+  `Follow-up: Sam Lee - send the revised drawings by Friday 3 Oct` under your text.
+- *Track as a task* (on by default, `Ctrl+Shift+T`) puts the answered mail on the
+  board with a hand-off to that person and the due date. It goes overdue on that
+  date, and `c` drafts the chase mail when you need it. A brand-new message
+  answers nothing, so it can carry the line but not the task.
 
 ### Calendar
 Meeting invitations, cancellations and responses now show in the triage list, tagged

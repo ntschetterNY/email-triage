@@ -1486,6 +1486,56 @@
                     <Border Grid.Row="2" Background="{StaticResource Raised}"
                             CornerRadius="0,0,9,9" Padding="18,10">
                         <StackPanel>
+                            <!-- follow-up (Ctrl+Shift+F): Tab runs by, who, what, then the two toggles -->
+                            <Grid Margin="0,0,0,10"
+                                  Visibility="{Binding Triage.Composer.IsFollowingUp, Converter={StaticResource BoolVis}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="72" />
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="Follow up" FontSize="12" VerticalAlignment="Center"
+                                           Foreground="{StaticResource Accent}" FontWeight="SemiBold" />
+                                <TextBox Grid.Column="1" x:Name="FollowUpBox" Style="{StaticResource FlatInput}" FontSize="13"
+                                         Text="{Binding Triage.Composer.FollowUpWhen, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Column="2" Text="{Binding Triage.Composer.FollowUpWhenPreview}" FontSize="12"
+                                           Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
+
+                                <TextBlock Grid.Row="1" Text="Who" FontSize="12" Margin="0,6,0,0" VerticalAlignment="Center"
+                                           Foreground="{StaticResource Muted}" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Margin="0,6,0,0" Style="{StaticResource FlatInput}" FontSize="13"
+                                         Text="{Binding Triage.Composer.FollowUpWho, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Triage.Composer.FollowUpWhoPreview}" FontSize="12"
+                                           Margin="10,6,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                           Foreground="{StaticResource Muted}" />
+
+                                <TextBlock Grid.Row="2" Text="What" FontSize="12" Margin="0,6,0,0" VerticalAlignment="Center"
+                                           Foreground="{StaticResource Muted}" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0"
+                                         Style="{StaticResource FlatInput}" FontSize="13"
+                                         ToolTip="Optional - e.g. send the revised drawings"
+                                         Text="{Binding Triage.Composer.FollowUpWhat, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <StackPanel Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
+                                    <CheckBox IsChecked="{Binding Triage.Composer.TrackAsTask}" VerticalAlignment="Center"
+                                              IsEnabled="{Binding Triage.Composer.CanTrackAsTask}"
+                                              Foreground="{StaticResource Text}" FontSize="12">
+                                        Track as a task on the board (Ctrl+Shift+T)
+                                    </CheckBox>
+                                    <CheckBox IsChecked="{Binding Triage.Composer.MentionInEmail}" VerticalAlignment="Center"
+                                              Margin="18,0,0,0" Foreground="{StaticResource Text}" FontSize="12">
+                                        Add a follow-up line to the email
+                                    </CheckBox>
+                                </StackPanel>
+                            </Grid>
+
                             <!-- send later (Ctrl+Shift+L) -->
                             <DockPanel Margin="0,0,0,10"
                                        Visibility="{Binding Triage.Composer.IsScheduling, Converter={StaticResource BoolVis}}">
@@ -1502,10 +1552,10 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Esc discard · @ mentions"
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Esc discard · @ mentions"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+S subject · Esc discard · @ mentions"
+                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Esc discard · @ mentions"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"

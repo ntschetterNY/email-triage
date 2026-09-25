@@ -47,11 +47,12 @@ public partial class MainWindow : Window
             RecipientField.Cc => CcBox,
             RecipientField.Bcc => BccBox,
             RecipientField.Subject => SubjectBox,
+            RecipientField.FollowUp => FollowUpBox,
             _ => ComposerBox,
         });
 
         // Suggestions belong to the line being typed in; moving elsewhere drops them.
-        foreach (var box in new[] { ToBox, CcBox, BccBox, SubjectBox, ComposerBox })
+        foreach (var box in new[] { ToBox, CcBox, BccBox, SubjectBox, ComposerBox, FollowUpBox })
             box.GotKeyboardFocus += (_, _) => viewModel.Triage.Composer.CloseSuggestions();
 
         // "@" in the message searches contacts. Text and caret both matter:
