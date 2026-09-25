@@ -14,6 +14,9 @@ public sealed partial class MailRowViewModel : ObservableObject
     [ObservableProperty] private bool _isActionRequired;
     [ObservableProperty] private bool _isBusy;
 
+    /// <summary>Part of a Shift+arrow multi-selection that triage actions apply to.</summary>
+    [ObservableProperty] private bool _isMarked;
+
     /// <summary>Set while a move or snooze animates the row out of the list.</summary>
     [ObservableProperty] private bool _isLeaving;
 

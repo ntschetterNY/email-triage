@@ -465,6 +465,8 @@ public sealed partial class MainViewModel : ObservableObject
             case TriageAction.PageUp: Triage.Move(-10); return true;
             case TriageAction.FirstMail: Triage.MoveToEnd(false); return true;
             case TriageAction.LastMail: Triage.MoveToEnd(true); return true;
+            case TriageAction.ExtendSelectionDown: Triage.ExtendSelection(1); return true;
+            case TriageAction.ExtendSelectionUp: Triage.ExtendSelection(-1); return true;
 
             case TriageAction.MarkActionRequired:
                 await Triage.ToggleActionRequiredAsync(true).ConfigureAwait(true);
@@ -689,6 +691,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Move",    $"{Keys.Describe(TriageAction.NextMail)} / {Keys.Describe(TriageAction.PrevMail)}", "Next / previous message"),
         ("Move",    $"{Keys.Describe(TriageAction.SwitchSection)} / {Keys.Describe(TriageAction.PrevSection)}", "Next / previous tab: Triage, Action items, Calendar"),
         ("Move",    Keys.Describe(TriageAction.Search), "Filter the list"),
+        ("Move",    $"{Keys.Describe(TriageAction.ExtendSelectionDown)} / {Keys.Describe(TriageAction.ExtendSelectionUp)}", "Select several - e, v, h, a and n act on all of them"),
 
         ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - send to the action list"),
         ("Triage",  Keys.Describe(TriageAction.MarkNoAction), "No action needed"),

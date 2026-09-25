@@ -59,6 +59,7 @@ their own letters.
 |---|---|
 | `j` / `↓` | Next message |
 | `k` / `↑` | Previous message |
+| `Shift+↓` / `Shift+↑` | Select several - `e`, `v`, `h`, `a` and `n` then act on all of them; `Esc` clears |
 | `Home` / `Ctrl+↑`, `End` / `Ctrl+↓` | First / last message |
 | `Tab` / `Shift+Tab` | Next / previous tab: Triage, Action items, Calendar |
 | `/` | Filter the list |
