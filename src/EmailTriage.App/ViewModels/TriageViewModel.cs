@@ -261,8 +261,21 @@ public sealed partial class TriageViewModel : ObservableObject
         switch (field)
         {
             case QueryField.Text:
+                // Bare words search everything cheap to hand: subjects, people
+                // on every message, and the preview line.
                 yield return row.Subject;
                 yield return row.Sender;
+                foreach (var m in row.Thread.Messages)
+                {
+                    yield return m.Subject;
+                    yield return m.SenderName;
+                    yield return m.SenderAddress;
+                    yield return m.DisplayTo;
+                    yield return m.DisplayCc;
+                    yield return m.Preview;
+                    if (_recipients.TryGetValue(m.Ref.EntryId, out var people))
+                        foreach (var r in people.To.Concat(people.Cc)) { yield return r.Name; yield return r.Address; }
+                }
                 yield break;
 
             case QueryField.Subject:
@@ -410,7 +423,7 @@ public sealed partial class TriageViewModel : ObservableObject
         Status = "Ask your inbox anything - Enter asks Claude, Esc cancels";
     }
 
-    /// <summary>Closes the search box and drops every filter, fuzzy or AI.</summary>
+    /// <summary>Closes the search box and drops every filter, typed or AI.</summary>
     public void CloseSearch()
     {
         IsSearching = false;
