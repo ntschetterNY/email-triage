@@ -24,9 +24,11 @@ fast filing, a real action list, and snooze.
 - Windows 10 or 11
 - **Classic Outlook desktop** (2016 / 2019 / 2021 / Microsoft 365), signed in
   - The *new* Outlook will not work. It removed the COM interface this depends on.
-- [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
-- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) - preinstalled on
-  current Windows 11. Without it everything still works except the message preview pane.
+- Nothing else to install. The .NET runtime is inside `EmailTriage.exe`, so it runs on a
+  machine where you can't install software. No admin rights are needed at any point.
+- The message preview pane uses the WebView2 runtime that Windows 11 and Microsoft 365 already
+  include. Without it everything still works except the preview; see
+  [No WebView2 runtime](#no-webview2-runtime) if you can't install it either.
 - [Claude Code](https://claude.com/claude-code), signed in - **only for the AI commands**
   (`Ctrl+G`, `Ctrl+/`). Everything else works without it.
 
@@ -36,14 +38,29 @@ fast filing, a real action list, and snooze.
    [latest release](https://github.com/ntschetterNY/email-triage/releases/latest).
 2. Unzip it somewhere you can write to, e.g. `%LOCALAPPDATA%\Programs\EmailTriage`.
    Not `Program Files` - the app can't update itself there.
-3. Run `EmailTriage.exe`.
+3. Run `EmailTriage.exe`. Keep the DLLs next to it; they are part of the app.
+
+The zip is about 65 MB because it carries its own copy of .NET. That is the trade for
+needing nothing installed.
+
+### No WebView2 runtime
+
+Nearly every Windows 10/11 machine already has it (Edge, Windows 11 and Microsoft 365 all
+ship it), and the app uses that copy. If yours doesn't and IT won't install the
+[Evergreen runtime](https://developer.microsoft.com/microsoft-edge/webview2/), drop a
+[Fixed Version](https://developer.microsoft.com/microsoft-edge/webview2/#download) copy
+(x64; it's a `.cab` you expand with `expand -F:* file.cab .`) into a folder named
+`WebView2Runtime` next to `EmailTriage.exe`, so that
+`WebView2Runtime\msedgewebview2.exe` exists. The app uses it automatically whenever the
+system runtime is missing. It isn't in the release zip because it adds ~250 MB and, unlike
+the system copy, isn't kept patched by Windows Update.
 
 ### Updates
 
-Each time it opens, the app checks for a newer release. If there is one, it downloads it,
-swaps the files and restarts itself. That takes a few seconds and needs no admin rights. If
-it's offline, or GitHub can't be reached within 5 seconds, it just opens the version you
-have. Set `CheckForUpdates: false` in `%APPDATA%\EmailTriage\settings.json` to turn this
+Each time it opens, the app checks for a newer release. If there is one, it downloads it
+(about 65 MB), swaps the files and restarts itself. That takes a few seconds on an office
+connection and needs no admin rights. If it's offline, or GitHub can't be reached within 5
+seconds, it just opens the version you have. Set `CheckForUpdates: false` in `%APPDATA%\EmailTriage\settings.json` to turn this
 off. When an update fails, the reason goes to `%LOCALAPPDATA%\EmailTriage\error.log`.
 
 Every push to `main` that changes code is tested, built and published as release
@@ -59,13 +76,17 @@ dotnet build -c Release
 dotnet run --project src\EmailTriage.App
 ```
 
-Single-file executable:
+Self-contained executable, the same thing the release workflow ships (the runtime
+identifier, single-file and self-contained settings live in `EmailTriage.App.csproj` and
+apply only to `publish`):
 
 ```powershell
-dotnet publish src\EmailTriage.App -c Release -r win-x64 --self-contained false `
-  -p:PublishSingleFile=true -o publish
+dotnet publish src\EmailTriage.App -c Release -o publish
 .\publish\EmailTriage.exe
 ```
+
+`dotnet build` and `dotnet run` stay framework-dependent, so a developer machine needs the
+.NET 8 SDK; end users don't.
 
 Building from macOS or Linux (compiles only - it cannot run there) needs
 `-p:EnableWindowsTargeting=true`.
