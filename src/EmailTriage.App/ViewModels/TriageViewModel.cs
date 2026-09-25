@@ -676,11 +676,7 @@ public sealed partial class TriageViewModel : ObservableObject
             catch { _bodies.Remove(entryId); throw; }
             if (cts.IsCancellationRequested) return;
 
-            var blockRemote = _settings.BlockRemoteImages;
-            var pageKey = "one:" + entryId;
-            string html;
-            try { html = await _pages.GetOrAdd(pageKey, _ => Task.Run(() => HtmlPresenter.Render(body, blockRemote))).ConfigureAwait(true); }
-            catch { _pages.Remove(pageKey); throw; }
+            var html = await RenderSingleAsync(body).ConfigureAwait(true);
             if (cts.IsCancellationRequested) return;
 
             OpenBody = body;
@@ -731,7 +727,16 @@ public sealed partial class TriageViewModel : ObservableObject
 
         try
         {
-            var (bodies, html) = await LoadThreadAsync(row.Thread).ConfigureAwait(true);
+            var load = LoadThreadAsync(row.Thread, cts.Token);
+
+            // A conversation nothing has read yet - typically a search result
+            // from far down the list, which prefetch never reached - costs one
+            // Outlook read per message. Show the newest as soon as it is in
+            // rather than leave the pane on the old mail until all are.
+            if (!load.IsCompleted && row.Thread.Messages.Count > 1)
+                await ShowNewestAsync(row.Thread, load, cts.Token).ConfigureAwait(true);
+
+            var (bodies, html) = await load.ConfigureAwait(true);
             if (cts.IsCancellationRequested) return;
 
             OpenBody = bodies[0];
@@ -754,18 +759,55 @@ public sealed partial class TriageViewModel : ObservableObject
     }
 
     /// <summary>
+    /// The newest message on its own, as a stand-in while the rest of the
+    /// conversation is still being read. Shares the body read the whole
+    /// load already started, so it costs no extra trip to Outlook.
+    /// </summary>
+    private async Task ShowNewestAsync(ConversationThread thread, Task whole, CancellationToken ct)
+    {
+        var newest = thread.Messages[0];
+        try
+        {
+            var body = await _bodies.GetOrAdd(newest.Ref.EntryId, _ => _store.GetBodyAsync(newest.Ref)).ConfigureAwait(true);
+            if (ct.IsCancellationRequested || whole.IsCompleted) return;
+
+            var html = await RenderSingleAsync(body).ConfigureAwait(true);
+            if (ct.IsCancellationRequested || whole.IsCompleted) return;
+
+            OpenBody = body;
+            ThreadAttachments = body.Attachments;
+            BodyHtml = html;
+        }
+        catch { /* the whole-conversation load reports any failure */ }
+    }
+
+    /// <summary>One message's page, rendered off the UI thread and cached.</summary>
+    private async Task<string> RenderSingleAsync(MailBody body)
+    {
+        var blockRemote = _settings.BlockRemoteImages;
+        var pageKey = "one:" + body.Ref.EntryId;
+        try { return await _pages.GetOrAdd(pageKey, _ => Task.Run(() => HtmlPresenter.Render(body, blockRemote))).ConfigureAwait(true); }
+        catch { _pages.Remove(pageKey); throw; }
+    }
+
+    /// <summary>
     /// Every message in the conversation (yours included, newest first) and
     /// the rendered page, from cache where possible. Bodies are fetched without
     /// a cancellation token: a fetch is shared through the cache, so one
-    /// caller moving on must not cancel it for another.
+    /// caller moving on must not cancel it for another. <paramref name="stop"/>
+    /// is checked between reads instead, so a load the user has moved on from
+    /// stops queuing work on Outlook's single thread ahead of the one they want.
     /// </summary>
-    private async Task<(List<MailBody> Bodies, string Html)> LoadThreadAsync(ConversationThread thread)
+    private async Task<(List<MailBody> Bodies, string Html)> LoadThreadAsync(
+        ConversationThread thread, CancellationToken stop = default)
     {
         var messages = thread.Messages.Take(Math.Max(1, _settings.ThreadMessageLimit)).ToList();
 
         var bodies = new List<MailBody>(messages.Count);
         foreach (var message in messages)
         {
+            stop.ThrowIfCancellationRequested();
+
             var task = _bodies.GetOrAdd(message.Ref.EntryId, _ => _store.GetBodyAsync(message.Ref));
             try { bodies.Add(await task.ConfigureAwait(true)); }
             catch (Exception) when (bodies.Count > 0 || message != messages[^1])
@@ -824,7 +866,7 @@ public sealed partial class TriageViewModel : ObservableObject
         foreach (var thread in threads)
         {
             if (ct.IsCancellationRequested) return;
-            try { await LoadThreadAsync(thread).ConfigureAwait(true); }
+            try { await LoadThreadAsync(thread, ct).ConfigureAwait(true); }
             catch { /* only a head start; the real open will report any problem */ }
         }
     }
