@@ -96,6 +96,9 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     [ObservableProperty] private int _waitingCount;
     [ObservableProperty] private int _overdueCount;
 
+    /// <summary>Waits that have sat past the follow-up threshold, for the status line.</summary>
+    [ObservableProperty] private int _followUpDueCount;
+
     // Inline editor state. One editor at a time keeps the key handling simple.
     [ObservableProperty] private EditorMode _editor = EditorMode.None;
     [ObservableProperty] private string _editorTitle = "";
@@ -150,15 +153,21 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     private IReadOnlyList<ActionItem> _all = Array.Empty<ActionItem>();
 
     public ActionItemsViewModel(
-        IActionItemRepository repo, IMailStore store, IClock clock, AppSettings settings)
+        IActionItemRepository repo, IMailStore store, IClock clock, AppSettings settings,
+        AiDraftService aiDraft, WritingStyleService style)
     {
         _repo = repo;
         _store = store;
         _clock = clock;
         _settings = settings;
+        _aiDraft = aiDraft;
+        _style = style;
         _reportSort = SortChoices[0];
         Columns[0].IsActive = true;
     }
+
+    private readonly AiDraftService _aiDraft;
+    private readonly WritingStyleService _style;
 
     public bool HasSelection => Selected is not null;
     public bool HasFilter => PersonFilter.Length > 0;
@@ -177,6 +186,14 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
             var all = open.Concat(recentDone).ToList();
             _all = all;
+
+            // Flag waits that have gone stale, so the cards say so and `c` has
+            // a queue to work through. Timestamp arithmetic only - no AI runs
+            // until the user asks for the chase draft itself.
+            foreach (var item in all) item.FollowUpDays = 0;
+            var followUps = FollowUpPlanner.FindDue(open, _settings.FollowUpAfterDays, _clock.UtcNow);
+            foreach (var due in followUps) due.Item.FollowUpDays = due.DaysWaiting;
+            FollowUpDueCount = followUps.Count;
 
             WaitingOnPeople.Clear();
             foreach (var (person, count, overdue) in ActionWorkflow.WaitingOn(all))
@@ -217,6 +234,9 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
             Status = $"{OpenCount} open  ·  {WaitingCount} waiting"
                    + (OverdueCount > 0 ? $"  ·  {OverdueCount} overdue" : "")
+                   + (FollowUpDueCount > 0
+                       ? $"  ·  {FollowUpDueCount} follow-up{(FollowUpDueCount == 1 ? "" : "s")} due (c drafts a chase)"
+                       : "")
                    + (HasFilter ? $"  ·  showing {PersonFilter}" : "");
         }
         catch (Exception ex)
@@ -791,6 +811,13 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         await LoadAsync().ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// True when `c` on this card should mail the assignee directly rather
+    /// than follow up in the conversation: there is a hand-off with an address.
+    /// </summary>
+    public bool SelectedChasesAssignee =>
+        Selected?.Assignments.Any(a => !a.IsDone && a.PersonEmail.Length > 0) == true;
+
     /// <summary>Drafts a chase email to the first person with an open hand-off.</summary>
     public async Task ChaseAsync()
     {
@@ -808,9 +835,20 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         await DraftAssignmentMailAsync(assignment).ConfigureAwait(true);
     }
 
+    /// <summary>Restarts the staleness clock once a chase draft exists.</summary>
+    public async Task MarkFollowedUpAsync(ActionItem item)
+    {
+        await _repo.MarkFollowedUpAsync(item.Id).ConfigureAwait(true);
+        item.LastFollowUpUtc = _clock.UtcNow;
+        item.FollowUpDays = 0;
+        if (FollowUpDueCount > 0) FollowUpDueCount--;
+    }
+
     /// <summary>
     /// Builds an unsent mail asking someone for what they owe, and shows it in
-    /// Outlook. Explicitly does not send: the user reviews and presses send.
+    /// Outlook. Claude writes the body (in the user's voice, aware of how long
+    /// the wait has been); without Claude it falls back to the plain template.
+    /// Explicitly does not send: the user reviews and presses send.
     /// </summary>
     public async Task DraftAssignmentMailAsync(Assignment assignment)
     {
@@ -824,19 +862,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
         try
         {
-            var due = assignment.DueUtc is { } d
-                ? $"<p>Ideally by <strong>{d.ToLocalTime():dddd d MMM}</strong>.</p>"
-                : "";
-
-            var body = $"""
-                <div style="font-family:Calibri,sans-serif;font-size:11pt">
-                  <p>Hi {System.Net.WebUtility.HtmlEncode(assignment.PersonName.Split(' ')[0])},</p>
-                  <p>{System.Net.WebUtility.HtmlEncode(assignment.Task)}</p>
-                  {due}
-                  <p>This came out of: <em>{System.Net.WebUtility.HtmlEncode(item.Subject)}</em></p>
-                  <p>Thanks</p>
-                </div>
-                """;
+            var body = await BuildChaseBodyAsync(item, assignment).ConfigureAwait(true);
 
             await _store.CreateAndShowDraftAsync(
                 new[] { assignment.PersonEmail },
@@ -845,6 +871,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
             await _repo.MarkAssignmentDraftedAsync(assignment.Id).ConfigureAwait(true);
             assignment.NotifiedUtc = _clock.UtcNow;
+            await MarkFollowedUpAsync(item).ConfigureAwait(true);
 
             Status = $"Draft opened in Outlook for {assignment.PersonName} - review and send it there";
             OnPropertyChanged(nameof(Selected));
@@ -852,6 +879,58 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         catch (Exception ex)
         {
             Status = $"Could not create the draft: {ex.Message}";
+        }
+    }
+
+    private async Task<string> BuildChaseBodyAsync(ActionItem item, Assignment assignment)
+    {
+        try
+        {
+            Status = $"Claude is drafting the chase to {assignment.PersonName}...";
+
+            string style;
+            try { style = await _style.GetAsync(_settings.ResolveStyleModel()).ConfigureAwait(true); }
+            catch { style = ""; }
+
+            var since = assignment.NotifiedUtc ?? assignment.CreatedUtc;
+            var brief =
+                $"Ask {assignment.PersonName} for: {assignment.Task}. " +
+                (assignment.DueUtc is { } d ? $"It is needed by {d.ToLocalTime():dddd d MMM}. " : "") +
+                (assignment.HasBeenDrafted
+                    ? $"They were first asked around {since.ToLocalTime():ddd d MMM} " +
+                      $"({Math.Max(0, (int)(_clock.UtcNow - since).TotalDays)} days ago), so this is a follow-up nudge - " +
+                      "friendly, no guilt-tripping, ask for an update or a date."
+                    : "This is the first ask, so give them the context they need.") +
+                $" It relates to the email thread \"{item.Subject}\"" +
+                (item.Notes.Length > 0 ? $". Background notes: {item.Notes}" : ".");
+
+            var text = await _aiDraft.DraftAsync(new DraftContext
+            {
+                Subject = $"Action needed: {item.Subject}",
+                Kind = "new message",
+                Recipients = assignment.PersonName,
+                Instructions = brief,
+                Style = style,
+            }, _settings.ResolveFollowUpModel()).ConfigureAwait(true);
+
+            return HtmlPresenter.ComposeReplyFragment(text);
+        }
+        catch (Exception)
+        {
+            // No Claude, or it failed: the plain template still gets the ask out.
+            var due = assignment.DueUtc is { } d
+                ? $"<p>Ideally by <strong>{d.ToLocalTime():dddd d MMM}</strong>.</p>"
+                : "";
+
+            return $"""
+                <div style="font-family:Calibri,sans-serif;font-size:11pt">
+                  <p>Hi {System.Net.WebUtility.HtmlEncode(assignment.PersonName.Split(' ')[0])},</p>
+                  <p>{System.Net.WebUtility.HtmlEncode(assignment.Task)}</p>
+                  {due}
+                  <p>This came out of: <em>{System.Net.WebUtility.HtmlEncode(item.Subject)}</em></p>
+                  <p>Thanks</p>
+                </div>
+                """;
         }
     }
 

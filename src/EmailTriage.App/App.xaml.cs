@@ -74,6 +74,24 @@ public partial class App : Application
         services.AddSingleton<ScheduledSender>();
         services.AddSingleton<IFolderUsageRepository, FolderUsageRepository>();
 
+        // AI commands run through the Claude Code CLI, so they use the user's
+        // own Claude sign-in - this app never holds an API key.
+        services.AddSingleton<IAiAssistant>(new ClaudeCodeCli(
+            settings.ClaudeCliPath,
+            settings.AiModel,
+            TimeSpan.FromSeconds(Math.Max(30, settings.AiTimeoutSeconds))));
+        services.AddSingleton<AiDraftService>();
+        services.AddSingleton<AiSearchService>();
+
+        // The learned writing-style guide lives beside settings.json, as a
+        // plain text file the user can open and edit to tune their drafts.
+        services.AddSingleton(sp => new WritingStyleService(
+            sp.GetRequiredService<IAiAssistant>(),
+            sp.GetRequiredService<IMailStore>(),
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "EmailTriage", "writing-style.md")));
+
         services.AddSingleton<OutlookMailStore>();
         services.AddSingleton<IMailStore>(sp => sp.GetRequiredService<OutlookMailStore>());
 

@@ -376,8 +376,20 @@
 
                         <Border Grid.Row="0" Padding="10,8"
                                 Visibility="{Binding Triage.IsSearching, Converter={StaticResource BoolVis}}">
-                            <TextBox x:Name="SearchBox" Style="{StaticResource FlatInput}"
-                                     Text="{Binding Triage.SearchQuery, UpdateSourceTrigger=PropertyChanged}" />
+                            <DockPanel>
+                                <!-- ask mode: the box holds a question for Claude, not a filter -->
+                                <TextBlock DockPanel.Dock="Left" Text="Ask" Margin="0,0,8,0"
+                                           VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="{StaticResource Accent}"
+                                           Visibility="{Binding Triage.IsAiSearch, Converter={StaticResource BoolVis}}" />
+                                <TextBlock DockPanel.Dock="Right" Margin="8,0,0,0"
+                                           VerticalAlignment="Center" FontSize="11"
+                                           Foreground="{StaticResource Muted}"
+                                           Text="Enter asks Claude"
+                                           Visibility="{Binding Triage.IsAiSearch, Converter={StaticResource BoolVis}}" />
+                                <TextBox x:Name="SearchBox" Style="{StaticResource FlatInput}"
+                                         Text="{Binding Triage.SearchQuery, UpdateSourceTrigger=PropertyChanged}" />
+                            </DockPanel>
                         </Border>
 
                         <ListBox Grid.Row="1"
@@ -801,6 +813,12 @@
                                                                     <TextBlock x:Name="DueText" FontSize="10" Foreground="{StaticResource Muted}">
                                                                         <Run Text="due" /><Run Text=" " /><Run Text="{Binding DueDisplay, Mode=OneWay}" />
                                                                     </TextBlock>
+                                                                </Border>
+                                                                <!-- the wait has gone stale: c drafts the chase -->
+                                                                <Border CornerRadius="3" Padding="5,0" Margin="6,0,0,0" Background="#33E5C07B"
+                                                                        Visibility="{Binding IsFollowUpDue, Converter={StaticResource BoolVis}}">
+                                                                    <TextBlock FontSize="10" Foreground="{StaticResource Warn}"
+                                                                               Text="{Binding FollowUpLabel}" />
                                                                 </Border>
                                                                 <TextBlock x:Name="NotesMark" Text="✎ notes" FontSize="10" Margin="8,0,0,0"
                                                                            Foreground="{StaticResource Muted}"
@@ -1474,10 +1492,10 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+Shift+L later · Esc discard · @ mentions · ↑↓ Enter/Tab picks"
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Esc discard · @ mentions"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+L later · Ctrl+Shift+S subject · Esc discard · @ mentions · ↑↓ Enter/Tab picks"
+                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+S subject · Esc discard · @ mentions"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"

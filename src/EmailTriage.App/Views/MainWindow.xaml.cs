@@ -103,6 +103,8 @@ public partial class MainWindow : Window
                 Hint("attachment", TriageAction.OpenAttachment),
                 Hint("read", TriageAction.ToggleRead),
                 Hint("search", TriageAction.Search),
+                Hint("ask AI", TriageAction.AiSearch),
+                Hint("AI draft", TriageAction.AiDraftReply),
                 Hint("undo", TriageAction.Undo),
                 Hint("help", TriageAction.ShowHelp),
             },

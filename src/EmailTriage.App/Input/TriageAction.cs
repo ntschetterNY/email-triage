@@ -92,4 +92,16 @@ public enum TriageAction
 
     /// <summary>The tab before this one; the reverse of SwitchSection.</summary>
     PrevSection,
+
+    // AI, through the user's own Claude sign-in
+
+    /// <summary>
+    /// Have Claude draft the reply: from the list it opens reply-all and
+    /// drafts from the conversation; in the composer it turns any notes
+    /// already typed into the full message. Nothing is sent automatically.
+    /// </summary>
+    AiDraftReply,
+
+    /// <summary>Ask the inbox a question in plain language; Claude picks the matches.</summary>
+    AiSearch,
 }

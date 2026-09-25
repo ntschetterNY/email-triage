@@ -17,6 +17,7 @@ fast filing, a real action list, and snooze.
 | **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. |
 | **Write** | `Enter` reply-all, `r` reply-to-sender, `Ctrl+N` a new message, all sent from inside the app. |
 | **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. A Calendar tab lists what's coming, and the top bar counts down to your next meeting. |
+| **AI** (optional) | `Ctrl+G` has Claude draft the reply from the conversation - or from notes you type first. `Ctrl+/` asks your inbox a question in plain language. Runs through your own Claude Code sign-in; see below for what leaves the machine. |
 
 ## Requirements
 
@@ -26,6 +27,8 @@ fast filing, a real action list, and snooze.
 - [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
 - [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) - preinstalled on
   current Windows 11. Without it everything still works except the message preview pane.
+- [Claude Code](https://claude.com/claude-code), signed in - **only for the AI commands**
+  (`Ctrl+G`, `Ctrl+/`). Everything else works without it.
 
 ## Build and run
 
@@ -62,6 +65,7 @@ their own letters.
 | `Home` / `Ctrl+↑`, `End` / `Ctrl+↓` | First / last message |
 | `Tab` / `Shift+Tab` | Next / previous tab: Triage, Action items, Calendar |
 | `/` | Filter the list |
+| `Ctrl+/` | **Ask your inbox** - AI search in plain language, `Esc` shows everything again |
 | `F5` | Refresh |
 
 ### Triage
@@ -83,6 +87,7 @@ their own letters.
 | `Enter` | Reply to everyone |
 | `r` | Reply to the sender only |
 | `f` | Forward |
+| `Ctrl+G` | **AI draft** - Claude writes the reply from the conversation, or expands notes you typed first. Nothing sends itself |
 | `Ctrl+Enter` | Send |
 | `Ctrl+Shift+Enter` | Send & mark done - archives the conversation |
 | `Ctrl+Shift+L` | Send later |
@@ -173,6 +178,58 @@ answers and the invitation text. Settings also cover `DefaultEventMinutes` (30),
 `BlockReminderMinutes` (5), and `JoinLeadMinutes` (10), which is how close a meeting
 must be for `Ctrl+J` to join it rather than the one you're in.
 
+### AI drafting and search (`Ctrl+G`, `Ctrl+/`)
+
+Both commands run the [Claude Code](https://claude.com/claude-code) CLI as a child
+process, so they use whatever sign-in you already have - a Claude subscription
+login works; no API key is stored or needed. If `claude` isn't installed or
+signed in, the status line says so and nothing else changes.
+
+**`Ctrl+G` drafts a reply.** From the list it opens a reply-all and writes a
+draft from the whole conversation. In the composer it works from what's already
+in the box: type rough notes - `say yes, ask for the revised SOV by Friday` -
+and `Ctrl+G` turns them into the full message. The draft only ever lands in the
+composer for you to edit; sending stays your keystroke, and `Ctrl+G` again
+redoes it.
+
+**`Ctrl+/` asks your inbox a question.** "what am I still waiting on from the
+architect?", "anything about the November invoice?" - Claude reads the list
+(subjects, senders, dates, and the text of conversations you've already opened)
+and filters it to the matches, best first. `Esc` shows everything again. Because
+the list itself carries no body text (see below), unopened conversations match
+on their subject and sender only.
+
+**Follow-ups chase themselves onto the board.** When a card's blocker or
+hand-off has sat unchanged for `FollowUpAfterDays` (5 by default, 0 turns it
+off), the card grows a `follow up · waiting 8d` chip and the status line counts
+what's due. The flagging is timestamp arithmetic in the local database - free,
+no AI involved. Pressing `c` on the card is what brings Claude in: a hand-off
+with an email address gets its own chase mail (opened in Outlook for review, as
+before, but now written by Claude); anything else gets a follow-up reply
+drafted into the composer on the task's own conversation, saying what's owed
+and for how long. Drafting a chase restarts that card's clock.
+
+**Drafts come out in your voice.** The first time you ask for a draft, the app
+reads your recent sent mail (quoted history stripped), has Claude distil how
+you write - greeting, sign-off, length, phrasing - and caches the result at
+`%APPDATA%\EmailTriage\writing-style.md`. Every later draft carries that guide.
+The file is plain text on purpose: open it and edit it to tune what the drafts
+sound like, or delete it to relearn from scratch.
+
+**What leaves the machine, stated plainly:** this app's core promise is that no
+mail leaves the machine, and these two commands are the deliberate, opt-in
+exception. Nothing is sent anywhere until you press `Ctrl+G` or `Ctrl+/`; when
+you do, the conversation being answered (or the list being searched) goes to
+Anthropic through your own Claude account, under that account's data terms. If
+that trade isn't acceptable in your shop, don't install Claude Code - every
+other feature is unaffected.
+
+Settings: `AiModel` (default `claude-opus-5`; `sonnet` answers faster) sets the
+model for everything, and each job can override it - `AiDraftModel`,
+`AiFollowUpModel`, `AiSearchModel`, `AiStyleModel` - so "Sonnet for replies,
+Opus for follow-ups" is two lines in settings.json. Also `FollowUpAfterDays`,
+`ClaudeCliPath` (set it if `claude` isn't on PATH), and `AiTimeoutSeconds`.
+
 ### Identity
 Outlook `EntryID`s change whenever an item moves between stores, which is what breaks
 naive Outlook tools. Everything persisted here is keyed by the RFC 5322 `Message-ID`
@@ -216,8 +273,10 @@ dotnet test
 
 Tests over the fuzzy matcher, the snooze date parser, folder ranking, the snooze
 scheduler (including catch-up after downtime and stale-EntryID recovery), the SQLite
-repositories, and the calendar logic: reading typed times and lengths, clashes, free
-slots, and finding join links. The COM layer is not unit-tested - it needs a real Outlook - which
+repositories, the calendar logic (reading typed times and lengths, clashes, free
+slots, and finding join links), and the AI layer: the prompts built for drafting
+and search, and the tolerant parsing of what comes back - the model process itself
+sits behind `IAiAssistant` and is faked. The COM layer is not unit-tested - it needs a real Outlook - which
 is exactly why it sits behind `IMailStore` and everything else is tested against a fake.
 
 ## Known limits

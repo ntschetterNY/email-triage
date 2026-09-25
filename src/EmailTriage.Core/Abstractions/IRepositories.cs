@@ -18,6 +18,9 @@ public interface IActionItemRepository
 
     Task UpdateDueAsync(long id, DateTimeOffset? dueUtc, CancellationToken ct = default);
 
+    /// <summary>Stamps that a follow-up chase was drafted, restarting the staleness clock.</summary>
+    Task MarkFollowedUpAsync(long id, CancellationToken ct = default);
+
     Task<BlockingTask> AddBlockerAsync(BlockingTask blocker, CancellationToken ct = default);
     Task SetBlockerResolvedAsync(long blockerId, bool resolved, CancellationToken ct = default);
     Task DeleteBlockerAsync(long blockerId, CancellationToken ct = default);

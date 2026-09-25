@@ -22,6 +22,8 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ScheduledSender _sender;
     private readonly IScheduledSendRepository _scheduled;
     private readonly ISnoozeRepository _snoozes;
+    private readonly AppSettings _settings;
+    private readonly IClock _clock;
 
     public KeyMap Keys { get; }
     public TriageViewModel Triage { get; }
@@ -46,8 +48,12 @@ public sealed partial class MainViewModel : ObservableObject
         ContactDirectory contacts,
         ScheduledSender sender,
         IScheduledSendRepository scheduled,
-        CalendarViewModel calendar)
+        CalendarViewModel calendar,
+        AppSettings settings,
+        IClock clock)
     {
+        _settings = settings;
+        _clock = clock;
         _contacts = contacts;
         _sender = sender;
         _scheduled = scheduled;
@@ -287,8 +293,15 @@ public sealed partial class MainViewModel : ObservableObject
 
         if (Triage.IsSearching && Section == Section.Triage)
         {
-            if (action is TriageAction.Cancel) { Triage.IsSearching = false; Triage.SearchQuery = ""; return true; }
-            if (action is TriageAction.Confirm) { Triage.IsSearching = false; return true; }
+            if (action is TriageAction.Cancel) { Triage.CloseSearch(); return true; }
+            if (action is TriageAction.Confirm)
+            {
+                // In ask mode, Enter sends the question to Claude; a plain
+                // filter just closes the box and keeps filtering.
+                if (Triage.IsAiSearch) await Triage.RunAiSearchAsync().ConfigureAwait(true);
+                else Triage.IsSearching = false;
+                return true;
+            }
             if (action is TriageAction.NextMail or TriageAction.PrevMail && !stroke.IsTyping)
             {
                 Triage.Move(action == TriageAction.NextMail ? 1 : -1);
@@ -313,6 +326,14 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         if (ctrlEnter) { await composer.SendAsync().ConfigureAwait(true); return true; }
+
+        // Ctrl+G: Claude drafts the message - from the conversation, or from
+        // the notes already typed, which it expands into the full reply.
+        if (action == TriageAction.AiDraftReply)
+        {
+            await Triage.AiDraftAsync().ConfigureAwait(true);
+            return true;
+        }
 
         if (stroke.Modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift))
         {
@@ -515,7 +536,15 @@ public sealed partial class MainViewModel : ObservableObject
                 return true;
 
             case TriageAction.Search:
-                Triage.IsSearching = true;
+                Triage.OpenSearch();
+                return true;
+
+            case TriageAction.AiSearch:
+                Triage.OpenAiSearch();
+                return true;
+
+            case TriageAction.AiDraftReply:
+                await Triage.AiDraftAsync().ConfigureAwait(true);
                 return true;
 
             case TriageAction.Rsvp:
@@ -597,6 +626,52 @@ public sealed partial class MainViewModel : ObservableObject
             OfferUndo: false));
     }
 
+    /// <summary>
+    /// c on the board: chase whatever the card is waiting on. A hand-off with
+    /// an email address gets its own mail to the assignee (Claude writes it,
+    /// shown in Outlook for review). Anything else - a blocker, or a hand-off
+    /// with no address - gets a follow-up reply drafted by Claude in the
+    /// task's own conversation. Either way the staleness clock restarts and
+    /// nothing sends without the user.
+    /// </summary>
+    private async Task ChaseSelectedAsync()
+    {
+        if (Actions.Selected is not { } item) return;
+
+        if (Actions.SelectedChasesAssignee)
+        {
+            await Actions.ChaseAsync().ConfigureAwait(true);
+            return;
+        }
+
+        if (FollowUpPlanner.Describe(item, _clock.UtcNow) is not { } due)
+        {
+            Actions.Status = "Nothing open to chase - add a blocker (b) or hand-off (Shift+A) first";
+            return;
+        }
+
+        Actions.Status = "Opening the conversation...";
+        var target = await Actions.ReplyTargetAsync().ConfigureAwait(true);
+        if (target is null)
+        {
+            Actions.Status = "Could not find this task's email - it may have been deleted";
+            return;
+        }
+
+        if (await Triage.StartReplyToAsync(target.Value, ReplyScope.All).ConfigureAwait(true) is { } problem)
+        {
+            Actions.Status = problem;
+            return;
+        }
+
+        Actions.Status = "";
+        var drafted = await Triage
+            .AiDraftAsync(FollowUpPlanner.BuildInstructions(due), _settings.ResolveFollowUpModel())
+            .ConfigureAwait(true);
+
+        if (drafted) await Actions.MarkFollowedUpAsync(item).ConfigureAwait(true);
+    }
+
     private async Task ReplyFromBoardAsync(ReplyScope scope)
     {
         if (!Actions.HasSelection) return;
@@ -626,7 +701,7 @@ public sealed partial class MainViewModel : ObservableObject
             case TriageAction.SetDue: Actions.RequestFocus(FormField.Due); return true;
             case TriageAction.ToggleBoardView: Actions.ToggleByPerson(); return true;
             case TriageAction.ClearWait: await Actions.ClearNextWaitAsync().ConfigureAwait(true); return true;
-            case TriageAction.Chase: await Actions.ChaseAsync().ConfigureAwait(true); return true;
+            case TriageAction.Chase: await ChaseSelectedAsync().ConfigureAwait(true); return true;
             case TriageAction.Cancel: await Actions.ClearFilterAsync().ConfigureAwait(true); return true;
 
             // Email the task's conversation without leaving the board.
@@ -689,6 +764,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Move",    $"{Keys.Describe(TriageAction.NextMail)} / {Keys.Describe(TriageAction.PrevMail)}", "Next / previous message"),
         ("Move",    $"{Keys.Describe(TriageAction.SwitchSection)} / {Keys.Describe(TriageAction.PrevSection)}", "Next / previous tab: Triage, Action items, Calendar"),
         ("Move",    Keys.Describe(TriageAction.Search), "Filter the list"),
+        ("Move",    Keys.Describe(TriageAction.AiSearch), "Ask your inbox a question - Claude picks the matches (uses your Claude sign-in)"),
 
         ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - send to the action list"),
         ("Triage",  Keys.Describe(TriageAction.MarkNoAction), "No action needed"),
@@ -703,6 +779,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Reply",   ReplyAllKey, "Reply to everyone"),
         ("Reply",   Keys.Describe(TriageAction.ReplySender), "Reply to the sender only"),
         ("Reply",   Keys.Describe(TriageAction.Forward), "Forward (type the To line, Tab to the message)"),
+        ("Reply",   Keys.Describe(TriageAction.AiDraftReply), "Claude drafts the reply - type notes first to steer it; nothing sends itself"),
         ("Reply",   "Ctrl+Enter", "Send"),
         ("Reply",   "Ctrl+Shift+Enter", "Send & mark done - archives the conversation"),
         ("Reply",   "Ctrl+Shift+L", "Send later - optionally held for review if they reply first"),
@@ -716,7 +793,8 @@ public sealed partial class MainViewModel : ObservableObject
         ("Board",   "Mouse", "Drag a card to another column to move it"),
         ("Board",   Keys.Describe(TriageAction.ToggleBoardView), "Board / By person report (sort, export to Excel, email it)"),
         ("Board",   Keys.Describe(TriageAction.ClearWait), "Clear the next blocker or hand-off (back to Doing when none are left)"),
-        ("Board",   Keys.Describe(TriageAction.Chase), "Draft a chase email to whoever has it"),
+        ("Board",   Keys.Describe(TriageAction.Chase), "Chase whoever has it - Claude drafts the follow-up"
+            + (_settings.FollowUpAfterDays > 0 ? $"; waits are flagged after {_settings.FollowUpAfterDays} days" : "")),
         ("Actions", Keys.Describe(TriageAction.AddNote), "Edit notes"),
         ("Actions", Keys.Describe(TriageAction.AddBlocker), "Blocked by - who or what it is waiting on"),
         ("Actions", Keys.Describe(TriageAction.AddAssignment), "Assign to someone else"),

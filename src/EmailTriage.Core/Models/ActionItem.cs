@@ -31,6 +31,19 @@ public sealed class ActionItem
     /// <summary>When the item itself should be finished, separate from any blocker's date.</summary>
     public DateTimeOffset? DueUtc { get; set; }
 
+    /// <summary>When a follow-up chase was last drafted for this item's wait.</summary>
+    public DateTimeOffset? LastFollowUpUtc { get; set; }
+
+    /// <summary>
+    /// Days this item has sat waiting past the follow-up threshold; 0 when not
+    /// due. Not persisted - the board sets it from <c>FollowUpPlanner</c> on load.
+    /// </summary>
+    public int FollowUpDays { get; set; }
+
+    public bool IsFollowUpDue => FollowUpDays > 0;
+
+    public string FollowUpLabel => $"follow up · waiting {FollowUpDays}d";
+
     public List<BlockingTask> Blockers { get; set; } = new();
     public List<Assignment> Assignments { get; set; } = new();
 

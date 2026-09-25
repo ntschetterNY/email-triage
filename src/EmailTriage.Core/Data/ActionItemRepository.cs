@@ -30,7 +30,8 @@ public sealed class ActionItemRepository : IActionItemRepository
                priority            AS Priority,
                notes               AS Notes,
                stage               AS Stage,
-               due_utc             AS DueUtc
+               due_utc             AS DueUtc,
+               last_follow_up_utc  AS LastFollowUpUtc
         FROM action_items
         """;
 
@@ -245,6 +246,14 @@ public sealed class ActionItemRepository : IActionItemRepository
             "UPDATE assignments SET done_utc = @when WHERE id = @id",
             new { id = assignmentId, when = done ? (DateTimeOffset?)_clock.UtcNow : null },
             cancellationToken: ct)).ConfigureAwait(false);
+    }
+
+    public async Task MarkFollowedUpAsync(long id, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        await conn.ExecuteAsync(new CommandDefinition(
+            "UPDATE action_items SET last_follow_up_utc = @when WHERE id = @id",
+            new { id, when = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task MarkAssignmentDraftedAsync(long assignmentId, CancellationToken ct = default)

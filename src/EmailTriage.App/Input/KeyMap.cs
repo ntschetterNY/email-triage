@@ -89,6 +89,12 @@ public sealed class KeyMap
         ("s",           TriageAction.ScheduleTime),
         ("ctrl+j",      TriageAction.JoinMeeting),
 
+        // AI: Ctrl+G drafts the open (or a new reply-all) message with Claude,
+        // Ctrl+/ asks the inbox a question. Both go through the user's own
+        // Claude Code sign-in, and only when pressed.
+        ("ctrl+g",      TriageAction.AiDraftReply),
+        ("ctrl+/",      TriageAction.AiSearch),
+
         // Shell
         ("tab",         TriageAction.SwitchSection),
         ("shift+tab",   TriageAction.PrevSection),
@@ -132,7 +138,7 @@ public sealed class KeyMap
     };
 
     /// <summary>Bumped when the defaults change in a way old config files would mask.</summary>
-    private const int ConfigVersion = 2;
+    private const int ConfigVersion = 3;
 
     private static IEnumerable<(KeyStroke, TriageAction)> Defaults =>
         DefaultSpec

@@ -25,6 +25,9 @@ public sealed partial class TriageViewModel : ObservableObject
     private readonly AppSettings _settings;
     private readonly IClock _clock;
     private readonly ICalendarStore _calendar;
+    private readonly AiDraftService _aiDraft;
+    private readonly AiSearchService _aiSearch;
+    private readonly WritingStyleService _style;
 
     private FolderRef _inbox;
     private FolderRef? _sent;
@@ -58,6 +61,13 @@ public sealed partial class TriageViewModel : ObservableObject
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private bool _isSearching;
 
+    /// <summary>The search box is in ask-Claude mode: Enter runs the question.</summary>
+    [ObservableProperty] private bool _isAiSearch;
+    [ObservableProperty] private bool _isAiSearchRunning;
+
+    /// <summary>The last AI answer's conversations, best first; null when no AI filter is on.</summary>
+    private IReadOnlyList<string>? _aiFilterKeys;
+
     private List<MailRowViewModel> _allRows = new();
 
     // Reloads are serialised: one that arrives mid-load is folded into a
@@ -75,8 +85,12 @@ public sealed partial class TriageViewModel : ObservableObject
         IClock clock,
         ContactDirectory contacts,
         IScheduledSendRepository scheduled,
-        ICalendarStore calendar)
+        ICalendarStore calendar,
+        AiDraftService aiDraft,
+        AiSearchService aiSearch,
+        WritingStyleService style)
     {
+        _style = style;
         _store = store;
         _calendar = calendar;
         _actions = actions;
@@ -84,6 +98,8 @@ public sealed partial class TriageViewModel : ObservableObject
         _folders = folders;
         _settings = settings;
         _clock = clock;
+        _aiDraft = aiDraft;
+        _aiSearch = aiSearch;
 
         Composer = new ComposerViewModel(store, contacts, scheduled, clock, settings.DayShape);
         Palette.QueryChanged += (_, _) => RefreshPalette();
@@ -203,9 +219,26 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private void ApplySearchFilter()
     {
+        // An AI answer pins the list to its conversations, in its order, until
+        // Esc clears it - a live refresh must not silently widen the results.
+        if (_aiFilterKeys is { } keys)
+        {
+            var byKey = new Dictionary<string, MailRowViewModel>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in _allRows) byKey.TryAdd(row.Key, row);
+
+            SyncRows(keys
+                .Select(k => byKey.GetValueOrDefault(k))
+                .Where(r => r is not null)
+                .Select(r => r!)
+                .ToList());
+            return;
+        }
+
         var query = SearchQuery.Trim();
 
-        var source = query.Length == 0
+        // In ask mode the box holds a question, not a filter; the list stays
+        // whole until Enter sends the question to Claude.
+        var source = query.Length == 0 || IsAiSearch
             ? _allRows
             : _allRows.Where(r =>
                   FuzzyMatcher.Score(query, r.Subject) is not null ||
@@ -241,6 +274,256 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         ApplySearchFilter();
         if (Selected is null || !Rows.Contains(Selected)) Selected = Rows.FirstOrDefault();
+    }
+
+    // ---- AI search (Ctrl+/) and AI drafting (Ctrl+G) -----------------------
+    //
+    // Both go out through the user's own Claude Code sign-in, and only when
+    // the key is pressed: the one deliberate exception to "nothing leaves the
+    // machine". The status line says what is happening while Claude works.
+
+    /// <summary>Opens the plain filter box, dropping any AI question or answer first.</summary>
+    public void OpenSearch()
+    {
+        if (HasAiFilter || IsAiSearch)
+        {
+            _aiFilterKeys = null;
+            IsAiSearch = false;
+            SearchQuery = "";
+            ApplySearchFilter();
+        }
+        IsSearching = true;
+    }
+
+    /// <summary>Opens the search box in ask mode; Enter sends the question to Claude.</summary>
+    public void OpenAiSearch()
+    {
+        _aiFilterKeys = null;
+        IsAiSearch = true;
+        IsSearching = true;
+        SearchQuery = "";
+        Status = "Ask your inbox anything - Enter asks Claude, Esc cancels";
+    }
+
+    /// <summary>Closes the search box and drops every filter, fuzzy or AI.</summary>
+    public void CloseSearch()
+    {
+        IsSearching = false;
+        IsAiSearch = false;
+        _aiFilterKeys = null;
+        SearchQuery = "";
+        ApplySearchFilter();
+        if (Selected is null || !Rows.Contains(Selected)) Selected = Rows.FirstOrDefault();
+    }
+
+    /// <summary>True while an AI answer is filtering the list, so Esc knows to clear it.</summary>
+    public bool HasAiFilter => _aiFilterKeys is not null;
+
+    public async Task RunAiSearchAsync()
+    {
+        var question = SearchQuery.Trim();
+        if (question.Length == 0 || IsAiSearchRunning) return;
+
+        IsAiSearchRunning = true;
+        Status = "Asking Claude...";
+
+        try
+        {
+            var rows = _allRows.Select(r => new AiSearchRow(
+                r.Key,
+                r.Subject,
+                r.Summary.DisplaySender,
+                r.Summary.SenderAddress,
+                r.Thread.LastActivityUtc,
+                r.IsUnread,
+                r.Count,
+                CachedSnippet(r))).ToList();
+
+            var result = await _aiSearch
+                .SearchAsync(question, rows, _clock.Now, _settings.ResolveSearchModel())
+                .ConfigureAwait(true);
+
+            _aiFilterKeys = result.Keys;
+            IsSearching = false; // focus returns to the list; the filter stays
+            IsAiSearch = false;
+            ApplySearchFilter();
+            Selected = Rows.FirstOrDefault();
+
+            var count = $"{Rows.Count} match{(Rows.Count == 1 ? "" : "es")}";
+            Status = result.Answer.Length > 0
+                ? $"{result.Answer}  ·  {count} · Esc shows everything again"
+                : $"{count} · Esc shows everything again";
+        }
+        catch (AiUnavailableException ex)
+        {
+            Status = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Status = $"AI search failed: {ex.Message}";
+        }
+        finally
+        {
+            IsAiSearchRunning = false;
+        }
+    }
+
+    /// <summary>
+    /// Body text for the search prompt, from the reading pane's cache only -
+    /// search must stay instant to start, not fetch 250 bodies from Outlook.
+    /// </summary>
+    private string CachedSnippet(MailRowViewModel row)
+    {
+        return _bodies.TryGet(row.Summary.Ref.EntryId, out var task)
+               && task.IsCompletedSuccessfully
+            ? task.Result.PlainText
+            : "";
+    }
+
+    private bool _aiDrafting;
+
+    /// <summary>
+    /// Ctrl+G. With the composer closed it opens a reply-all first; then Claude
+    /// drafts from the conversation - or from the notes already typed in the
+    /// box, which it expands into the full message. The draft only ever lands
+    /// in the composer; sending stays a human keystroke.
+    ///
+    /// <paramref name="instructions"/> replaces the typed notes (how follow-up
+    /// chases steer the draft) and <paramref name="model"/> overrides the
+    /// draft model. Returns true once a draft has landed in the composer.
+    /// </summary>
+    public async Task<bool> AiDraftAsync(string? instructions = null, string? model = null)
+    {
+        if (_aiDrafting) return false;
+
+        if (!Composer.IsOpen)
+        {
+            if (Selected is null)
+            {
+                Status = "Select a conversation to reply to first";
+                return false;
+            }
+
+            await StartReplyAsync(ReplyScope.All).ConfigureAwait(true);
+            if (!Composer.IsOpen) return false; // StartReplyAsync already said why
+        }
+
+        if (Composer.Draft is not { } draft) return false;
+
+        _aiDrafting = true;
+        Composer.Status = "Claude is drafting...";
+
+        try
+        {
+            var style = await GetStyleQuietlyAsync().ConfigureAwait(true);
+            if (!Composer.IsOpen || !ReferenceEquals(Composer.Draft, draft)) return false;
+
+            Composer.Status = "Claude is drafting...";
+            var context = await BuildDraftContextAsync(draft, instructions ?? Composer.BodyText.Trim())
+                .ConfigureAwait(true);
+            context = context with { Style = style };
+
+            var text = await _aiDraft
+                .DraftAsync(context, model ?? _settings.ResolveDraftModel())
+                .ConfigureAwait(true);
+
+            // The user may have discarded or sent while Claude wrote.
+            if (!Composer.IsOpen || !ReferenceEquals(Composer.Draft, draft)) return false;
+
+            Composer.BodyText = text;
+            Composer.CloseSuggestions();
+            Composer.Status = "Drafted - read it before sending. Ctrl+G redoes it.";
+            return true;
+        }
+        catch (AiUnavailableException ex)
+        {
+            if (ReferenceEquals(Composer.Draft, draft)) Composer.Status = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(Composer.Draft, draft)) Composer.Status = $"Could not draft: {ex.Message}";
+        }
+        finally
+        {
+            _aiDrafting = false;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The user's writing-style guide, learned from sent mail on the first
+    /// draft. A missing or unlearnable style never stops a draft.
+    /// </summary>
+    private async Task<string> GetStyleQuietlyAsync()
+    {
+        try
+        {
+            if (!_style.HasProfile)
+                Composer.Status = "Reading your sent mail to learn your writing style (first time only)...";
+
+            return await _style.GetAsync(_settings.ResolveStyleModel()).ConfigureAwait(true);
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// The conversation behind the open draft, as prompt-ready messages. Bodies
+    /// come from the reading pane's cache when the thread is the selected one,
+    /// and from Outlook when the reply was opened elsewhere (the action board).
+    /// </summary>
+    private async Task<DraftContext> BuildDraftContextAsync(ReplyDraft draft, string instructions)
+    {
+        var kind = draft.Scope switch
+        {
+            ReplyScope.All => "reply to everyone on the conversation below",
+            ReplyScope.SenderOnly => "reply to the sender of the conversation below",
+            ReplyScope.Forward => "note to send above the forwarded conversation below",
+            _ => "new message",
+        };
+
+        var messages = new List<DraftMessage>();
+
+        if (draft.Scope != ReplyScope.New && draft.InReplyTo.EntryId.Length > 0)
+        {
+            var thread = _allRows
+                .FirstOrDefault(r => r.Thread.Messages.Any(m => m.Ref.EntryId == draft.InReplyTo.EntryId))
+                ?.Thread.Messages;
+
+            var summaries = thread
+                ?? await _store.GetConversationAsync(draft.InReplyTo, _settings.ThreadMessageLimit)
+                    .ConfigureAwait(true);
+
+            foreach (var summary in summaries.Take(Math.Max(1, _settings.ThreadMessageLimit)))
+            {
+                var task = _bodies.GetOrAdd(summary.Ref.EntryId, _ => _store.GetBodyAsync(summary.Ref));
+                try
+                {
+                    var body = await task.ConfigureAwait(true);
+                    messages.Add(new DraftMessage(
+                        summary.DisplaySender, summary.SenderAddress,
+                        summary.ReceivedUtc, body.PlainText, summary.IsSent));
+                }
+                catch
+                {
+                    // A message that moved or vanished still leaves the rest
+                    // of the thread to draft from.
+                    _bodies.Remove(summary.Ref.EntryId);
+                }
+            }
+        }
+
+        return new DraftContext
+        {
+            Subject = Composer.Subject,
+            Kind = kind,
+            Recipients = draft.RecipientSummary,
+            Instructions = instructions,
+            Messages = messages,
+        };
     }
 
     public bool IsPreviewing => PreviewPath is not null;
@@ -1043,6 +1326,6 @@ public sealed partial class TriageViewModel : ObservableObject
         if (Composer.IsOpen) { _ = Composer.DiscardAsync(); return; }
         if (Palette.IsOpen) { Palette.Close(); return; }
         if (IsPreviewing) { ClosePreview(); Status = ""; return; }
-        if (IsSearching) { IsSearching = false; SearchQuery = ""; }
+        if (IsSearching || HasAiFilter) { CloseSearch(); Status = ""; }
     }
 }

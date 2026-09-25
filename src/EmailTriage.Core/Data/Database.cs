@@ -192,5 +192,11 @@ public sealed class Database
                 EXISTS (SELECT 1 FROM blocking_tasks b WHERE b.action_item_id = action_items.id AND b.resolved_utc IS NULL)
                 OR EXISTS (SELECT 1 FROM assignments a WHERE a.action_item_id = action_items.id AND a.done_utc IS NULL));
             """),
+
+        (4, """
+            -- When a follow-up chase was last drafted, so a stale wait is only
+            -- flagged again once the follow-up interval has passed anew.
+            ALTER TABLE action_items ADD COLUMN last_follow_up_utc TEXT NULL;
+            """),
     };
 }
