@@ -1,0 +1,48 @@
+# Every push to main that touches code is built, tested and published as a
+# GitHub release. Installed copies pick it up the next time they launch.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Test
+        run: dotnet test -c Release
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          $version = "1.0.${{ github.run_number }}"
+          dotnet publish src\EmailTriage.App -c Release -r win-x64 --self-contained false `
+            -p:PublishSingleFile=true -p:Version=$version `
+            -p:UpdateRepo=${{ github.repository }} -o publish
+          Compress-Archive -Path publish\* -DestinationPath EmailTriage-win-x64.zip
+          Set-Content -Path version.txt -Value $version -NoNewline
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Create release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$env:VERSION" EmailTriage-win-x64.zip version.txt `
+            --title "Email Triage $env:VERSION" --generate-notes --latest

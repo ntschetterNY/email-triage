@@ -11,7 +11,14 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Outlook COM is single-threaded apartment; the UI thread must be STA. -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- The release workflow overrides this with 1.0.<run number>. -->
+    <Version>1.0.0</Version>
   </PropertyGroup>
+
+  <!-- Set only by the release workflow, so local builds never self-update. -->
+  <ItemGroup Condition="'$(UpdateRepo)' != ''">
+    <AssemblyMetadata Include="UpdateRepo" Value="$(UpdateRepo)" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />

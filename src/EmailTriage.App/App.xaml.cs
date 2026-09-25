@@ -28,10 +28,26 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
             LogFatal(args.ExceptionObject as Exception);
 
+        var settings = AppSettings.Load();
+
+        if (settings.CheckForUpdates)
+        {
+            // Closing the progress window must not end the app before
+            // MainWindow exists.
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            if (await AppUpdater.TryUpdateAsync(e.Args))
+            {
+                // The updater relaunches the new version once this exits.
+                Shutdown();
+                return;
+            }
+            ShutdownMode = ShutdownMode.OnLastWindowClose;
+        }
+
         try
         {
             var services = new ServiceCollection();
-            ConfigureServices(services);
+            ConfigureServices(services, settings);
             _services = services.BuildServiceProvider();
 
             // Give the user something to edit the first time they run it.
@@ -59,10 +75,8 @@ public partial class App : Application
         }
     }
 
-    private static void ConfigureServices(IServiceCollection services)
+    private static void ConfigureServices(IServiceCollection services, AppSettings settings)
     {
-        var settings = AppSettings.Load();
-
         services.AddSingleton(settings);
         services.AddSingleton<IClock>(SystemClock.Instance);
         services.AddSingleton(new Database(Database.DefaultPath));

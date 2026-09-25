@@ -30,6 +30,26 @@ fast filing, a real action list, and snooze.
 - [Claude Code](https://claude.com/claude-code), signed in - **only for the AI commands**
   (`Ctrl+G`, `Ctrl+/`). Everything else works without it.
 
+## Install
+
+1. Download `EmailTriage-win-x64.zip` from the
+   [latest release](https://github.com/ntschetterNY/email-triage/releases/latest).
+2. Unzip it somewhere you can write to, e.g. `%LOCALAPPDATA%\Programs\EmailTriage`.
+   Not `Program Files` - the app can't update itself there.
+3. Run `EmailTriage.exe`.
+
+### Updates
+
+Each time it opens, the app checks for a newer release. If there is one, it downloads it,
+swaps the files and restarts itself. That takes a few seconds and needs no admin rights. If
+it's offline, or GitHub can't be reached within 5 seconds, it just opens the version you
+have. Set `CheckForUpdates: false` in `%APPDATA%\EmailTriage\settings.json` to turn this
+off. When an update fails, the reason goes to `%LOCALAPPDATA%\EmailTriage\error.log`.
+
+Every push to `main` that changes code is tested, built and published as release
+`1.0.<run>` by `.github/workflows/release.yml`. Only those builds update themselves. A copy
+you build locally never replaces itself.
+
 ## Build and run
 
 ```powershell

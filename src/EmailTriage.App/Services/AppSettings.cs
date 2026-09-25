@@ -82,6 +82,12 @@ public sealed class AppSettings
     /// </summary>
     public int FollowUpAfterDays { get; set; } = 5;
 
+    /// <summary>
+    /// On launch, install the latest GitHub release if it is newer. Only
+    /// release builds update themselves; a local build never does.
+    /// </summary>
+    public bool CheckForUpdates { get; set; } = true;
+
     /// <summary>The model each feature runs on: its own setting, or AiModel.</summary>
     public string ResolveDraftModel() => Pick(AiDraftModel);
     public string ResolveFollowUpModel() => Pick(AiFollowUpModel);
