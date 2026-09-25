@@ -158,6 +158,16 @@
             </Setter>
         </Style>
 
+        <!-- The triage list adds the Shift+arrow multi-selection: marked rows get a
+             faint wash of the selection yellow, and the caret row keeps the full one. -->
+        <Style x:Key="TriageRowContainer" TargetType="ListBoxItem" BasedOn="{StaticResource MailRowContainer}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMarked}" Value="True">
+                    <Setter Property="Background" Value="#45FFF1A8" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="RowContainer" TargetType="ListBoxItem">
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
@@ -397,7 +407,7 @@
                                  ItemsSource="{Binding Triage.Rows}"
                                  SelectedItem="{Binding Triage.Selected, Mode=TwoWay}"
                                  ItemTemplate="{StaticResource MailRowTemplate}"
-                                 ItemContainerStyle="{StaticResource MailRowContainer}"
+                                 ItemContainerStyle="{StaticResource TriageRowContainer}"
                                  Background="Transparent" BorderThickness="0"
                                  Focusable="False"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"

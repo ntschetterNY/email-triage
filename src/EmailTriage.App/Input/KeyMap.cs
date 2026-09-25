@@ -45,6 +45,10 @@ public sealed class KeyMap
         ("ctrl+down",   TriageAction.LastMail),
         ("pagedown",    TriageAction.PageDown),
         ("pageup",      TriageAction.PageUp),
+        ("shift+down",  TriageAction.ExtendSelectionDown),
+        ("shift+j",     TriageAction.ExtendSelectionDown),
+        ("shift+up",    TriageAction.ExtendSelectionUp),
+        ("shift+k",     TriageAction.ExtendSelectionUp),
 
         // Triage decisions
         ("a",           TriageAction.MarkActionRequired),

@@ -15,6 +15,10 @@ public enum TriageAction
     PageDown,
     PageUp,
 
+    /// <summary>Grow the multi-selection down or up (Shift+Down / Shift+Up).</summary>
+    ExtendSelectionDown,
+    ExtendSelectionUp,
+
     /// <summary>Flag as needing action and send it to the action list.</summary>
     MarkActionRequired,
 

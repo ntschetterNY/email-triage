@@ -352,7 +352,7 @@ public sealed partial class OutlookMailStore : IMailStore
                 };
             }
             finally { ComUtil.Release(item); }
-        }, ct);
+        }, urgent: true, ct);
 
     /// <summary>Plain-text mail has an empty HTMLBody; treat that as "no HTML".</summary>
     private static string? NullIfEmpty(string value) =>

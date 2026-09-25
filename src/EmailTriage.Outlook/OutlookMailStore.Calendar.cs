@@ -256,7 +256,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
                 };
             }
             finally { ComUtil.ReleaseAll(appt, item); }
-        }, ct);
+        }, urgent: true, ct);
 
     /// <summary>PropertyAccessor hands date properties back in UTC, unlike the object model.</summary>
     private static DateTimeOffset? UtcProperty(object item, string dasl)
