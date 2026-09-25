@@ -15,7 +15,7 @@ fast filing, a real action list, and snooze.
 | **Move** | `v` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. |
 | **Snooze** | `h` parks a mail and puts it back in your inbox at a time you pick. |
 | **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. |
-| **Write** | `Enter` reply-all, `r` reply-to-sender, `Ctrl+N` a new message, all sent from inside the app. |
+| **Write** | `Enter` reply-all, `r` reply-to-sender, `c` a new message, all sent from inside the app. |
 | **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. A Calendar tab lists what's coming, and the top bar counts down to your next meeting. |
 | **AI** (optional) | `Ctrl+G` has Claude draft the reply from the conversation - or from notes you type first. `Ctrl+/` asks your inbox a question in plain language. Runs through your own Claude Code sign-in; see below for what leaves the machine. |
 
@@ -64,8 +64,11 @@ seconds, it just opens the version you have. Set `CheckForUpdates: false` in `%A
 off. When an update fails, the reason goes to `%LOCALAPPDATA%\EmailTriage\error.log`.
 
 Every push to `main` that changes code is tested, built and published as release
-`1.0.<run>` by `.github/workflows/release.yml`. Only those builds update themselves. A copy
-you build locally never replaces itself.
+`1.0.<run>` by `.github/workflows/release.yml`. A copy you `dotnet publish` yourself updates
+the same way: it is version 1.0.0, so the first time it opens it replaces itself with the
+latest release. To run a local publish as-is (say, to try a change before it is merged),
+start it with `EmailTriage.exe --skip-update`, or publish it with `-p:NoUpdateRepo=true` so it
+never checks. `dotnet build` and `dotnet run` builds never update.
 
 ## Build and run
 
@@ -124,7 +127,7 @@ their own letters.
 ### Replying
 | Key | |
 |---|---|
-| `Ctrl+N` | New message, from any tab (or the **New email** button). `Ctrl+Shift+S` jumps to its subject |
+| `c` | New message, from any tab (or the **New email** button). `Ctrl+Shift+S` jumps to its subject |
 | `Enter` | Reply to everyone |
 | `r` | Reply to the sender only |
 | `f` | Forward |
@@ -244,7 +247,7 @@ on their subject and sender only.
 hand-off has sat unchanged for `FollowUpAfterDays` (5 by default, 0 turns it
 off), the card grows a `follow up · waiting 8d` chip and the status line counts
 what's due. The flagging is timestamp arithmetic in the local database - free,
-no AI involved. Pressing `c` on the card is what brings Claude in: a hand-off
+no AI involved. Pressing `Shift+C` on the card is what brings Claude in: a hand-off
 with an email address gets its own chase mail (opened in Outlook for review, as
 before, but now written by Claude); anything else gets a follow-up reply
 drafted into the composer on the task's own conversation, saying what's owed

@@ -60,8 +60,9 @@ public sealed class KeyMap
         ("r",           TriageAction.ReplySender),
         ("f",           TriageAction.Forward),
 
-        // Superhuman composes on `c`, but that is the board's chase; Ctrl+N is Outlook's own.
-        ("ctrl+n",      TriageAction.Compose),
+        // Compose is `c`, as in Superhuman. It was Ctrl+N, which the reading
+        // pane's browser control claims as "new window" whenever it has focus.
+        ("c",           TriageAction.Compose),
         ("ctrl+o",      TriageAction.OpenAttachment),
 
         // Action list
@@ -81,7 +82,7 @@ public sealed class KeyMap
         ("shift+right", TriageAction.StageForward),
         ("d",           TriageAction.SetDue),
         ("w",           TriageAction.ClearWait),
-        ("c",           TriageAction.Chase),
+        ("shift+c",     TriageAction.Chase),
         ("g",           TriageAction.ToggleBoardView),
 
         // Calendar: y answers an invitation, s schedules time for a mail or task
@@ -137,8 +138,18 @@ public sealed class KeyMap
         ("escape", TriageAction.Cancel), ("enter", TriageAction.Confirm),
     };
 
+    /// <summary>
+    /// Defaults that later versions changed. An old file holding one of these
+    /// is only repeating what it was given, not recording a choice.
+    /// </summary>
+    private static readonly (string Stroke, TriageAction Action)[] RetiredDefaults =
+    {
+        ("ctrl+n", TriageAction.Compose),   // v3: compose, before it moved to `c`
+        ("c",      TriageAction.Chase),     // v3: chase, before it moved to Shift+C
+    };
+
     /// <summary>Bumped when the defaults change in a way old config files would mask.</summary>
-    private const int ConfigVersion = 3;
+    private const int ConfigVersion = 4;
 
     private static IEnumerable<(KeyStroke, TriageAction)> Defaults =>
         DefaultSpec
@@ -201,7 +212,7 @@ public sealed class KeyMap
             if (config.Version < ConfigVersion)
             {
                 bindings = UserChanges(bindings);
-                Upgrade(path, bindings);
+                Upgrade(path, config.Version, bindings);
             }
 
             foreach (var (strokeText, actionText) in bindings)
@@ -223,14 +234,14 @@ public sealed class KeyMap
 
     /// <summary>
     /// The entries of an old file the user actually chose: anything that is
-    /// not simply a copy of the old defaults.
+    /// not simply a copy of a default this app has ever shipped.
     /// </summary>
     private static Dictionary<string, string> UserChanges(Dictionary<string, string> bindings) =>
         bindings
             .Where(b =>
             {
                 var stroke = KeyStroke.Parse(b.Key);
-                return !LegacySpec.Any(l =>
+                return !LegacySpec.Concat(DefaultSpec).Concat(RetiredDefaults).Any(l =>
                     KeyStroke.Parse(l.Stroke).Equals(stroke) &&
                     string.Equals(l.Action.ToString(), b.Value, StringComparison.OrdinalIgnoreCase));
             })
@@ -240,11 +251,11 @@ public sealed class KeyMap
     /// Rewrites an old file as the current defaults plus the user's own
     /// changes, keeping the original beside it.
     /// </summary>
-    private static void Upgrade(string path, Dictionary<string, string> userChanges)
+    private static void Upgrade(string path, int oldVersion, Dictionary<string, string> userChanges)
     {
         try
         {
-            File.Copy(path, Path.ChangeExtension(path, ".v1.json"), overwrite: true);
+            File.Copy(path, Path.ChangeExtension(path, $".v{Math.Max(oldVersion, 1)}.json"), overwrite: true);
 
             var bindings = DefaultSpec.ToDictionary(d => d.Stroke, d => d.Action.ToString());
             foreach (var (stroke, action) in userChanges) bindings[stroke] = action;

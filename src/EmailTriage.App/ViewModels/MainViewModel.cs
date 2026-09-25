@@ -108,7 +108,7 @@ public sealed partial class MainViewModel : ObservableObject
         _ => Triage.Status,
     };
 
-    /// <summary>A new message, from any tab: Ctrl+N or the button in the top bar.</summary>
+    /// <summary>A new message, from any tab: `c` or the button in the top bar.</summary>
     public async Task ComposeAsync()
     {
         if (Triage.Composer.IsOpen) return;

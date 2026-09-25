@@ -34,7 +34,13 @@
     <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
   </PropertyGroup>
 
-  <!-- Set only by the release workflow, so local builds never self-update. -->
+  <!-- Every published exe knows where its releases live, so opening it
+       brings it up to the latest one (see AppUpdater). `dotnet build` and
+       `dotnet run` are development builds and stay out of it. Pass
+       -p:NoUpdateRepo=true to publish a copy that never updates. -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true' And '$(UpdateRepo)' == '' And '$(NoUpdateRepo)' != 'true'">
+    <UpdateRepo>ntschetterNY/email-triage</UpdateRepo>
+  </PropertyGroup>
   <ItemGroup Condition="'$(UpdateRepo)' != ''">
     <AssemblyMetadata Include="UpdateRepo" Value="$(UpdateRepo)" />
   </ItemGroup>
