@@ -1070,6 +1070,7 @@ public sealed partial class TriageViewModel : ObservableObject
         if (Selected is not { } row) return;
 
         var summary = row.Summary;
+        var wasActionRequired = row.IsActionRequired;
 
         // Flag and move on at once; the keystroke must not wait on Outlook.
         row.IsActionRequired = required;
@@ -1103,11 +1104,11 @@ public sealed partial class TriageViewModel : ObservableObject
                     await _actions.DeleteAsync(existing.Id).ConfigureAwait(true);
             }
 
-            _ = SetCategoryInBackgroundAsync(row, summary.Ref, required);
+            _ = SetCategoryInBackgroundAsync(row, summary.Ref, required, wasActionRequired);
         }
         catch (Exception ex)
         {
-            row.IsActionRequired = !required;
+            row.IsActionRequired = wasActionRequired;
             Status = $"Could not update that message: {ex.Message}";
         }
     }
@@ -1117,7 +1118,7 @@ public sealed partial class TriageViewModel : ObservableObject
     /// the state is not trapped in this app. Written behind the keystroke; a
     /// failure (the message moved or vanished) rolls the flag back and says so.
     /// </summary>
-    private async Task SetCategoryInBackgroundAsync(MailRowViewModel row, MailRef mail, bool on)
+    private async Task SetCategoryInBackgroundAsync(MailRowViewModel row, MailRef mail, bool on, bool wasActionRequired)
     {
         try
         {
@@ -1125,7 +1126,7 @@ public sealed partial class TriageViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            row.IsActionRequired = !on;
+            row.IsActionRequired = wasActionRequired;
             Status = $"Could not update that message: {ex.Message}";
         }
     }
