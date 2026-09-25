@@ -22,7 +22,7 @@ public sealed record AiSearchResult(IReadOnlyList<string> Keys, string Answer);
 /// Natural-language search over the triage list. The whole list (metadata plus
 /// whatever body text is already cached) goes to Claude in one prompt, and
 /// Claude picks the conversations that answer the question - so "what am I
-/// still waiting on from the architect?" works where fuzzy matching cannot.
+/// still waiting on from the architect?" works where word matching cannot.
 /// </summary>
 public sealed class AiSearchService
 {

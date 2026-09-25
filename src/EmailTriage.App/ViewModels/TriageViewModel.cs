@@ -423,7 +423,7 @@ public sealed partial class TriageViewModel : ObservableObject
         Status = "Ask your inbox anything - Enter asks Claude, Esc cancels";
     }
 
-    /// <summary>Closes the search box and drops every filter, fuzzy or AI.</summary>
+    /// <summary>Closes the search box and drops every filter, typed or AI.</summary>
     public void CloseSearch()
     {
         IsSearching = false;
