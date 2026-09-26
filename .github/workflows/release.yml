@@ -32,8 +32,9 @@ jobs:
         shell: pwsh
         run: |
           $version = "1.0.${{ github.run_number }}"
-          dotnet publish src\EmailTriage.App -c Release -r win-x64 --self-contained false `
-            -p:PublishSingleFile=true -p:Version=$version `
+          # Self-contained: the .NET runtime ships inside EmailTriage.exe, so
+          # nothing has to be installed on the user's machine (see the csproj).
+          dotnet publish src\EmailTriage.App -c Release -p:Version=$version `
             -p:UpdateRepo=${{ github.repository }} -o publish
           Compress-Archive -Path publish\* -DestinationPath EmailTriage-win-x64.zip
           Set-Content -Path version.txt -Value $version -NoNewline

@@ -159,7 +159,7 @@ public partial class MainWindow : Window
                 "EmailTriage", "WebView2");
             Directory.CreateDirectory(userData);
 
-            var env = await CoreWebView2Environment.CreateAsync(null, userData);
+            var env = await CoreWebView2Environment.CreateAsync(BundledWebView2Folder(), userData);
 
             await ConfigureMailViewAsync(BodyView, env);
             _webViewReady = true;
@@ -176,6 +176,33 @@ public partial class MainWindow : Window
             ViewModel.Triage.Status =
                 $"Message preview unavailable (WebView2 runtime missing?): {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// The WebView2 runtime is normally already on the machine (Windows 11 and
+    /// Microsoft 365 both ship it). Where it isn't and can't be installed, a
+    /// "Fixed Version" copy of it can be dropped into a WebView2Runtime folder
+    /// next to EmailTriage.exe; this returns that folder so it gets used.
+    /// Null means "use whatever Windows has", which is the usual case.
+    /// </summary>
+    private static string? BundledWebView2Folder()
+    {
+        var installDir = Path.GetDirectoryName(Environment.ProcessPath);
+        if (installDir is null) return null;
+
+        var bundled = Path.Combine(installDir, "WebView2Runtime");
+        if (!File.Exists(Path.Combine(bundled, "msedgewebview2.exe"))) return null;
+
+        // Prefer the system runtime when present: it is kept current by
+        // Windows Update, whereas the bundled copy only changes with the app.
+        try
+        {
+            if (!string.IsNullOrEmpty(CoreWebView2Environment.GetAvailableBrowserVersionString()))
+                return null;
+        }
+        catch (WebView2RuntimeNotFoundException) { }
+
+        return bundled;
     }
 
     /// <summary>

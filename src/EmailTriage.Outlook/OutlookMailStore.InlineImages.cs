@@ -133,7 +133,7 @@ public sealed partial class OutlookMailStore
     }
 
     public Task<string> SaveAttachmentAsync(MailRef mail, int index, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 

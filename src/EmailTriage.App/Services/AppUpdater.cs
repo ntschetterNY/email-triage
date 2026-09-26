@@ -77,8 +77,9 @@ public static class AppUpdater
             var staging = Path.Combine(work, "files");
             Directory.CreateDirectory(staging);
 
-            // The zip is a few MB; allow for a slow connection.
-            http.Timeout = TimeSpan.FromMinutes(3);
+            // The zip carries the whole .NET runtime (tens of MB); allow for
+            // a slow office connection.
+            http.Timeout = TimeSpan.FromMinutes(10);
             var zip = Path.Combine(work, ZipAsset);
             await using (var source = await http.GetStreamAsync(baseUrl + ZipAsset))
             await using (var target = File.Create(zip))
