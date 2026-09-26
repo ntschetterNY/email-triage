@@ -109,7 +109,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
     }
 
     public Task<CalendarEventDetail> GetEventDetailAsync(CalendarEvent ev, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -274,7 +274,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
     }
 
     public Task RespondAsync(MailRef item, InviteResponse response, string note, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -336,7 +336,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
         }, ct);
 
     public Task RemoveCancelledAsync(MailRef cancellation, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -354,7 +354,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
         }, ct);
 
     public Task<MailRef> CreateEventAsync(NewCalendarEvent spec, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -371,7 +371,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
         }, ct);
 
     public Task ShowNewMeetingAsync(NewCalendarEvent spec, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
             var me = MyAddresses();
@@ -431,7 +431,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
     }
 
     public Task DeleteEventAsync(MailRef ev, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
             dynamic? item = null;
@@ -446,7 +446,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
         }, ct);
 
     public Task ShowEventAsync(CalendarEvent ev, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
             dynamic? item = null;

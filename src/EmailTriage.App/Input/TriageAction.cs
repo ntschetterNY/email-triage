@@ -36,7 +36,7 @@ public enum TriageAction
     /// <summary>Forward, typing the recipients in. Bound to `f`.</summary>
     Forward,
 
-    /// <summary>Write a new message from scratch, from any tab. Bound to Ctrl+N, as in Outlook.</summary>
+    /// <summary>Write a new message from scratch, from any tab. Bound to `c`, as in Superhuman.</summary>
     Compose,
 
     /// <summary>Pick one of the open message's attachments to open. Bound to `v`.</summary>

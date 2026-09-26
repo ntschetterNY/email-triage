@@ -15,7 +15,32 @@
     <Version>1.0.0</Version>
   </PropertyGroup>
 
-  <!-- Set only by the release workflow, so local builds never self-update. -->
+  <!-- `dotnet publish` produces one self-contained exe: the .NET runtime is
+       inside it, so users install nothing. Trimming is off because WPF does
+       not support it. These only apply when publishing, so ordinary builds
+       and tests stay framework-dependent and fast. -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Native DLLs (SQLite, WebView2 loader) sit next to the exe rather than
+         self-extracting into %TEMP%, which AppLocker-style policies may block. -->
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <!-- Symbols stay so error.log stack traces keep line numbers; the
+         WebView2 XML doc files are build-time only. -->
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+  </PropertyGroup>
+
+  <!-- Every published exe knows where its releases live, so opening it
+       brings it up to the latest one (see AppUpdater). `dotnet build` and
+       `dotnet run` are development builds and stay out of it. Pass
+       -p:NoUpdateRepo=true to publish a copy that never updates. -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true' And '$(UpdateRepo)' == '' And '$(NoUpdateRepo)' != 'true'">
+    <UpdateRepo>ntschetterNY/email-triage</UpdateRepo>
+  </PropertyGroup>
   <ItemGroup Condition="'$(UpdateRepo)' != ''">
     <AssemblyMetadata Include="UpdateRepo" Value="$(UpdateRepo)" />
   </ItemGroup>

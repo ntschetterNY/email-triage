@@ -79,7 +79,7 @@ public sealed partial class OutlookMailStore
 
     public Task<FolderNode> CreateFolderAsync(
         FolderRef parent, string name, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -130,7 +130,7 @@ public sealed partial class OutlookMailStore
 
     public Task<FolderRef> EnsureFolderPathAsync(
         string relativePath, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -162,7 +162,7 @@ public sealed partial class OutlookMailStore
         }, ct);
 
     public Task<MailRef> MoveAsync(MailRef mail, FolderRef target, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -187,7 +187,7 @@ public sealed partial class OutlookMailStore
 
     public Task SetCategoryAsync(
         MailRef mail, string category, bool on, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -211,7 +211,7 @@ public sealed partial class OutlookMailStore
         }, ct);
 
     public Task SetReadAsync(MailRef mail, bool read, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 

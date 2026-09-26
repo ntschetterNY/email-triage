@@ -17,7 +17,7 @@ public sealed partial class OutlookMailStore
 
     public Task<ReplyDraft> BuildReplyAsync(
         MailRef mail, ReplyScope scope, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -70,7 +70,7 @@ public sealed partial class OutlookMailStore
         }, ct);
 
     public Task<ReplyDraft> BuildNewMailAsync(CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -95,7 +95,7 @@ public sealed partial class OutlookMailStore
 
     public Task SendReplyAsync(
         DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -106,7 +106,7 @@ public sealed partial class OutlookMailStore
 
     public Task<DraftRef> SaveDraftForLaterAsync(
         DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -191,7 +191,7 @@ public sealed partial class OutlookMailStore
     }
 
     public Task DiscardDraftAsync(DraftRef draft, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             if (!_openDrafts.TryRemove(draft.EntryId, out var stored)) return;
 
@@ -205,7 +205,7 @@ public sealed partial class OutlookMailStore
 
     public Task<DraftRef> CreateAndShowDraftAsync(
         IReadOnlyList<string> to, string subject, string bodyHtml, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 

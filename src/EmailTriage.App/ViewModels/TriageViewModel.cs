@@ -35,6 +35,16 @@ public sealed partial class TriageViewModel : ObservableObject
     private CancellationTokenSource? _bodyLoad;
     private CancellationTokenSource? _prefetch;
 
+    // The folders e and h move mail into, found once and kept: walking to
+    // them through COM on every keystroke held the next email off the screen.
+    private Task<FolderRef>? _archiveFolder;
+    private Task<FolderRef>? _snoozeFolder;
+
+    // Conversations whose Outlook moves are still in flight. They have already
+    // left the list; a change notification arriving mid-move must not put
+    // them back for the half-second it takes Outlook to catch up. UI thread only.
+    private readonly HashSet<string> _movingKeys = new(StringComparer.OrdinalIgnoreCase);
+
     // Bodies by EntryId and finished thread pages by their message list. Tasks
     // rather than values, so the reading pane and the prefetcher share one
     // fetch when both want the same message. UI thread only.
@@ -118,6 +128,27 @@ public sealed partial class TriageViewModel : ObservableObject
 
     public bool CanUndo => _undo.Count > 0;
 
+    /// <summary>
+    /// The Archive beside the Inbox, created if missing, fetched once per
+    /// session. A faulted fetch is retried on the next use rather than cached.
+    /// </summary>
+    private Task<FolderRef> GetArchiveFolderAsync()
+    {
+        var task = _archiveFolder;
+        if (task is null || task.IsFaulted || task.IsCanceled)
+            _archiveFolder = task = _store.EnsureFolderPathAsync("Archive");
+        return task;
+    }
+
+    /// <summary>The snooze holding folder, likewise fetched once and kept.</summary>
+    private Task<FolderRef> GetSnoozeFolderAsync()
+    {
+        var task = _snoozeFolder;
+        if (task is null || task.IsFaulted || task.IsCanceled)
+            _snoozeFolder = task = _store.EnsureFolderPathAsync(_settings.SnoozeFolder);
+        return task;
+    }
+
     public Task LoadAsync(CancellationToken ct = default) => LoadCoreAsync(quiet: false, ct);
 
     /// <summary>
@@ -184,7 +215,11 @@ public sealed partial class TriageViewModel : ObservableObject
             var existing = new Dictionary<string, MailRowViewModel>(StringComparer.OrdinalIgnoreCase);
             foreach (var row in _allRows) existing.TryAdd(row.Key, row);
 
-            _allRows = threads.Select(t =>
+            // Warm the Archive ref so the first e press pays nothing extra.
+            // (Most mailboxes already have Archive; this is a lookup, not a create.)
+            _ = GetArchiveFolderAsync();
+
+            _allRows = threads.Where(t => !_movingKeys.Contains(t.Key)).Select(t =>
             {
                 var isFlagged = t.InboxMessages.Any(m => flagged.Contains(m.InternetMessageId));
                 if (existing.Remove(t.Key, out var row))
@@ -1034,18 +1069,20 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         if (Selected is not { } row) return;
 
-        row.IsBusy = true;
+        var summary = row.Summary;
+        var wasActionRequired = row.IsActionRequired;
+
+        // Flag and move on at once; the keystroke must not wait on Outlook.
+        row.IsActionRequired = required;
+        Status = required ? $"Flagged for action · {row.Subject}" : "Marked as needing no action";
+        Move(1);
+
         try
         {
-            var summary = row.Summary;
-
+            // The local record is awaited (it is what the action board reads
+            // the moment this returns); the Outlook category write is not.
             if (required)
             {
-                // The Outlook category makes the flag visible inside Outlook
-                // itself, so the state is not trapped in this app.
-                await _store.SetCategoryAsync(summary.Ref, _settings.ActionCategory, true)
-                    .ConfigureAwait(true);
-
                 await _actions.UpsertAsync(new ActionItem
                 {
                     InternetMessageId = summary.InternetMessageId,
@@ -1057,34 +1094,40 @@ public sealed partial class TriageViewModel : ObservableObject
                     ReceivedUtc = summary.ReceivedUtc,
                     CreatedUtc = _clock.UtcNow,
                 }).ConfigureAwait(true);
-
-                row.IsActionRequired = true;
-                Status = $"Flagged for action · {row.Subject}";
             }
             else
             {
-                await _store.SetCategoryAsync(summary.Ref, _settings.ActionCategory, false)
-                    .ConfigureAwait(true);
-
                 var existing = await _actions
                     .GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
 
                 if (existing is not null)
                     await _actions.DeleteAsync(existing.Id).ConfigureAwait(true);
-
-                row.IsActionRequired = false;
-                Status = "Marked as needing no action";
             }
 
-            Move(1);
+            _ = SetCategoryInBackgroundAsync(row, summary.Ref, required, wasActionRequired);
         }
         catch (Exception ex)
         {
+            row.IsActionRequired = wasActionRequired;
             Status = $"Could not update that message: {ex.Message}";
         }
-        finally
+    }
+
+    /// <summary>
+    /// The Outlook category makes the flag visible inside Outlook itself, so
+    /// the state is not trapped in this app. Written behind the keystroke; a
+    /// failure (the message moved or vanished) rolls the flag back and says so.
+    /// </summary>
+    private async Task SetCategoryInBackgroundAsync(MailRowViewModel row, MailRef mail, bool on, bool wasActionRequired)
+    {
+        try
         {
-            row.IsBusy = false;
+            await _store.SetCategoryAsync(mail, _settings.ActionCategory, on).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            row.IsActionRequired = wasActionRequired;
+            Status = $"Could not update that message: {ex.Message}";
         }
     }
 
@@ -1355,48 +1398,76 @@ public sealed partial class TriageViewModel : ObservableObject
         }
     }
 
-    private async Task MoveSelectedAsync(FolderNode target)
+    private Task MoveSelectedAsync(FolderNode target)
     {
-        if (Selected is not { } row) return;
+        if (Selected is not { } row) return Task.CompletedTask;
 
         var origin = _inbox;
-        var moved = new List<MailRef>();
+        var messages = row.InboxMessages.ToList();
+        if (messages.Count == 0) return Task.CompletedTask;
 
+        // The row leaves the list before Outlook is asked to do anything.
+        // A COM move takes long enough to feel (and queues behind whatever
+        // body read is in flight); the next conversation must not wait on it.
+        // Removing first also puts the next body read ahead of the moves on
+        // Outlook's single thread.
+        _movingKeys.Add(row.Key);
+        RemoveRow(row);
+        Status = messages.Count == 1
+            ? $"Moved to {target.Path}"
+            : $"Moved {messages.Count} messages to {target.Path}";
+
+        var work = MoveInBackgroundAsync(row, messages, target);
+
+        // Undo is armed at once; pressed before the moves finish, it simply
+        // waits for them and then brings everything home.
+        PushUndo($"move to {target.Name}", async () =>
+        {
+            foreach (var m in await work.ConfigureAwait(true))
+                await _store.MoveAsync(m, origin).ConfigureAwait(true);
+            await LoadAsync().ConfigureAwait(true);
+        });
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The Outlook side of a move, run after the row is already gone from the
+    /// list. Returns whichever messages actually moved, for undo. The whole
+    /// conversation goes; your sent copies stay in Sent Items.
+    /// </summary>
+    private async Task<List<MailRef>> MoveInBackgroundAsync(
+        MailRowViewModel row, IReadOnlyList<MailSummary> messages, FolderNode target)
+    {
+        var moved = new List<MailRef>();
         try
         {
-            row.IsBusy = true;
-
-            // The whole conversation goes, so the thread leaves the list in one
-            // keystroke. Your sent copies stay in Sent Items.
-            foreach (var m in row.InboxMessages)
+            foreach (var m in messages)
             {
                 var to = await _store.MoveAsync(m.Ref, target.Ref).ConfigureAwait(true);
                 moved.Add(to);
                 await _actions.UpdateLocationAsync(m.InternetMessageId, to.EntryId, to.StoreId).ConfigureAwait(true);
             }
             await _folders.RecordUseAsync(target).ConfigureAwait(true);
-
-            RemoveRow(row);
-            Status = moved.Count == 1
-                ? $"Moved to {target.Path}"
-                : $"Moved {moved.Count} messages to {target.Path}";
         }
         catch (Exception ex)
         {
-            row.IsBusy = false;
+            // The target may have vanished (a deleted Archive); re-find it next press.
+            _archiveFolder = null;
+
             Status = moved.Count == 0
                 ? $"Move failed: {ex.Message}"
-                : $"Moved {moved.Count} of {row.InboxMessages.Count} messages, then failed: {ex.Message}";
-        }
+                : $"Moved {moved.Count} of {messages.Count} messages, then failed: {ex.Message}";
 
-        if (moved.Count > 0)
-        {
-            PushUndo($"move to {target.Name}", async () =>
-            {
-                foreach (var m in moved) await _store.MoveAsync(m, origin).ConfigureAwait(true);
-                await LoadAsync().ConfigureAwait(true);
-            });
+            // Put what did not move back on screen.
+            _movingKeys.Remove(row.Key);
+            _ = RefreshQuietlyAsync();
         }
+        finally
+        {
+            _movingKeys.Remove(row.Key);
+        }
+        return moved;
     }
 
     // ---- snooze palette (h) ----------------------------------------------
@@ -1406,6 +1477,10 @@ public sealed partial class TriageViewModel : ObservableObject
         if (Selected is not { } row) return;
 
         _snoozePresets = SnoozePresets.For(_clock.Now, _settings.DayShape);
+
+        // Find (or make) the holding folder while the user is still picking a
+        // time, so confirming costs no folder walk.
+        _ = GetSnoozeFolderAsync();
 
         Palette.Open(
             PaletteMode.Snooze,
@@ -1451,26 +1526,50 @@ public sealed partial class TriageViewModel : ObservableObject
         return $"in {(int)span.TotalDays} days";
     }
 
-    private async Task ConfirmSnoozeAsync()
+    private Task ConfirmSnoozeAsync()
     {
-        if (Palette.Selected?.Payload is not DateTimeOffset when) return;
-        if (Selected is not { } row) return;
+        if (Palette.Selected?.Payload is not DateTimeOffset when) return Task.CompletedTask;
+        if (Selected is not { } row) return Task.CompletedTask;
 
         Palette.Close();
 
         var origin = _inbox;
-        var moved = new List<(MailRef Ref, long SnoozeId)>();
+        var messages = row.InboxMessages.ToList();
+        if (messages.Count == 0) return Task.CompletedTask;
 
+        // As with a move: leave the list now, park the mail in the background.
+        _movingKeys.Add(row.Key);
+        RemoveRow(row);
+        Status = $"Back in your inbox {Humanise(when - _clock.Now)} · {when:ddd d MMM HH:mm}";
+
+        var work = SnoozeInBackgroundAsync(row, messages, origin, when);
+
+        PushUndo("snooze", async () =>
+        {
+            foreach (var (m, id) in await work.ConfigureAwait(true))
+            {
+                await _store.MoveAsync(m, origin).ConfigureAwait(true);
+                await _snoozes.CancelAsync(id).ConfigureAwait(true);
+            }
+            await LoadAsync().ConfigureAwait(true);
+        });
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Parks every Inbox message of the conversation, each with its own entry,
+    /// so they all come back together. Returns what was parked, for undo.
+    /// </summary>
+    private async Task<List<(MailRef Ref, long SnoozeId)>> SnoozeInBackgroundAsync(
+        MailRowViewModel row, IReadOnlyList<MailSummary> messages, FolderRef origin, DateTimeOffset when)
+    {
+        var moved = new List<(MailRef Ref, long SnoozeId)>();
         try
         {
-            row.IsBusy = true;
+            var holding = await GetSnoozeFolderAsync().ConfigureAwait(true);
 
-            var holding = await _store
-                .EnsureFolderPathAsync(_settings.SnoozeFolder).ConfigureAwait(true);
-
-            // Every Inbox message in the conversation is parked, each with its
-            // own entry, so they all come back together.
-            foreach (var m in row.InboxMessages)
+            foreach (var m in messages)
             {
                 var to = await _store.MoveAsync(m.Ref, holding).ConfigureAwait(true);
 
@@ -1490,28 +1589,20 @@ public sealed partial class TriageViewModel : ObservableObject
 
                 moved.Add((to, entry.Id));
             }
-
-            RemoveRow(row);
-            Status = $"Back in your inbox {Humanise(when - _clock.Now)} · {when:ddd d MMM HH:mm}";
         }
         catch (Exception ex)
         {
-            row.IsBusy = false;
+            _snoozeFolder = null;
             Status = $"Could not snooze that conversation: {ex.Message}";
-        }
 
-        if (moved.Count > 0)
-        {
-            PushUndo("snooze", async () =>
-            {
-                foreach (var (m, id) in moved)
-                {
-                    await _store.MoveAsync(m, origin).ConfigureAwait(true);
-                    await _snoozes.CancelAsync(id).ConfigureAwait(true);
-                }
-                await LoadAsync().ConfigureAwait(true);
-            });
+            _movingKeys.Remove(row.Key);
+            _ = RefreshQuietlyAsync();
         }
+        finally
+        {
+            _movingKeys.Remove(row.Key);
+        }
+        return moved;
     }
 
     // ---- replies and forwards (r / Shift+R / f) ---------------------------
@@ -1579,7 +1670,7 @@ public sealed partial class TriageViewModel : ObservableObject
             // Always the Archive beside the Inbox, created if missing. Searching
             // the folder index by name could land on another mailbox's Archive,
             // or find nothing and leave the message sitting in the list.
-            var archive = await _store.EnsureFolderPathAsync("Archive").ConfigureAwait(true);
+            var archive = await GetArchiveFolderAsync().ConfigureAwait(true);
 
             await MoveSelectedAsync(new FolderNode
             {
@@ -1592,6 +1683,7 @@ public sealed partial class TriageViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            _archiveFolder = null;
             Status = $"Archive failed: {ex.Message}";
         }
     }

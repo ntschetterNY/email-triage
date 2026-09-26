@@ -15,7 +15,7 @@ public sealed partial class OutlookMailStore
     private HashSet<string>? _myAddresses;
 
     public Task<SavedDraftState> GetSavedDraftStateAsync(DraftRef saved, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -38,7 +38,7 @@ public sealed partial class OutlookMailStore
         }, ct);
 
     public Task SendSavedDraftAsync(DraftRef saved, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
             dynamic? item = null;
@@ -54,7 +54,7 @@ public sealed partial class OutlookMailStore
         ShowItemAsync(new MailRef(saved.EntryId, saved.StoreId), ct);
 
     public Task ShowItemAsync(MailRef mail, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
             dynamic? item = null;
@@ -73,7 +73,7 @@ public sealed partial class OutlookMailStore
     /// back to matching the subject thread in the Inbox.
     /// </summary>
     public Task<bool> HasReplySinceAsync(DraftRef saved, DateTimeOffset sinceUtc, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
             var me = MyAddresses();

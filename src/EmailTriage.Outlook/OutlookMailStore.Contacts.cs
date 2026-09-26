@@ -78,7 +78,7 @@ public sealed partial class OutlookMailStore
     /// small slice per call so the Outlook thread is free between slices.
     /// </summary>
     public Task<AddressBookBatch> GetAddressBookBatchAsync(int start, int count, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
