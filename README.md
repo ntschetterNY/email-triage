@@ -53,8 +53,8 @@ you build locally never replaces itself.
 ## Build and run
 
 ```powershell
-git clone <this repo>
-cd Email_App
+git clone https://github.com/ntschetterNY/email-triage.git
+cd email-triage
 dotnet build -c Release
 dotnet run --project src\EmailTriage.App
 ```
@@ -307,3 +307,7 @@ is exactly why it sits behind `IMailStore` and everything else is tested against
 - Single inbox - the default account's. Folder search spans all stores.
 - Only the default calendar. Shared and secondary calendars aren't read, so they don't
   count toward clashes or free slots.
+
+## License
+
+[MIT](LICENSE)
