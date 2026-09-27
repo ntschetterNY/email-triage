@@ -357,13 +357,18 @@ public partial class MainWindow : Window
 
     private async Task SubmitFormAsync(string form)
     {
-        switch (form)
+        var saved = form switch
         {
-            case "form:due": await ViewModel.Actions.SaveDueFromFormAsync(); break;
-            case "form:blocker": await ViewModel.Actions.AddBlockerFromFormAsync(); break;
-            case "form:assign": await ViewModel.Actions.AddAssignmentFromFormAsync(); break;
-            case "form:notes": await ViewModel.Actions.SaveNotesFromFormAsync(); break;
-        }
+            "form:due" => await ViewModel.Actions.SaveDueFromFormAsync(),
+            "form:blocker" => await ViewModel.Actions.AddBlockerFromFormAsync(),
+            "form:assign" => await ViewModel.Actions.AddAssignmentFromFormAsync(),
+            "form:notes" => await ViewModel.Actions.SaveNotesFromFormAsync(),
+            _ => false,
+        };
+
+        // Saved: back to the board, so its keys (chase, Ctrl+G) work at once.
+        // Not saved: stay in the field to fix what the status line says.
+        if (saved) Focus();
     }
 
     /// <summary>The form a focused field belongs to, from the Tag on it or an ancestor.</summary>
@@ -380,8 +385,10 @@ public partial class MainWindow : Window
     /// <summary>
     /// While typing in the action form, keys are text: Enter saves that form
     /// (Ctrl+Enter for the multi-line notes), Esc leaves the field, and
-    /// nothing else is taken as a shortcut. Decided synchronously, so the key
-    /// is marked handled before the field can also act on it.
+    /// nothing else is taken as a shortcut - except Ctrl+G, which a text box
+    /// has no use for, so Claude can draft straight from the form. Decided
+    /// synchronously, so the key is marked handled before the field can also
+    /// act on it.
     /// </summary>
     /// <returns>True when the form owns the key; <paramref name="submit"/> names a form to save.</returns>
     private bool TryHandleFormKey(KeyEventArgs e, out string? submit)
@@ -408,6 +415,8 @@ public partial class MainWindow : Window
             else submit = form;
             return true;
         }
+
+        if (ctrl && ViewModel.Keys.Resolve(KeyStroke.FromEvent(e)) == TriageAction.AiDraftReply) return false;
 
         return true; // the field has it; not a shortcut
     }

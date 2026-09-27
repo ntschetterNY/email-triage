@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
+using EmailTriage.App.Input;
 using EmailTriage.App.Services;
 using EmailTriage.Core.Abstractions;
 using EmailTriage.Core.Models;
@@ -154,8 +155,9 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
     public ActionItemsViewModel(
         IActionItemRepository repo, IMailStore store, IClock clock, AppSettings settings,
-        AiDraftService aiDraft, WritingStyleService style)
+        AiDraftService aiDraft, WritingStyleService style, KeyMap keys)
     {
+        _keys = keys;
         _repo = repo;
         _store = store;
         _clock = clock;
@@ -168,6 +170,10 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
     private readonly AiDraftService _aiDraft;
     private readonly WritingStyleService _style;
+    private readonly KeyMap _keys;
+
+    /// <summary>The chase key, for status lines that point to it.</summary>
+    private string ChaseKey => _keys.Describe(TriageAction.Chase) is { Length: > 0 } key ? key : "Shift+C";
 
     public bool HasSelection => Selected is not null;
     public bool HasFilter => PersonFilter.Length > 0;
@@ -235,7 +241,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
             Status = $"{OpenCount} open  ·  {WaitingCount} waiting"
                    + (OverdueCount > 0 ? $"  ·  {OverdueCount} overdue" : "")
                    + (FollowUpDueCount > 0
-                       ? $"  ·  {FollowUpDueCount} follow-up{(FollowUpDueCount == 1 ? "" : "s")} due (c drafts a chase)"
+                       ? $"  ·  {FollowUpDueCount} follow-up{(FollowUpDueCount == 1 ? "" : "s")} due ({ChaseKey} drafts a chase)"
                        : "")
                    + (HasFilter ? $"  ·  showing {PersonFilter}" : "");
         }
@@ -315,21 +321,23 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
     // ---- form submits: the same saves the shortcut editors make ----------------
 
-    public async Task AddBlockerFromFormAsync()
+    public async Task<bool> AddBlockerFromFormAsync()
     {
-        if (!await SubmitAsync(EditorMode.Blocker, NewBlockerWhat, NewBlockerWho, NewBlockerDue).ConfigureAwait(true)) return;
+        if (!await SubmitAsync(EditorMode.Blocker, NewBlockerWhat, NewBlockerWho, NewBlockerDue).ConfigureAwait(true)) return false;
         NewBlockerWhat = NewBlockerWho = NewBlockerDue = "";
+        return true;
     }
 
-    public async Task AddAssignmentFromFormAsync()
+    public async Task<bool> AddAssignmentFromFormAsync()
     {
-        if (!await SubmitAsync(EditorMode.Assignment, NewAssignWho, NewAssignWhat, NewAssignDue).ConfigureAwait(true)) return;
+        if (!await SubmitAsync(EditorMode.Assignment, NewAssignWho, NewAssignWhat, NewAssignDue).ConfigureAwait(true)) return false;
         NewAssignWho = NewAssignWhat = NewAssignDue = "";
+        return true;
     }
 
-    public Task SaveNotesFromFormAsync() => SubmitAsync(EditorMode.Note, NotesDraft, "", "");
+    public Task<bool> SaveNotesFromFormAsync() => SubmitAsync(EditorMode.Note, NotesDraft, "", "");
 
-    public Task SaveDueFromFormAsync() => SubmitAsync(EditorMode.Due, DueDraft, "", "");
+    public Task<bool> SaveDueFromFormAsync() => SubmitAsync(EditorMode.Due, DueDraft, "", "");
 
     /// <summary>Runs a form through the editor's save; true when it saved.</summary>
     private async Task<bool> SubmitAsync(EditorMode mode, string primary, string secondary, string due)
@@ -646,7 +654,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
                     item.Assignments.Add(assignment);
                     await ApplyAsync(item, ActionWorkflow.AfterWaitAdded(item)).ConfigureAwait(true);
-                    Status = $"Assigned to {name} · moved to Waiting · nothing sent yet (c drafts a chase email)";
+                    Status = $"Assigned to {name} · moved to Waiting · nothing sent yet ({ChaseKey} drafts a chase email)";
                     break;
             }
 
