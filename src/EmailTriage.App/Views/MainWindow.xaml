@@ -481,7 +481,13 @@
                                  VirtualizingPanel.IsVirtualizing="True"
                                  VirtualizingPanel.VirtualizationMode="Recycling" />
 
-                        <TextBlock Grid.Row="1" Text="Inbox is clear" FontSize="13"
+                        <!-- a load in progress: a stalled Outlook must not pass for an empty inbox -->
+                        <ProgressBar Grid.Row="1" IsIndeterminate="True" Height="2" VerticalAlignment="Top"
+                                     Background="Transparent" BorderThickness="0"
+                                     Foreground="{StaticResource Accent}"
+                                     Visibility="{Binding Triage.IsLoading, Converter={StaticResource BoolVis}}" />
+
+                        <TextBlock Grid.Row="1" Text="{Binding Triage.EmptyListText}" FontSize="13"
                                    Foreground="{StaticResource Muted}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Visibility="{Binding Triage.Rows.Count, Converter={StaticResource CountVisInv}}" />

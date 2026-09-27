@@ -78,6 +78,9 @@ public sealed partial class TriageViewModel : ObservableObject
     [ObservableProperty] private IReadOnlyList<MailAttachment> _threadAttachments = Array.Empty<MailAttachment>();
     [ObservableProperty] private string _bodyHtml = "";
     [ObservableProperty] private bool _isLoading;
+
+    /// <summary>What the empty list says: loading, stuck on Outlook, failed, or genuinely clear.</summary>
+    [ObservableProperty] private string _emptyListText = "Inbox is clear";
     [ObservableProperty] private string _status = "";
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private bool _isSearching;
@@ -188,20 +191,22 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private async Task LoadOnceAsync(bool quiet, CancellationToken ct)
     {
-        if (!quiet) IsLoading = true;
+        if (!quiet)
+        {
+            IsLoading = true;
+            Status = "Loading inbox...";
+            EmptyListText = "Loading inbox...";
+        }
+
         try
         {
-            _inbox = await _store.GetInboxAsync(ct).ConfigureAwait(true);
-            _sent ??= await _store.GetSentItemsAsync(ct).ConfigureAwait(true);
-
-            var mail = await _store
-                .GetMailAsync(_inbox, _settings.InboxPageSize, ct).ConfigureAwait(true);
-
-            // Your side of each conversation. Only decoration for the list, so a
-            // failure here still shows the Inbox rather than nothing.
-            IReadOnlyList<MailSummary> sent;
-            try { sent = await _store.GetMailAsync(_sent.Value, _settings.SentPageSize, ct).ConfigureAwait(true); }
-            catch (Exception) when (!ct.IsCancellationRequested) { sent = Array.Empty<MailSummary>(); }
+            var (mail, sent) = quiet
+                ? await ReadFromOutlookAsync(ct).ConfigureAwait(true)
+                : await ReadFromOutlookAsync(ct).WarnIfSlow(OutlookStallAfter, () =>
+                {
+                    Status = OutlookStallWarning;
+                    EmptyListText = "Waiting on Outlook...";
+                }).ConfigureAwait(true);
 
             var threads = ConversationGrouper.Group(mail, sent);
 
@@ -247,6 +252,7 @@ public sealed partial class TriageViewModel : ObservableObject
                            ?? (Rows.Count == 0 ? null : Rows[Math.Clamp(selectedIndex, 0, Rows.Count - 1)]);
             }
 
+            EmptyListText = "Inbox is clear";
             if (!quiet)
             {
                 Status = $"{Rows.Count} conversation{(Rows.Count == 1 ? "" : "s")}"
@@ -256,11 +262,47 @@ public sealed partial class TriageViewModel : ObservableObject
         catch (Exception ex)
         {
             Status = $"Could not read the inbox: {ex.Message}";
+            EmptyListText = "Could not read the inbox";
         }
         finally
         {
             if (!quiet) IsLoading = false;
         }
+    }
+
+    /// <summary>
+    /// How long a load may take before the status line says Outlook is holding
+    /// it up. A normal first read takes a few seconds even on a large inbox.
+    /// </summary>
+    private static readonly TimeSpan OutlookStallAfter = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// Reading the list asks Outlook for sender addresses, which is exactly
+    /// what its "A program is trying to access email address information"
+    /// prompt guards. Outlook holds every call until someone answers it, and
+    /// it often opens behind other windows.
+    /// </summary>
+    internal const string OutlookStallWarning =
+        "Still waiting on Outlook - it is probably showing a dialog (often \"A program is trying to access " +
+        "email address information\"). Switch to Outlook and click Allow; the list loads as soon as you do.";
+
+    /// <summary>The inbox page, and your side of each conversation from Sent Items.</summary>
+    private async Task<(IReadOnlyList<MailSummary> Mail, IReadOnlyList<MailSummary> Sent)> ReadFromOutlookAsync(
+        CancellationToken ct)
+    {
+        _inbox = await _store.GetInboxAsync(ct).ConfigureAwait(true);
+        _sent ??= await _store.GetSentItemsAsync(ct).ConfigureAwait(true);
+
+        var mail = await _store
+            .GetMailAsync(_inbox, _settings.InboxPageSize, ct).ConfigureAwait(true);
+
+        // Only decoration for the list, so a failure here still shows the
+        // Inbox rather than nothing.
+        IReadOnlyList<MailSummary> sent;
+        try { sent = await _store.GetMailAsync(_sent.Value, _settings.SentPageSize, ct).ConfigureAwait(true); }
+        catch (Exception) when (!ct.IsCancellationRequested) { sent = Array.Empty<MailSummary>(); }
+
+        return (mail, sent);
     }
 
     private void ApplySearchFilter()

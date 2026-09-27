@@ -133,10 +133,13 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             ConnectionStatus = "Connecting to Outlook...";
-            await _store.ConnectAsync().ConfigureAwait(true);
+            await _store.ConnectAsync().WarnIfSlow(OutlookStallAfter, () =>
+                ConnectionStatus = "Waiting on Outlook - check it for a sign-in or profile dialog").ConfigureAwait(true);
 
+            // Attached, but nothing is read yet. "Connected" waits for the inbox,
+            // so a stalled first read doesn't look like an empty mailbox.
             IsConnected = true;
-            ConnectionStatus = "Connected";
+            ConnectionStatus = "Loading inbox...";
 
             // Autocomplete works from the cache at once, and fills out as
             // Outlook's contacts and directory are read in the background.
@@ -186,6 +189,7 @@ public sealed partial class MainViewModel : ObservableObject
             _sender.Start();
 
             await Triage.LoadAsync().ConfigureAwait(true);
+            ConnectionStatus = "Connected";
             await Actions.LoadAsync().ConfigureAwait(true);
 
             // The strip in the top bar needs the calendar whichever tab is showing.
@@ -202,6 +206,9 @@ public sealed partial class MainViewModel : ObservableObject
             FatalError = ex.Message;
         }
     }
+
+    /// <summary>How long attaching to Outlook may take before the top bar says it is stuck.</summary>
+    private static readonly TimeSpan OutlookStallAfter = TimeSpan.FromSeconds(20);
 
     private SynchronizationContext? _ui;
 
