@@ -40,7 +40,7 @@ The only Superhuman-style triage client that works on **classic Outlook desktop 
 - Remote images blocked by default (tracking pixels); scripts always forbidden in the preview CSP.
 - Single inbox (default account), default calendar only; folder search spans all stores.
 - Keybindings user-editable in `%APPDATA%\EmailTriage\keybindings.json`, with versioned migration.
-- Tabs: Triage, Action items, Calendar. Fuzzy folder palette (`v`), snooze with natural-language dates (`h`), compose/reply with @-mentions, meeting join countdown in the top bar.
+- Tabs: Triage, Action items, Calendar. Fuzzy folder palette (`v`), snooze with natural-language dates (`h`), compose/reply with @-mentions, meeting join countdown in the top bar; Calendar tab with day, work week, week, month and agenda views (`1`-`5`); AI drafts that offer times you are free.
 
 ## Brand Commitments
 

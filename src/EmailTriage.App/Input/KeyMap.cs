@@ -92,6 +92,13 @@ public sealed class KeyMap
         ("shift+s",     TriageAction.ReplyWithMeeting),
         ("ctrl+j",      TriageAction.JoinMeeting),
 
+        // Calendar tab: 1-5 pick the view; arrows step a day, week or month, Home is today
+        ("1",           TriageAction.CalendarDay),
+        ("2",           TriageAction.CalendarWorkWeek),
+        ("3",           TriageAction.CalendarWeek),
+        ("4",           TriageAction.CalendarMonth),
+        ("5",           TriageAction.CalendarAgenda),
+
         // AI: Ctrl+G drafts the open (or a new reply-all) message with Claude,
         // Ctrl+/ asks the inbox a question. Both go through the user's own
         // Claude Code sign-in, and only when pressed.

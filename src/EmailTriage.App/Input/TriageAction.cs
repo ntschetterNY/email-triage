@@ -96,6 +96,13 @@ public enum TriageAction
     /// <summary>Join the meeting under way or about to start, from anywhere.</summary>
     JoinMeeting,
 
+    /// <summary>Calendar tab views, on 1-5.</summary>
+    CalendarDay,
+    CalendarWorkWeek,
+    CalendarWeek,
+    CalendarMonth,
+    CalendarAgenda,
+
     /// <summary>The tab before this one; the reverse of SwitchSection.</summary>
     PrevSection,
 

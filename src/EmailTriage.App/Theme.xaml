@@ -37,6 +37,7 @@
     <svc:NullToVisibilityConverter x:Key="NullVisInv" Invert="True" />
     <svc:SectionVisibilityConverter x:Key="SectionVis" />
     <svc:SectionActiveConverter x:Key="SectionActive" />
+    <svc:MatchTagConverter x:Key="MatchTag" />
     <svc:PriorityBrushConverter x:Key="PriorityBrush" />
     <svc:CountToVisibilityConverter x:Key="CountVis" />
     <svc:CountToVisibilityConverter x:Key="CountVisInv" Invert="True" />

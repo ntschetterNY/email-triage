@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:vm="clr-namespace:EmailTriage.App.ViewModels"
+        xmlns:views="clr-namespace:EmailTriage.App.Views"
         Title="Email Triage"
         Height="820" Width="1400"
         MinHeight="560" MinWidth="960"
@@ -1181,18 +1182,310 @@
                             <PropertyGroupDescription PropertyName="Day" />
                         </CollectionViewSource.GroupDescriptions>
                     </CollectionViewSource>
+
+                    <!-- tentative meetings are striped, as in Outlook -->
+                    <LinearGradientBrush x:Key="TentativeStripes" StartPoint="0,0" EndPoint="7,7"
+                                         MappingMode="Absolute" SpreadMethod="Repeat">
+                        <GradientStop Color="#00000000" Offset="0" />
+                        <GradientStop Color="#00000000" Offset="0.5" />
+                        <GradientStop Color="#387AA2F7" Offset="0.5" />
+                        <GradientStop Color="#387AA2F7" Offset="1" />
+                    </LinearGradientBrush>
+
+                    <!-- a meeting in a month cell or the all-day row -->
+                    <DataTemplate x:Key="CalendarChip">
+                        <Border x:Name="Chip" Background="#1F7AA2F7" CornerRadius="3" Padding="5,1" Margin="0,0,0,2"
+                                Cursor="Hand" MouseLeftButtonUp="OnCalendarItemClick" ToolTip="{Binding Row.Subject}">
+                            <TextBlock x:Name="ChipText" Text="{Binding Text}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                        </Border>
+                        <DataTemplate.Triggers>
+                            <DataTrigger Binding="{Binding Event.IsAllDay}" Value="True">
+                                <Setter TargetName="Chip" Property="Background" Value="#33E0AF68" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Event.NeedsResponse}" Value="True">
+                                <Setter TargetName="ChipText" Property="Foreground" Value="{StaticResource Warn}" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Event.IsDeclined}" Value="True">
+                                <Setter TargetName="ChipText" Property="TextDecorations" Value="Strikethrough" />
+                                <Setter TargetName="Chip" Property="Opacity" Value="0.55" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter TargetName="Chip" Property="Background" Value="{StaticResource SelectedRow}" />
+                                <Setter TargetName="ChipText" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                <Setter TargetName="Chip" Property="Opacity" Value="1" />
+                            </DataTrigger>
+                        </DataTemplate.Triggers>
+                    </DataTemplate>
                 </Grid.Resources>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="400" MinWidth="280" />
+                    <ColumnDefinition Width="*" MinWidth="360" />
                     <ColumnDefinition Width="4" />
-                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="380" MinWidth="260" />
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0" Background="{StaticResource Panel}">
+                <!-- views (1-5), back / today / forward, and the span shown -->
+                <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource Panel}"
+                        BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="12,7">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Day" CommandParameter="Day" Click="OnCalendarViewClick" ToolTip="1" Margin="0,0,4,0"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=Day}" />
+                        <Button Content="Work week" CommandParameter="WorkWeek" Click="OnCalendarViewClick" ToolTip="2" Margin="0,0,4,0"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=WorkWeek}" />
+                        <Button Content="Week" CommandParameter="Week" Click="OnCalendarViewClick" ToolTip="3" Margin="0,0,4,0"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=Week}" />
+                        <Button Content="Month" CommandParameter="Month" Click="OnCalendarViewClick" ToolTip="4" Margin="0,0,4,0"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=Month}" />
+                        <Button Content="Agenda" CommandParameter="Agenda" Click="OnCalendarViewClick" ToolTip="5"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=Agenda}" />
+
+                        <StackPanel Orientation="Horizontal" Margin="18,0,0,0"
+                                    Visibility="{Binding IsAgenda, Converter={StaticResource BoolVisInv}}">
+                            <Button Content="‹" Click="OnCalendarPrev" ToolTip="Back (Left)" Margin="0,0,4,0" Style="{StaticResource ReportButton}" />
+                            <Button Content="Today" Click="OnCalendarToday" ToolTip="Home" Margin="0,0,4,0" Style="{StaticResource ReportButton}" />
+                            <Button Content="›" Click="OnCalendarNext" ToolTip="Forward (Right)" Style="{StaticResource ReportButton}" />
+                        </StackPanel>
+
+                        <TextBlock Text="{Binding RangeTitle}" FontSize="13" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="14,0,0,0" />
+                        <TextBlock Text="reading your calendar..." FontSize="11.5" Foreground="{StaticResource Muted}"
+                                   VerticalAlignment="Center" Margin="12,0,0,0"
+                                   Visibility="{Binding IsLoading, Converter={StaticResource BoolVis}}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 1-3 · day, work week, week: a time grid, overlapping meetings side by side -->
+                <Grid Grid.Row="1" Grid.Column="0" Background="{StaticResource Bg}"
+                      Visibility="{Binding IsTimeGrid, Converter={StaticResource BoolVis}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- the day headings and all-day row leave room for the grid's scroll bar, so the columns line up -->
+                    <Grid Grid.Row="0" x:Name="CalendarHeader">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="52" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ItemsControl Grid.Column="1" ItemsSource="{Binding Days}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock x:Name="Heading" Text="{Binding Header}" FontSize="12" Padding="8,8,0,6"
+                                               Foreground="{StaticResource Muted}" />
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsToday}" Value="True">
+                                            <Setter TargetName="Heading" Property="Foreground" Value="{StaticResource Accent}" />
+                                            <Setter TargetName="Heading" Property="FontWeight" Value="Bold" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Grid>
+
+                    <Grid Grid.Row="1" x:Name="CalendarAllDay">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="52" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="all day" FontSize="10" Foreground="{StaticResource Muted}"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,4,8,6" />
+                        <ItemsControl Grid.Column="1" ItemsSource="{Binding Days}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,1" Padding="3,3,3,1" MinHeight="24">
+                                        <ItemsControl ItemsSource="{Binding AllDay}" ItemTemplate="{StaticResource CalendarChip}" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="2" x:Name="CalendarScroll" VerticalScrollBarVisibility="Visible"
+                                  HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                        <Grid Height="{Binding GridHeight}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="52" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <ItemsControl Grid.Column="0" ItemsSource="{x:Static vm:CalendarViewModel.HourLabels}" IsHitTestVisible="False">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" Height="{x:Static vm:CalendarViewModel.HourHeight}" FontSize="10"
+                                                   Foreground="{StaticResource Muted}" HorizontalAlignment="Right" Margin="0,2,8,0" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <ItemsControl Grid.Column="1" ItemsSource="{Binding Days}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border x:Name="Column" BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0" Background="Transparent">
+                                            <Grid ClipToBounds="True">
+                                                <!-- outside working hours -->
+                                                <Border VerticalAlignment="Top" Height="{Binding OffBefore}" Background="#33000000" IsHitTestVisible="False" />
+                                                <Border VerticalAlignment="Bottom" Height="{Binding OffAfter}" Background="#33000000" IsHitTestVisible="False" />
+
+                                                <!-- hour lines -->
+                                                <ItemsControl ItemsSource="{x:Static vm:CalendarViewModel.HourLabels}" IsHitTestVisible="False">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border Height="{x:Static vm:CalendarViewModel.HourHeight}" BorderBrush="#222A3040" BorderThickness="0,1,0,0" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <ItemsControl ItemsSource="{Binding Blocks}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate><views:TimeGridPanel /></ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemContainerStyle>
+                                                        <Style TargetType="ContentPresenter">
+                                                            <Setter Property="views:TimeGridPanel.Top" Value="{Binding Top}" />
+                                                            <Setter Property="views:TimeGridPanel.BlockHeight" Value="{Binding Height}" />
+                                                            <Setter Property="views:TimeGridPanel.Lane" Value="{Binding Lane}" />
+                                                            <Setter Property="views:TimeGridPanel.Lanes" Value="{Binding Lanes}" />
+                                                        </Style>
+                                                    </ItemsControl.ItemContainerStyle>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border x:Name="Block" Background="#2E7AA2F7" BorderBrush="{StaticResource Accent}"
+                                                                    BorderThickness="3,0,0,0" CornerRadius="3" Margin="1,1,2,1"
+                                                                    Cursor="Hand" MouseLeftButtonUp="OnCalendarItemClick" ToolTip="{Binding Row.Subject}">
+                                                                <Grid>
+                                                                    <Border x:Name="Stripes" Background="{StaticResource TentativeStripes}" Visibility="Collapsed" />
+                                                                    <!-- not answered yet: a dashed amber outline -->
+                                                                    <Rectangle x:Name="Dashed" Stroke="{StaticResource Warn}" StrokeThickness="1"
+                                                                               StrokeDashArray="3 2" RadiusX="2" RadiusY="2" Visibility="Collapsed" />
+                                                                    <StackPanel Margin="5,1,4,1">
+                                                                        <TextBlock x:Name="Subject" Text="{Binding Row.Subject}" FontSize="11.5" FontWeight="SemiBold"
+                                                                                   TextTrimming="CharacterEllipsis" />
+                                                                        <TextBlock x:Name="Caption" Text="{Binding Caption}" FontSize="10.5" Margin="0,1,0,0"
+                                                                                   Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"
+                                                                                   Visibility="{Binding IsRoomy, Converter={StaticResource BoolVis}}" />
+                                                                    </StackPanel>
+                                                                </Grid>
+                                                            </Border>
+                                                            <DataTemplate.Triggers>
+                                                                <DataTrigger Binding="{Binding Row.IsPast}" Value="True">
+                                                                    <Setter TargetName="Block" Property="Opacity" Value="0.6" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsTentative}" Value="True">
+                                                                    <Setter TargetName="Stripes" Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Event.NeedsResponse}" Value="True">
+                                                                    <Setter TargetName="Dashed" Property="Visibility" Value="Visible" />
+                                                                    <Setter TargetName="Block" Property="BorderBrush" Value="{StaticResource Warn}" />
+                                                                    <Setter TargetName="Block" Property="Background" Value="#1FE0AF68" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Event.IsDeclined}" Value="True">
+                                                                    <Setter TargetName="Subject" Property="TextDecorations" Value="Strikethrough" />
+                                                                    <Setter TargetName="Block" Property="Opacity" Value="0.5" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                    <Setter TargetName="Block" Property="Background" Value="{StaticResource SelectedRow}" />
+                                                                    <Setter TargetName="Block" Property="Opacity" Value="1" />
+                                                                    <Setter TargetName="Subject" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                                                    <Setter TargetName="Caption" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                                                </DataTrigger>
+                                                            </DataTemplate.Triggers>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <!-- now -->
+                                                <Canvas IsHitTestVisible="False" Visibility="{Binding IsToday, Converter={StaticResource BoolVis}}">
+                                                    <Border Canvas.Top="{Binding NowTop}" Height="2" Background="{StaticResource Danger}"
+                                                            Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=Canvas}}" />
+                                                </Canvas>
+                                            </Grid>
+                                        </Border>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsWeekend}" Value="True">
+                                                <Setter TargetName="Column" Property="Background" Value="#26000000" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- 4 · month: six weeks; a click on a day opens it in the Day view -->
+                <Grid Grid.Row="1" Grid.Column="0" Background="{StaticResource Bg}"
+                      Visibility="{Binding IsMonth, Converter={StaticResource BoolVis}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <ItemsControl Grid.Row="0" ItemsSource="{x:Static vm:CalendarViewModel.WeekdayNames}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="11" Padding="8,8,0,6" Foreground="{StaticResource Muted}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <ItemsControl Grid.Row="1" ItemsSource="{Binding MonthCells}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><UniformGrid Rows="6" Columns="7" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border x:Name="Cell" BorderBrush="{StaticResource Border}" BorderThickness="1,1,0,0"
+                                        Background="Transparent" ClipToBounds="True" Cursor="Hand"
+                                        MouseLeftButtonUp="OnMonthDayClick" ToolTip="Open this day">
+                                    <StackPanel Margin="5,4,5,2">
+                                        <TextBlock x:Name="DayNumber" Text="{Binding DayText}" FontSize="11.5" Margin="1,0,0,3" />
+                                        <ItemsControl ItemsSource="{Binding Entries}" ItemTemplate="{StaticResource CalendarChip}" />
+                                        <TextBlock Text="{Binding More}" FontSize="10.5" Margin="3,0,0,0" Foreground="{StaticResource Muted}"
+                                                   Visibility="{Binding More, Converter={StaticResource NullVis}}" />
+                                    </StackPanel>
+                                </Border>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsOtherMonth}" Value="True">
+                                        <Setter TargetName="Cell" Property="Opacity" Value="0.45" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsToday}" Value="True">
+                                        <Setter TargetName="DayNumber" Property="Foreground" Value="{StaticResource Accent}" />
+                                        <Setter TargetName="DayNumber" Property="FontWeight" Value="Bold" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+
+                <!-- 5 · agenda: the fortnight ahead as a list -->
+                <Border Grid.Row="1" Grid.Column="0" Background="{StaticResource Panel}"
+                        Visibility="{Binding IsAgenda, Converter={StaticResource BoolVis}}">
                     <Grid>
                         <ListBox x:Name="AgendaList"
                                  ItemsSource="{Binding Source={StaticResource AgendaDays}}"
-                                 SelectedItem="{Binding Selected, Mode=TwoWay}"
+                                 SelectedItem="{Binding AgendaSelected, Mode=TwoWay}"
                                  ItemContainerStyle="{StaticResource MailRowContainer}"
                                  Background="Transparent" BorderThickness="0" Focusable="False"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -1271,10 +1564,10 @@
                     </Grid>
                 </Border>
 
-                <GridSplitter Grid.Column="1" Width="4" Background="{StaticResource Border}" HorizontalAlignment="Stretch" />
+                <GridSplitter Grid.Row="1" Grid.Column="1" Width="4" Background="{StaticResource Border}" HorizontalAlignment="Stretch" />
 
                 <!-- the selected meeting -->
-                <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" Padding="22,18"
+                <ScrollViewer Grid.Row="1" Grid.Column="2" VerticalScrollBarVisibility="Auto" Padding="22,18"
                               Visibility="{Binding Selected, Converter={StaticResource NullVis}}">
                     <StackPanel MaxWidth="760" HorizontalAlignment="Left">
                         <TextBlock Text="{Binding Selected.Subject}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
@@ -1346,7 +1639,7 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <TextBlock Grid.Column="2" Text="Select a meeting" Foreground="{StaticResource Muted}" FontSize="13"
+                <TextBlock Grid.Row="1" Grid.Column="2" Text="Select a meeting" Foreground="{StaticResource Muted}" FontSize="13"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            Visibility="{Binding Selected, Converter={StaticResource NullVisInv}}" />
             </Grid>

@@ -51,6 +51,22 @@ public sealed class SectionVisibilityConverter : IValueConverter
         => throw new NotSupportedException();
 }
 
+/// <summary>
+/// "on" when the value's name matches the parameter, for the Tag that marks
+/// the active toggle button (the calendar's view buttons).
+/// </summary>
+public sealed class MatchTagConverter : IValueConverter
+{
+    public object? Convert(object? value, Type t, object? parameter, CultureInfo c)
+        => value is not null && parameter is string name
+           && value.ToString()!.Equals(name, StringComparison.OrdinalIgnoreCase)
+            ? "on"
+            : null;
+
+    public object ConvertBack(object? value, Type t, object? p, CultureInfo c)
+        => throw new NotSupportedException();
+}
+
 public sealed class SectionActiveConverter : IValueConverter
 {
     public object Convert(object? value, Type t, object? parameter, CultureInfo c)

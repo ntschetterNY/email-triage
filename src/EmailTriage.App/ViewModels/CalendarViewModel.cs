@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using EmailTriage.App.Services;
@@ -85,11 +86,90 @@ public sealed class AgendaRow
         : $"{(int)span.TotalHours}h{span.Minutes:00}";
 }
 
+/// <summary>A meeting shown in the day grid or a month cell; carries its agenda row for the detail pane.</summary>
+public partial class CalendarItem : ObservableObject
+{
+    public CalendarItem(AgendaRow row) => Row = row;
+
+    public AgendaRow Row { get; }
+    public CalendarEvent Event => Row.Event;
+
+    /// <summary>"10:00 OAC meeting" in a month cell; the subject alone for an all-day entry.</summary>
+    public string Text => Event.IsAllDay ? Row.Subject : $"{Event.Start:HH:mm} {Row.Subject}";
+
+    [ObservableProperty] private bool _isSelected;
+}
+
+/// <summary>A timed meeting placed in a day's column of the time grid.</summary>
+public sealed class CalendarBlock : CalendarItem
+{
+    public CalendarBlock(AgendaRow row, PlacedEvent placed, double hourHeight) : base(row)
+    {
+        Top = placed.Start.TotalHours * hourHeight;
+        Height = Math.Max(MinHeight, (placed.End - placed.Start).TotalHours * hourHeight);
+        Lane = placed.Lane;
+        Lanes = placed.Lanes;
+    }
+
+    /// <summary>Short meetings still get a line of text.</summary>
+    public const double MinHeight = 18;
+
+    public double Top { get; }
+    public double Height { get; }
+    public int Lane { get; }
+    public int Lanes { get; }
+
+    /// <summary>"10:00–11:30 · Site trailer" under the subject.</summary>
+    public string Caption => CalendarMath.TimeRange(Event.Start, Event.End) + (Row.HasLocation ? $" · {Row.Location}" : "");
+
+    /// <summary>Time and place under the subject, when the block is tall enough to show them.</summary>
+    public bool IsRoomy => Height >= 34;
+
+    public bool IsTentative => Event.Response == MeetingResponse.Tentative || Event.Busy == BusyStatus.Tentative;
+}
+
+/// <summary>One day's column in the Day, Work week and Week views.</summary>
+public sealed partial class CalendarDayColumn : ObservableObject
+{
+    public required DateTime Date { get; init; }
+    public required IReadOnlyList<CalendarBlock> Blocks { get; init; }
+    public required IReadOnlyList<CalendarItem> AllDay { get; init; }
+
+    /// <summary>The shaded stretches before and after working hours, in pixels.</summary>
+    public double OffBefore { get; init; }
+    public double OffAfter { get; init; }
+
+    public bool IsToday { get; init; }
+    public bool IsWeekend => Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+    public string Header => $"{Date:ddd d}";
+
+    /// <summary>The red "now" line, on today's column only.</summary>
+    [ObservableProperty] private double _nowTop;
+}
+
+/// <summary>One day in the Month view.</summary>
+public sealed class MonthCell
+{
+    /// <summary>Meetings listed in a cell before the rest fold into "+N more".</summary>
+    public const int Shown = 3;
+
+    public required DateTime Date { get; init; }
+    public required IReadOnlyList<CalendarItem> Entries { get; init; }
+    public int Hidden { get; init; }
+    public bool IsToday { get; init; }
+    public bool IsOtherMonth { get; init; }
+
+    /// <summary>"28", or "1 Oct" on the first of a month.</summary>
+    public string DayText => Date.Day == 1 ? $"{Date:d MMM}" : Date.Day.ToString();
+    public string More => Hidden > 0 ? $"+{Hidden} more" : "";
+}
+
 /// <summary>
 /// The Calendar tab and the "next meeting" strip in the top bar. Reads the
-/// Outlook calendar a couple of weeks ahead, rereads it every few minutes and
-/// after anything the app itself changes, and ticks the strip's countdown
-/// from what it has in hand.
+/// Outlook calendar a couple of weeks ahead for the strip and the agenda, and
+/// whatever range the day, week or month view is showing; rereads both every
+/// few minutes and after anything the app itself changes, and ticks the
+/// strip's countdown from what it has in hand.
 /// </summary>
 public sealed partial class CalendarViewModel : ObservableObject
 {
@@ -108,6 +188,56 @@ public sealed partial class CalendarViewModel : ObservableObject
 
     public ObservableCollection<AgendaRow> Rows { get; } = new();
 
+    /// <summary>The columns of the Day, Work week or Week view.</summary>
+    public ObservableCollection<CalendarDayColumn> Days { get; } = new();
+
+    /// <summary>Six weeks of days for the Month view.</summary>
+    public ObservableCollection<MonthCell> MonthCells { get; } = new();
+
+    /// <summary>Height of an hour in the time grid, in pixels.</summary>
+    public const double HourHeight = 44;
+
+    public double GridHeight => 24 * HourHeight;
+
+    /// <summary>Where the grid scrolls to on opening: half an hour before the working day starts.</summary>
+    public double WorkdayTop => Math.Max(0, (Math.Clamp(_settings.WorkdayStartHour, 0, 23) - 0.5) * HourHeight);
+
+    public static IReadOnlyList<string> HourLabels { get; } =
+        Enumerable.Range(0, 24).Select(h => $"{h:00}:00").ToList();
+
+    public static IReadOnlyList<string> WeekdayNames { get; } =
+        new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsTimeGrid), nameof(IsMonth), nameof(IsAgenda), nameof(RangeTitle))]
+    private CalendarView _view;
+
+    /// <summary>The day the view is built around; today until you move.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RangeTitle))]
+    private DateTime _anchor;
+
+    public bool IsTimeGrid => View is CalendarView.Day or CalendarView.WorkWeek or CalendarView.Week;
+    public bool IsMonth => View == CalendarView.Month;
+    public bool IsAgenda => View == CalendarView.Agenda;
+
+    /// <summary>"28 Sep – 2 Oct 2026" above the grid.</summary>
+    public string RangeTitle => CalendarLayout.Title(View, Anchor);
+
+    /// <summary>Raised when the view or its range changes, so the window can scroll to the working day.</summary>
+    public event EventHandler? RangeChanged;
+
+    // What the day, week or month view is showing, and the meetings in it in order, for j and k.
+    private IReadOnlyList<CalendarEvent> _rangeEvents = Array.Empty<CalendarEvent>();
+    private (DateTime First, int Days) _range;
+    private List<AgendaRow> _visibleRows = new();
+    private List<CalendarItem> _items = new();
+    private string _built = "";
+
+    // Set when the user moves to a range that is still being read: once it
+    // arrives, a meeting in it is picked, as it would be from the cache.
+    private bool _reselectPending;
+
     [ObservableProperty] private AgendaRow? _selected;
     [ObservableProperty] private CalendarEventDetail? _detail;
     [ObservableProperty] private string _status = "";
@@ -125,10 +255,14 @@ public sealed partial class CalendarViewModel : ObservableObject
         _clock = clock;
         _settings = settings;
 
+        _view = RememberedView(settings);
+        _anchor = clock.Now.Date;
+
         _tick.Tick += async (_, _) =>
         {
             if (_clock.Now - _loadedAt >= ReloadEvery) await RefreshQuietlyAsync().ConfigureAwait(true);
             else UpdateStrip();
+            UpdateNowLine();
         };
     }
 
@@ -197,17 +331,23 @@ public sealed partial class CalendarViewModel : ObservableObject
 
                 Rows.Clear();
                 foreach (var row in rows) Rows.Add(row);
+                OnPropertyChanged(nameof(AgendaSelected));
 
-                // Land where the user was, else on what is on now or next.
-                Selected = Rows.FirstOrDefault(r => r.Event.Key == keep)
-                           ?? Rows.FirstOrDefault(r => !r.IsPast && !r.Event.IsAllDay)
-                           ?? Rows.FirstOrDefault(r => !r.IsPast)
-                           ?? Rows.LastOrDefault();
+                // Land where the user was, else on what is on now or next. In
+                // the grid or month the selection may be weeks away from the
+                // agenda's fortnight, so it is left alone there.
+                if (IsAgenda || Selected is null)
+                    Selected = Rows.FirstOrDefault(r => r.Event.Key == keep)
+                               ?? Rows.FirstOrDefault(r => !r.IsPast && !r.Event.IsAllDay)
+                               ?? Rows.FirstOrDefault(r => !r.IsPast)
+                               ?? Rows.LastOrDefault();
             }
 
             UpdateStrip();
+            var rangeRead = await LoadRangeAsync(now, from, to).ConfigureAwait(true);
 
-            if (!quiet)
+            // A range that could not be read has already said so.
+            if (!quiet && rangeRead)
             {
                 var today = Rows.Count(r => r.Day == "Today" && !r.Event.IsDeclined);
                 Status = today == 0
@@ -223,6 +363,260 @@ public sealed partial class CalendarViewModel : ObservableObject
         {
             if (!quiet) IsLoading = false;
         }
+    }
+
+    // ---- day, week and month views ---------------------------------------------
+
+    /// <summary>
+    /// Reads what the day, week or month view shows. A range inside the
+    /// fortnight already read for the agenda costs no second trip to Outlook.
+    /// False when Outlook would not give it up, after saying so in the status line.
+    /// </summary>
+    private async Task<bool> LoadRangeAsync(DateTimeOffset now, DateTimeOffset agendaFrom, DateTimeOffset agendaTo)
+    {
+        if (IsAgenda) return true;
+
+        var range = CalendarLayout.Range(View, Anchor);
+        var from = new DateTimeOffset(range.First, now.Offset);
+        var to = new DateTimeOffset(range.First.AddDays(range.Days), now.Offset);
+
+        IReadOnlyList<CalendarEvent> events;
+        if (from >= agendaFrom && to <= agendaTo)
+        {
+            events = _events.Where(e => e.Overlaps(from, to)).ToList();
+        }
+        else
+        {
+            IsLoading = true;
+            try
+            {
+                events = await _store.GetEventsAsync(from, to).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                // Said out loud, whoever asked: a stalled Outlook must not pass for a free week.
+                Status = $"{RangeFailed} {CalendarLayout.Title(View, Anchor)}: {ex.Message}";
+                return false;
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+        }
+
+        // The user may have moved on while Outlook answered; the next load covers where they are now.
+        if (range != CalendarLayout.Range(View, Anchor) || IsAgenda) return true;
+
+        _rangeEvents = events;
+        _range = range;
+        BuildRange(now, reselect: _reselectPending);
+        _reselectPending = false;
+
+        if (Status.StartsWith(RangeFailed, StringComparison.Ordinal)) Status = "";
+        return true;
+    }
+
+    private const string RangeFailed = "Could not read your calendar for";
+
+    /// <summary>
+    /// Lays out the grid or the month from what is in hand. Rebuilt only when
+    /// something on screen would change, so the three-minute reread does not
+    /// flicker. <paramref name="reselect"/> picks a meeting in the new range
+    /// when the one selected is not in it.
+    /// </summary>
+    private void BuildRange(DateTimeOffset now, bool reselect)
+    {
+        var (first, count) = _range;
+        var shown = $"{View}|{first:yyyyMMdd}|{count}|{now:yyyyMMddHH}|" + string.Join('\n', _rangeEvents.Select(e =>
+            $"{e.Key}|{e.Subject}|{e.Location}|{e.End.UtcTicks}|{e.Response}|{e.Busy}"));
+
+        if (shown != _built)
+        {
+            _built = shown;
+            _items = new List<CalendarItem>();
+
+            Days.Clear();
+            MonthCells.Clear();
+
+            var rows = _rangeEvents
+                .GroupBy(e => e.Key)
+                .ToDictionary(g => g.Key, g => new AgendaRow(g.First(), now));
+            CalendarItem Item(CalendarEvent e)
+            {
+                var item = new CalendarItem(rows[e.Key]);
+                _items.Add(item);
+                return item;
+            }
+
+            if (View == CalendarView.Month)
+            {
+                for (var i = 0; i < count; i++)
+                {
+                    var date = first.AddDays(i);
+                    var onDay = CalendarLayout.OnDay(_rangeEvents, date);
+                    MonthCells.Add(new MonthCell
+                    {
+                        Date = date,
+                        Entries = onDay.Take(MonthCell.Shown).Select(Item).ToList(),
+                        Hidden = Math.Max(0, onDay.Count - MonthCell.Shown),
+                        IsToday = date == now.Date,
+                        IsOtherMonth = date.Month != Anchor.Month,
+                    });
+                }
+            }
+            else
+            {
+                var workStart = Math.Clamp(_settings.WorkdayStartHour, 0, 23);
+                var workEnd = Math.Clamp(_settings.WorkdayEndHour, workStart + 1, 24);
+
+                for (var i = 0; i < count; i++)
+                {
+                    var date = first.AddDays(i);
+                    var blocks = CalendarLayout.Lanes(_rangeEvents, date, TimeSpan.FromHours(CalendarBlock.MinHeight / HourHeight))
+                        .Select(p => new CalendarBlock(rows[p.Event.Key], p, HourHeight))
+                        .ToList();
+                    _items.AddRange(blocks);
+
+                    Days.Add(new CalendarDayColumn
+                    {
+                        Date = date,
+                        Blocks = blocks,
+                        AllDay = CalendarLayout.AllDayOn(_rangeEvents, date).Select(Item).ToList(),
+                        IsToday = date == now.Date,
+                        OffBefore = workStart * HourHeight,
+                        OffAfter = (24 - workEnd) * HourHeight,
+                    });
+                }
+                OnPropertyChanged(nameof(DayCount));
+            }
+
+            // j and k walk what is on screen in time order; a meeting that
+            // spans days is visited once.
+            _visibleRows = rows.Values
+                .OrderBy(r => r.Event.Start).ThenByDescending(r => r.Event.IsAllDay)
+                .ToList();
+
+            UpdateNowLine();
+        }
+
+        var key = Selected?.Event.Key;
+        if (reselect && (key is null || _visibleRows.All(r => r.Event.Key != key)))
+        {
+            var timed = _visibleRows.Where(r => !r.Event.IsAllDay).ToList();
+            Selected = timed.FirstOrDefault(r => r.Event.End > now) ?? timed.FirstOrDefault() ?? _visibleRows.FirstOrDefault();
+        }
+        else SyncSelection();
+    }
+
+    /// <summary>How many columns the time grid has: 1, 5 or 7.</summary>
+    public int DayCount => Math.Max(1, Days.Count);
+
+    /// <summary>1-5: switch view, keeping the day you are on. Remembered for next time.</summary>
+    public void SetView(CalendarView view)
+    {
+        if (view == View) return;
+
+        // Coming back from the agenda, land on the meeting that was picked there.
+        if (IsAgenda && Selected is { } row) Anchor = row.Event.Start.Date;
+
+        View = view;
+        Remember(view);
+        ShowRange(reselect: false);
+    }
+
+    /// <summary>Left and Right: the previous or next day, week or month.</summary>
+    public void Step(int delta)
+    {
+        if (IsAgenda) return;
+        Anchor = CalendarLayout.Step(View, Anchor, delta);
+        ShowRange(reselect: true);
+    }
+
+    /// <summary>Home, or the Today button.</summary>
+    public void GoToToday()
+    {
+        if (IsAgenda)
+        {
+            MoveToEnd(false);
+            return;
+        }
+        Anchor = _clock.Now.Date;
+        ShowRange(reselect: true);
+    }
+
+    /// <summary>A click on a month day, or Enter in the month: that day in the Day view.</summary>
+    public void ShowDay(DateTime date)
+    {
+        Anchor = date.Date;
+        View = CalendarView.Day;
+        ShowRange(reselect: true);
+    }
+
+    /// <summary>Enter in the month view opens the selected meeting's day.</summary>
+    public void OpenSelectedDay() => ShowDay(Selected?.Event.Start.Date ?? Anchor);
+
+    /// <summary>
+    /// Shows the new range straight away from what is in hand, then reads it
+    /// from Outlook. A range outside what is cached shows empty until then.
+    /// </summary>
+    private void ShowRange(bool reselect)
+    {
+        _reselectPending = reselect;
+        if (!IsAgenda)
+        {
+            var now = _clock.Now;
+            _range = CalendarLayout.Range(View, Anchor);
+            var from = new DateTimeOffset(_range.First, now.Offset);
+            var to = from.AddDays(_range.Days);
+            _rangeEvents = _events.Where(e => e.Overlaps(from, to)).ToList();
+            BuildRange(now, reselect);
+        }
+        else SyncSelection();
+
+        RangeChanged?.Invoke(this, EventArgs.Empty);
+        _ = LoadCoreAsync(quiet: true);
+    }
+
+    /// <summary>Where the selected meeting sits in the grid, for scrolling it into view.</summary>
+    public CalendarBlock? SelectedBlock =>
+        Selected is { } row ? _items.OfType<CalendarBlock>().FirstOrDefault(b => b.Event.Key == row.Event.Key) : null;
+
+    private void SyncSelection()
+    {
+        var key = Selected?.Event.Key;
+        foreach (var item in _items) item.IsSelected = item.Event.Key == key;
+    }
+
+    private void UpdateNowLine()
+    {
+        var now = _clock.Now;
+        foreach (var day in Days)
+            if (day.IsToday) day.NowTop = (now.DateTime - now.Date).TotalHours * HourHeight;
+    }
+
+    // The last view picked, kept beside settings.json so it survives a restart.
+    private static string ViewFile => Path.Combine(Path.GetDirectoryName(AppSettings.DefaultPath)!, "calendar-view.txt");
+
+    private static CalendarView RememberedView(AppSettings settings)
+    {
+        try
+        {
+            if (File.Exists(ViewFile) && Enum.TryParse<CalendarView>(File.ReadAllText(ViewFile).Trim(), true, out var last))
+                return last;
+        }
+        catch { /* fall back to the setting */ }
+
+        return Enum.TryParse<CalendarView>(settings.CalendarView, true, out var view) ? view : CalendarView.WorkWeek;
+    }
+
+    private static void Remember(CalendarView view)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ViewFile)!);
+            File.WriteAllText(ViewFile, view.ToString());
+        }
+        catch { /* a view not remembered is no reason to fail */ }
     }
 
     // ---- the strip ----------------------------------------------------------
@@ -276,20 +670,72 @@ public sealed partial class CalendarViewModel : ObservableObject
 
     // ---- the agenda -----------------------------------------------------------
 
+    /// <summary>What j and k walk: the agenda, or the meetings the grid or month is showing.</summary>
+    private IReadOnlyList<AgendaRow> Walkable => IsAgenda ? Rows : _visibleRows;
+
     public void Move(int delta)
     {
-        if (Rows.Count == 0) return;
-        var index = Selected is null ? 0 : Rows.IndexOf(Selected) + delta;
-        Selected = Rows[Math.Clamp(index, 0, Rows.Count - 1)];
+        var rows = Walkable;
+        if (rows.Count == 0) return;
+
+        var key = Selected?.Event.Key;
+        var at = key is null ? -1 : rows.ToList().FindIndex(r => r.Event.Key == key);
+        var index = at < 0 ? 0 : at + delta;
+        Selected = rows[Math.Clamp(index, 0, rows.Count - 1)];
     }
 
-    public void MoveToEnd(bool last) => Selected = last ? Rows.LastOrDefault() : Rows.FirstOrDefault();
+    public void MoveToEnd(bool last) => Selected = last ? Walkable.LastOrDefault() : Walkable.FirstOrDefault();
 
-    /// <summary>Shows a meeting in the agenda - from the strip, or after scheduling one.</summary>
-    public void Select(CalendarEvent ev) =>
-        Selected = Rows.FirstOrDefault(r => r.Event.Key == ev.Key) ?? Selected;
+    /// <summary>
+    /// Shows a meeting - from the strip, or after scheduling one. The grid
+    /// and month move to the meeting's day if it is off screen.
+    /// </summary>
+    public void Select(CalendarEvent ev)
+    {
+        if (IsAgenda)
+        {
+            Selected = Rows.FirstOrDefault(r => r.Event.Key == ev.Key) ?? Selected;
+            return;
+        }
 
-    partial void OnSelectedChanged(AgendaRow? value) => _ = LoadDetailAsync(value);
+        // Anything that shows in the range counts as on screen - an all-day
+        // entry that began last week, a meeting that ran past midnight.
+        var (first, days) = CalendarLayout.Range(View, Anchor);
+        var offset = _clock.Now.Offset;
+        if (!ev.Overlaps(new DateTimeOffset(first, offset), new DateTimeOffset(first.AddDays(days), offset)))
+        {
+            Anchor = ev.Start.Date;
+            Selected = new AgendaRow(ev, _clock.Now);
+            ShowRange(reselect: false);
+            return;
+        }
+
+        Selected = _visibleRows.FirstOrDefault(r => r.Event.Key == ev.Key)
+                   ?? Rows.FirstOrDefault(r => r.Event.Key == ev.Key)
+                   ?? new AgendaRow(ev, _clock.Now);
+    }
+
+    /// <summary>
+    /// The agenda list's selection: the selected meeting, when the list has
+    /// it. The list pushes back null when it loses the item (on a rebuild, or
+    /// for a meeting picked weeks away in the month), which never clears the
+    /// selection itself.
+    /// </summary>
+    public AgendaRow? AgendaSelected
+    {
+        get => Selected is { } row ? Rows.FirstOrDefault(r => r.Event.Key == row.Event.Key) : null;
+        set
+        {
+            if (value is not null && !ReferenceEquals(value, Selected)) Selected = value;
+        }
+    }
+
+    partial void OnSelectedChanged(AgendaRow? value)
+    {
+        SyncSelection();
+        OnPropertyChanged(nameof(AgendaSelected));
+        _ = LoadDetailAsync(value);
+    }
 
     private async Task LoadDetailAsync(AgendaRow? row)
     {
