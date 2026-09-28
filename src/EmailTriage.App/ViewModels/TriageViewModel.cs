@@ -616,7 +616,8 @@ public sealed partial class TriageViewModel : ObservableObject
             Composer.Status = "Claude is drafting...";
             var context = await BuildDraftContextAsync(draft, instructions ?? Composer.BodyText.Trim())
                 .ConfigureAwait(true);
-            context = context with { Style = style };
+            var (availability, calendarRead) = await GetAvailabilityQuietlyAsync().ConfigureAwait(true);
+            context = context with { Style = style, Availability = availability };
 
             var text = await _aiDraft
                 .DraftAsync(context, model ?? _settings.ResolveDraftModel())
@@ -627,7 +628,9 @@ public sealed partial class TriageViewModel : ObservableObject
 
             Composer.BodyText = text;
             Composer.CloseSuggestions();
-            Composer.Status = "Drafted - read it before sending. Ctrl+G redoes it.";
+            Composer.Status = calendarRead
+                ? "Drafted - read it before sending. Ctrl+G redoes it."
+                : "Drafted without your calendar - Outlook did not return it in time, so no times were offered. Read it before sending.";
             return true;
         }
         catch (AiUnavailableException ex)
@@ -664,6 +667,45 @@ public sealed partial class TriageViewModel : ObservableObject
             return "";
         }
     }
+
+    /// <summary>
+    /// When the user is free over the next couple of working weeks, for the
+    /// draft to offer times from when the email is about meeting. An
+    /// unreadable calendar never stops a draft: Claude is told not to guess.
+    /// </summary>
+    private async Task<(string Text, bool Read)> GetAvailabilityQuietlyAsync()
+    {
+        var now = _clock.Now;
+        var rules = _settings.Availability;
+        try
+        {
+            // Two weeks of weekdays span at most three calendar weeks, plus the weekend either side.
+            var from = new DateTimeOffset(now.Date, now.Offset).AddDays(1);
+            var to = from.AddDays(rules.WorkingDays / 5 * 7 + 7);
+
+            // Outlook's one thread has no timeout of its own; a stalled Outlook
+            // must not hold the draft at "Claude is drafting..." for ever.
+            var read = _calendar.GetEventsAsync(from, to);
+            if (await Task.WhenAny(read, Task.Delay(AvailabilityTimeout)).ConfigureAwait(true) != read)
+            {
+                _ = read.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe a late failure
+                return (Availability.Unreadable, false);
+            }
+            var events = await read.ConfigureAwait(true);
+
+            // The zone's own name ("(UTC-05:00) Eastern Time (US & Canada)") rather
+            // than today's offset, which would be wrong for days past a clock change.
+            var zone = TimeZoneInfo.Local;
+            var days = Availability.FreeWindows(events, now, rules, zone);
+            return (Availability.Describe(days, now, rules, zone.DisplayName), true);
+        }
+        catch
+        {
+            return (Availability.Unreadable, false);
+        }
+    }
+
+    private static readonly TimeSpan AvailabilityTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// The conversation behind the open draft, as prompt-ready messages. Bodies

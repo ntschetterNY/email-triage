@@ -36,8 +36,12 @@ public sealed partial class OutlookMailStore : ICalendarStore
     /// <summary>olEmbeddeditem: attach an Outlook item itself rather than a file.</summary>
     private const int AttachEmbeddedItem = 5;
 
-    /// <summary>A runaway recurrence can expand forever; nobody reads past this.</summary>
-    private const int EventScanLimit = 500;
+    /// <summary>
+    /// A runaway recurrence can expand forever; nobody reads past this. Room
+    /// for six weeks of a packed calendar (the month view), since anything cut
+    /// off here would show - and be offered in drafts - as free time.
+    /// </summary>
+    private const int EventScanLimit = 2000;
 
     // Where a meeting message keeps its meeting's times when it has no calendar
     // entry to ask (a cancellation for something already removed). PSETID_Appointment.

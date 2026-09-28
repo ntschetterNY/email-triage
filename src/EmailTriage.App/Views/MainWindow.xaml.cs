@@ -9,6 +9,7 @@ using System.Windows.Media.Imaging;
 using EmailTriage.App.Input;
 using EmailTriage.App.Services;
 using EmailTriage.App.ViewModels;
+using EmailTriage.Core.Services;
 using Microsoft.Web.WebView2.Core;
 
 namespace EmailTriage.App.Views;
@@ -63,6 +64,14 @@ public partial class MainWindow : Window
         viewModel.Actions.PropertyChanged += OnActionsChanged;
         viewModel.Actions.FocusRequested += OnFocusRequested;
         viewModel.Calendar.PropertyChanged += OnCalendarChanged;
+        viewModel.Calendar.RangeChanged += (_, _) => ScrollCalendarToWorkday();
+
+        // The grid's day headings sit outside its scroller; leave room for its scroll bar so the columns line up.
+        var scrollBar = new Thickness(0, 0, SystemParameters.VerticalScrollBarWidth, 0);
+        CalendarHeader.Margin = scrollBar;
+        CalendarAllDay.Margin = scrollBar;
+        // Also when the tab or view first shows it: a hidden grid cannot be scrolled.
+        CalendarScroll.IsVisibleChanged += (_, e) => { if (e.NewValue is true) ScrollCalendarToWorkday(); };
 
         Loaded += async (_, _) => await InitialiseWebViewAsync();
     }
@@ -114,7 +123,14 @@ public partial class MainWindow : Window
             },
             Section.Calendar => new[]
             {
-                Hint("next/prev", TriageAction.NextMail, TriageAction.PrevMail),
+                new
+                {
+                    Key = $"{keys.Describe(TriageAction.CalendarDay)}–{keys.Describe(TriageAction.CalendarAgenda)}",
+                    Label = "view",
+                },
+                Hint("prev/next", TriageAction.PrevColumn, TriageAction.NextColumn),
+                Hint("today", TriageAction.FirstMail),
+                Hint("next/prev meeting", TriageAction.NextMail, TriageAction.PrevMail),
                 Hint("join / open", TriageAction.Confirm),
                 Hint("outlook", TriageAction.OpenInOutlook),
                 Hint("answer", TriageAction.Rsvp),
@@ -489,8 +505,68 @@ public partial class MainWindow : Window
 
         Dispatcher.BeginInvoke(() =>
         {
-            if (ViewModel.Calendar.Selected is { } row) AgendaList.ScrollIntoView(row);
+            var calendar = ViewModel.Calendar;
+            if (calendar.IsAgenda)
+            {
+                if (calendar.AgendaSelected is { } row) AgendaList.ScrollIntoView(row);
+            }
+            else if (calendar.IsTimeGrid) ScrollToSelectedBlock();
         });
+    }
+
+    /// <summary>Brings a meeting reached with j or k into view, with a little of the hour before it.</summary>
+    private void ScrollToSelectedBlock()
+    {
+        if (ViewModel.Calendar.SelectedBlock is not { } block) return;
+
+        var top = CalendarScroll.VerticalOffset;
+        var bottom = top + CalendarScroll.ViewportHeight;
+        if (block.Top < top || block.Top + block.Height > bottom)
+            CalendarScroll.ScrollToVerticalOffset(Math.Max(0, block.Top - CalendarViewModel.HourHeight / 2));
+    }
+
+    /// <summary>
+    /// The grid opens on the working day rather than midnight - unless the
+    /// selected meeting (one opened from the strip, say) is outside it.
+    /// </summary>
+    private void ScrollCalendarToWorkday()
+    {
+        if (!ViewModel.Calendar.IsTimeGrid) return;
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            CalendarScroll.ScrollToVerticalOffset(ViewModel.Calendar.WorkdayTop);
+            CalendarScroll.UpdateLayout();
+            ScrollToSelectedBlock();
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private void OnCalendarViewClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.CommandParameter is string name && Enum.TryParse<CalendarView>(name, out var view))
+            ViewModel.Calendar.SetView(view);
+        Focus();
+    }
+
+    private void OnCalendarPrev(object sender, RoutedEventArgs e) { ViewModel.Calendar.Step(-1); Focus(); }
+    private void OnCalendarNext(object sender, RoutedEventArgs e) { ViewModel.Calendar.Step(1); Focus(); }
+    private void OnCalendarToday(object sender, RoutedEventArgs e) { ViewModel.Calendar.GoToToday(); Focus(); }
+
+    /// <summary>A meeting in the grid, the all-day row or a month cell: show it, joining it if it is on.</summary>
+    private async void OnCalendarItemClick(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not CalendarItem item) return;
+
+        e.Handled = true; // not also the month day underneath
+        Focus();
+        await ViewModel.Calendar.ClickAsync(item.Event);
+    }
+
+    /// <summary>A month day, away from its meetings: open it in the Day view.</summary>
+    private void OnMonthDayClick(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MonthCell cell) ViewModel.Calendar.ShowDay(cell.Date);
+        Focus();
     }
 
     // ---- action board clicks -----------------------------------------------
