@@ -19,7 +19,13 @@ public static partial class EventTimeParser
     public static bool TryParse(
         string input, DateTimeOffset now,
         out DateTimeOffset? start, out TimeSpan? duration,
-        SnoozeDayShape? shape = null)
+        SnoozeDayShape? shape = null) =>
+        TryParse(input, now, out start, out duration, shape, strict: false);
+
+    private static bool TryParse(
+        string input, DateTimeOffset now,
+        out DateTimeOffset? start, out TimeSpan? duration,
+        SnoozeDayShape? shape, bool strict)
     {
         start = null;
         duration = null;
@@ -38,7 +44,7 @@ public static partial class EventTimeParser
             var (from, to) = RangeEnds(range.Groups["t1"].Value, range.Groups["t2"].Value);
             var startText = dayPart.Length == 0 ? from : $"{dayPart} {from}";
 
-            if (!NaturalDateParser.TryParse(startText, now, out var s, shape)) return false;
+            if (!NaturalDateParser.TryParse(startText, now, out var s, shape, strict)) return false;
             if (!NaturalDateParser.TryParse(to, s.AddMinutes(-1), out var e, shape)) return false;
 
             // Same day as the start; the end parse only borrowed "now" to anchor it.
@@ -59,13 +65,61 @@ public static partial class EventTimeParser
             if (text.Length == 0) return true;
         }
 
-        if (!NaturalDateParser.TryParse(text, now, out var parsed, shape))
+        if (!NaturalDateParser.TryParse(text, now, out var parsed, shape, strict))
         {
             duration = null;
             return false;
         }
 
         start = parsed;
+        return true;
+    }
+
+    /// <summary>
+    /// Reads a new calendar entry typed in one go: a title and a time, either
+    /// way round - "Site walk tomorrow 2pm 1h", "fri 10-11am budget review".
+    /// The longest run of words that reads as a time wins; the rest is the
+    /// title. With no time in it, the whole input is the title and false is
+    /// returned.
+    /// </summary>
+    public static bool TryParseWithTitle(
+        string input, DateTimeOffset now, out string title,
+        out DateTimeOffset? start, out TimeSpan? duration,
+        SnoozeDayShape? shape = null)
+    {
+        title = WhitespaceRegex().Replace(input ?? "", " ").Trim();
+        start = null;
+        duration = null;
+        if (title.Length == 0) return false;
+
+        var words = title.Split(' ');
+        var best = 0;
+
+        // Title first, time after: the smallest title leaves the longest time.
+        for (var k = 0; k < words.Length; k++)
+        {
+            if (words.Length - k <= best) break;
+            if (!TryParse(string.Join(' ', words[k..]), now, out var s, out var d, shape, strict: true)) continue;
+            best = words.Length - k;
+            (start, duration) = (s, d);
+            title = string.Join(' ', words[..k]);
+            break;
+        }
+
+        // Time first, title after, when that reads more of it as the time.
+        for (var k = words.Length - 1; k > best; k--)
+        {
+            if (!TryParse(string.Join(' ', words[..k]), now, out var s, out var d, shape, strict: true)) continue;
+            best = k;
+            (start, duration) = (s, d);
+            title = string.Join(' ', words[k..]);
+            break;
+        }
+
+        if (best == 0) return false;
+
+        // "Site walk at 2pm", "Review on fri": the joining word is not the title's.
+        title = TitleJoinRegex().Replace(title, "").Trim();
         return true;
     }
 
@@ -132,4 +186,7 @@ public static partial class EventTimeParser
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex(@"(?:^|\s+)(?:at|on|for|from)$|^(?:at|on|for|from)(?:\s+|$)", RegexOptions.IgnoreCase)]
+    private static partial Regex TitleJoinRegex();
 }

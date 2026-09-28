@@ -125,7 +125,7 @@ public sealed class CalendarBlock : CalendarItem
     /// <summary>Time and place under the subject, when the block is tall enough to show them.</summary>
     public bool IsRoomy => Height >= 34;
 
-    public bool IsTentative => Event.Response == MeetingResponse.Tentative || Event.Busy == BusyStatus.Tentative;
+    public bool IsTentative => Event.IsHold;
 }
 
 /// <summary>One day's column in the Day, Work week and Week views.</summary>

@@ -15,7 +15,6 @@ public class AvailabilityTests
     {
         DayStart = TimeSpan.FromHours(7),
         DayEnd = TimeSpan.FromHours(16),
-        Buffer = TimeSpan.FromMinutes(15),
         MinWindow = TimeSpan.FromMinutes(30),
         WorkingDays = 5,
         LunchStart = TimeSpan.FromHours(12),
@@ -63,7 +62,7 @@ public class AvailabilityTests
     }
 
     [Fact]
-    public void Meetings_take_their_time_plus_the_buffer()
+    public void Meetings_take_exactly_their_own_time()
     {
         var events = new[]
         {
@@ -73,17 +72,16 @@ public class AvailabilityTests
 
         var tuesday = Availability.FreeWindows(events, Now, Rules)[0];
 
-        // 07:00-07:15 is too short to offer; 08:15-10:15 and 13:15-16:00 are left.
-        Assert.Equal("08:15-10:15, 13:15-16:00", Spans(tuesday.Windows));
+        // 07:00-07:30 is just long enough; no gap is kept either side of a meeting.
+        Assert.Equal("07:00-07:30, 08:00-10:30, 13:00-16:00", Spans(tuesday.Windows));
         Assert.Empty(tuesday.Lunch);
     }
 
     [Fact]
-    public void Tentative_counts_as_taken_but_free_declined_and_working_elsewhere_do_not()
+    public void Free_declined_and_working_elsewhere_do_not_take_time()
     {
         var events = new[]
         {
-            Event(At(29, 8), At(29, 9), busy: BusyStatus.Tentative),
             Event(At(29, 10), At(29, 11), busy: BusyStatus.Free),
             Event(At(29, 13), At(29, 14), response: MeetingResponse.Declined),
             Event(At(29, 14), At(29, 15), busy: BusyStatus.WorkingElsewhere),
@@ -91,7 +89,27 @@ public class AvailabilityTests
 
         var tuesday = Availability.FreeWindows(events, Now, Rules)[0];
 
-        Assert.Equal("07:00-07:45, 09:15-12:00, 13:00-16:00", Spans(tuesday.Windows));
+        Assert.Equal("07:00-12:00, 13:00-16:00", Spans(tuesday.Windows));
+        Assert.Empty(tuesday.Holds);
+    }
+
+    [Fact]
+    public void Tentative_time_stays_bookable_and_is_listed_as_a_hold()
+    {
+        var events = new[]
+        {
+            Event(At(29, 8), At(29, 9), busy: BusyStatus.Tentative),
+            Event(At(29, 8, 30), At(29, 9, 30), response: MeetingResponse.Tentative),   // said maybe; overlaps the first
+            Event(At(29, 12), At(29, 12, 30), busy: BusyStatus.Tentative),              // over lunch
+            Event(At(29, 14), At(29, 15), busy: BusyStatus.Tentative),
+            Event(At(29, 14, 30), At(29, 16)),                                           // a firm meeting wins over the hold
+        };
+
+        var tuesday = Availability.FreeWindows(events, Now, Rules)[0];
+
+        Assert.Equal("07:00-12:00, 13:00-14:30", Spans(tuesday.Windows));
+        Assert.Equal("12:00-13:00", Spans(tuesday.Lunch));
+        Assert.Equal("08:00-09:30, 12:00-12:30, 14:00-14:30", Spans(tuesday.Holds));
     }
 
     [Fact]
@@ -117,10 +135,10 @@ public class AvailabilityTests
         var events = new[]
         {
             // Wed: lunch free from 12:45, running on into a free afternoon.
-            Event(At(30, 7), At(30, 12, 30)),
+            Event(At(30, 7), At(30, 12, 45)),
             // Thu: lunch free 12:30-12:45 only, between two meetings.
-            Event(At(1, 7), At(1, 12, 15)),
-            Event(At(1, 13), At(1, 16)),
+            Event(At(1, 7), At(1, 12, 30)),
+            Event(At(1, 12, 45), At(1, 16)),
         };
 
         var days = Availability.FreeWindows(events, Now, Rules);
@@ -146,8 +164,8 @@ public class AvailabilityTests
         var events = new[]
         {
             Event(At(29, 7), At(29, 16)),
-            Event(At(30, 7), At(30, 12)),
-            Event(At(30, 13), At(30, 16)),
+            Event(At(30, 7), At(30, 12, 15)),
+            Event(At(30, 12, 45), At(30, 16)),
             Event(At(2, 0), At(3, 0), busy: BusyStatus.OutOfOffice, allDay: true),
         };
 
@@ -156,7 +174,9 @@ public class AvailabilityTests
 
         Assert.Contains("in Eastern Daylight Time (UTC-04:00). It is now Monday 28 September 2026, 09:35.", text);
         Assert.Contains("working hours (07:00-16:00)", text);
-        Assert.Contains("15-minute buffer", text);
+        Assert.Contains("back to back allowed", text);
+        Assert.DoesNotContain("buffer", text);
+        Assert.DoesNotContain("HOLD", text);
         Assert.Contains("through Mon 5 Oct", text);
         Assert.Contains("Tue 29 Sep: fully booked", text);
         Assert.Contains("Wed 30 Sep: only over lunch: 12:15-12:45", text);
@@ -165,6 +185,17 @@ public class AvailabilityTests
         Assert.Contains("offer 3 specific times", text);
         Assert.Contains("keeps lunch (12:00-13:00) free", text);
         Assert.Contains("Never offer a time outside these windows", text);
+    }
+
+    [Fact]
+    public void Describe_marks_hold_times()
+    {
+        var events = new[] { Event(At(29, 9), At(29, 10), busy: BusyStatus.Tentative) };
+
+        var text = Availability.Describe(Availability.FreeWindows(events, Now, Rules), Now, Rules, "ET");
+
+        Assert.Contains("Tue 29 Sep: 07:00-12:00, 13:00-16:00 (lunch free too: 12:00-13:00); HOLD 09:00-10:00", text);
+        Assert.Contains("HOLD times are pencilled in (tentative) and can be booked over", text);
     }
 
     [Fact]

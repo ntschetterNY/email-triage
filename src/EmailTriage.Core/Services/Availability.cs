@@ -9,9 +9,6 @@ public sealed record AvailabilityRules
     public TimeSpan DayStart { get; init; } = TimeSpan.FromHours(9);
     public TimeSpan DayEnd { get; init; } = TimeSpan.FromHours(17);
 
-    /// <summary>Kept clear either side of an existing meeting.</summary>
-    public TimeSpan Buffer { get; init; } = TimeSpan.FromMinutes(15);
-
     /// <summary>Gaps shorter than this are not worth offering.</summary>
     public TimeSpan MinWindow { get; init; } = TimeSpan.FromMinutes(30);
 
@@ -36,9 +33,16 @@ public sealed record AvailabilityRules
 /// <param name="Windows">Free time outside lunch, soonest first.</param>
 /// <param name="Lunch">Free time over lunch, offered only when nothing else fits.</param>
 /// <param name="IsAway">An all-day out-of-office or busy entry takes the whole day.</param>
+/// <param name="Holds">
+/// Tentative time inside <paramref name="Windows"/> or <paramref name="Lunch"/>:
+/// free to book over, but offered after clear time.
+/// </param>
 public sealed record DayAvailability(
-    DateTime Date, IReadOnlyList<TimeSlot> Windows, IReadOnlyList<TimeSlot> Lunch, bool IsAway = false)
+    DateTime Date, IReadOnlyList<TimeSlot> Windows, IReadOnlyList<TimeSlot> Lunch, bool IsAway = false,
+    IReadOnlyList<TimeSlot>? Holds = null)
 {
+    public IReadOnlyList<TimeSlot> Holds { get; init; } = Holds ?? Array.Empty<TimeSlot>();
+
     public bool IsFullyBooked => Windows.Count == 0 && Lunch.Count == 0;
 }
 
@@ -50,9 +54,10 @@ public static class Availability
 {
     /// <summary>
     /// Free windows in working hours on the next <see cref="AvailabilityRules.WorkingDays"/>
-    /// weekdays, starting tomorrow - never later today. Busy, tentative and
-    /// out-of-office time all count as taken, padded by the buffer; free,
-    /// declined and "working elsewhere" entries do not.
+    /// weekdays, starting tomorrow - never later today. Busy and out-of-office
+    /// time count as taken, right up to the minute; free, declined and "working
+    /// elsewhere" entries do not. Tentative entries are holds: their time stays
+    /// free to book over, and is listed in <see cref="DayAvailability.Holds"/>.
     /// </summary>
     /// <param name="zone">The user's time zone, for days that change clocks. Null keeps <paramref name="now"/>'s offset.</param>
     public static IReadOnlyList<DayAvailability> FreeWindows(
@@ -64,9 +69,17 @@ public static class Availability
 
         var list = events.ToList();
 
-        var taken = list
-            .Where(e => e.BlocksTime && e.Busy != BusyStatus.WorkingElsewhere)
-            .Select(e => (Start: Local(e.Start) - rules.Buffer, End: Local(e.End) + rules.Buffer))
+        var timed = list.Where(e => e.BlocksTime && e.Busy != BusyStatus.WorkingElsewhere).ToList();
+
+        var taken = timed
+            .Where(e => !e.IsHold)
+            .Select(e => (Start: Local(e.Start), End: Local(e.End)))
+            .OrderBy(e => e.Start)
+            .ToList();
+
+        var pencilled = timed
+            .Where(e => e.IsHold)
+            .Select(e => (Start: Local(e.Start), End: Local(e.End)))
             .OrderBy(e => e.Start)
             .ToList();
 
@@ -110,7 +123,13 @@ public static class Availability
                 .Where(l => l.End - l.Start >= rules.MinWindow || windows.Any(w => w.End == l.Start || w.Start == l.End))
                 .ToList();
 
-            days.Add(new DayAvailability(date, windows.Select(Slot).ToList(), lunchFree.Select(Slot).ToList()));
+            // The held parts of what is on offer, merged where holds overlap.
+            var holds = Merge(windows.Concat(lunchFree)
+                .SelectMany(w => pencilled.Select(h => (Start: Max(w.Start, h.Start), End: Min(w.End, h.End))))
+                .Where(h => h.End > h.Start));
+
+            days.Add(new DayAvailability(date, windows.Select(Slot).ToList(), lunchFree.Select(Slot).ToList(),
+                Holds: holds.Select(Slot).ToList()));
         }
 
         return days;
@@ -130,7 +149,7 @@ public static class Availability
 
         var through = days.Count > 0 ? $" through {days[^1].Date:ddd d MMM}" : "";
         sb.AppendLine($"Free windows in their working hours ({Clock(rules.DayStart)}-{Clock(rules.DayEnd)}), " +
-                      $"after existing meetings plus a {(int)rules.Buffer.TotalMinutes}-minute buffer, " +
+                      "around existing meetings, back to back allowed, " +
                       $"from the next working day{through}:");
 
         foreach (var day in days)
@@ -142,6 +161,7 @@ public static class Availability
                 { Windows.Count: 0 } => $"only over lunch: {Spans(day.Lunch)}",
                 _ => Spans(day.Windows) + (day.Lunch.Count > 0 ? $" (lunch free too: {Spans(day.Lunch)})" : ""),
             };
+            if (!day.IsAway && day.Holds.Count > 0) line += $"; HOLD {Spans(day.Holds)}";
             sb.AppendLine($"  {day.Date:ddd d MMM}: {line}");
         }
 
@@ -149,6 +169,12 @@ public static class Availability
         sb.AppendLine($"If the email involves arranging a meeting or call, offer {Math.Max(1, rules.SlotCount)} specific times " +
                       "the user is free: each fully inside one window above, on different days where possible, and as long as " +
                       "the conversation or the notes call for (30 minutes when nothing says).");
+        if (days.Any(d => d.Holds.Count > 0))
+            sb.AppendLine("HOLD times are pencilled in (tentative) and can be booked over: they are inside the windows above " +
+                          "and may be offered, but prefer times that avoid a HOLD.");
+        if (days.Any(d => d.Holds.Count > 0))
+            sb.AppendLine("HOLD times are pencilled in (tentative) and can be booked over: they are inside the windows above " +
+                          "and may be offered, but prefer times that avoid a HOLD.");
         if (rules.HasLunch)
             sb.AppendLine($"The user keeps lunch ({Clock(rules.LunchStart!.Value)}-{Clock(rules.LunchEnd!.Value)}) free: " +
                           "only offer a time that runs into lunch when nothing else fits.");
@@ -189,6 +215,20 @@ public static class Availability
                 if (cut.End < span.End) next.Add((cut.End, span.End));
             }
             result = next;
+        }
+        return result;
+    }
+
+    /// <summary>Sorts spans and joins any that overlap or touch.</summary>
+    private static List<(DateTime Start, DateTime End)> Merge(IEnumerable<(DateTime Start, DateTime End)> spans)
+    {
+        var result = new List<(DateTime Start, DateTime End)>();
+        foreach (var span in spans.OrderBy(s => s.Start))
+        {
+            if (result.Count > 0 && span.Start <= result[^1].End)
+                result[^1] = (result[^1].Start, Max(result[^1].End, span.End));
+            else
+                result.Add(span);
         }
         return result;
     }

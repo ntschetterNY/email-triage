@@ -97,4 +97,39 @@ public class EventTimeParserTests
         Assert.Null(start);
         Assert.Null(duration);
     }
+
+    // ---- a title and a time together (new entry from the Calendar tab) ----
+
+    [Theory]
+    [InlineData("Site walk tomorrow 2pm 1h", "Site walk", 12, 14, 0, 60)]
+    [InlineData("Site walk tomorrow at 2pm", "Site walk", 12, 14, 0, -1)]
+    [InlineData("tomorrow 2pm Site walk", "Site walk", 12, 14, 0, -1)]
+    [InlineData("Budget review fri 10-11:30am", "Budget review", 13, 10, 0, 90)]
+    [InlineData("fri 10-11:30am budget review", "budget review", 13, 10, 0, 90)]
+    public void A_title_and_a_time_either_way_round(
+        string input, string title, int day, int hour, int minute, int minutes)
+    {
+        Assert.True(EventTimeParser.TryParseWithTitle(input, Now, out var t, out var start, out var duration));
+        Assert.Equal(title, t);
+        Assert.Equal(At(day, hour, minute), start);
+        Assert.Equal(minutes < 0 ? null : TimeSpan.FromMinutes(minutes), duration);
+    }
+
+    [Fact]
+    public void A_title_and_a_length_leaves_the_start_open()
+    {
+        Assert.True(EventTimeParser.TryParseWithTitle("Focus time 2h", Now, out var title, out var start, out var duration));
+        Assert.Equal("Focus time", title);
+        Assert.Null(start);
+        Assert.Equal(TimeSpan.FromHours(2), duration);
+    }
+
+    [Fact]
+    public void Without_a_time_it_is_all_title()
+    {
+        Assert.False(EventTimeParser.TryParseWithTitle("Call the architect", Now, out var title, out var start, out var duration));
+        Assert.Equal("Call the architect", title);
+        Assert.Null(start);
+        Assert.Null(duration);
+    }
 }

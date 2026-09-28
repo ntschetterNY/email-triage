@@ -123,6 +123,7 @@ their own letters.
 | `e` | Archive |
 | `u` | Toggle read / unread |
 | `Ctrl+O` | Open an attachment |
+| `Ctrl+P` | **Save as PDF** - the whole conversation, every message open (also the **PDF** button in the reading pane) |
 | `z` / `Ctrl+Z` | Undo the last move or snooze |
 
 ### Replying
@@ -163,6 +164,7 @@ their own letters.
 | `Ctrl+J` | Join the meeting on now or about to start, from any tab |
 | `Enter` | On the Calendar tab: join the meeting (Teams, Zoom, Meet, Webex), or open it in Outlook if it has no link |
 | `o` | On the Calendar tab: open the meeting in Outlook |
+| `s` / `n` | On the Calendar tab: new entry - type a title and a time together (`Site walk tomorrow 2pm 1h`). Also the `+ New` button |
 | `1` `2` `3` `4` `5` | On the Calendar tab: Day, Work week, Week, Month, Agenda |
 | `←` `→` / `Home` | On the Calendar tab: previous / next day, week or month / back to today |
 | `j` / `k` | On the Calendar tab: next / previous meeting. In the month, `Enter` opens the day |
@@ -190,6 +192,13 @@ every 30 seconds and moves it back, marked unread so it reads as new.
 **The app must be running for a snooze to fire.** Anything that came due while it was
 closed is swept back the moment you next open it. That is the honest trade for not
 installing a background service.
+
+### Save as PDF (`Ctrl+P`)
+The **PDF** button above the reading pane (or `Ctrl+P`) saves the selected conversation
+as a PDF: the subject on top, then every message, newest first, with From, Sent, To, Cc and
+attachment names, on white paper. It asks where to save, suggesting the newest message's
+date and the subject as the file name. Conversations longer than `ThreadMessageLimit`
+note the older messages left out. Remote images follow `BlockRemoteImages`, as on screen.
 
 ### Action items
 Flagging a mail does two things: it applies an Outlook category (so the flag is
@@ -232,7 +241,11 @@ the whole series.
 `s` puts a mail on your calendar. Type a time the way you would for snooze, with an
 optional length or range: `tomorrow 2pm 1h`, `fri 10-11:30am`. Or type just a length
 (`45m`) to be offered free slots in your working day, which runs from `MorningHour` to
-`EveningHour` in settings. `Enter` blocks the time as an appointment with the email
+`EveningHour` in settings. On the Calendar tab, `s` (or `n`, or `+ New`) adds an entry
+of your own: type the title and the time in one go, either way round - `Site walk
+tomorrow 2pm 1h`, `fri 10-11am budget review`, or `Focus 2h` to pick a free slot. Tentative entries don't stop a slot being offered: they
+are holds you can book over, so the slot says `over a HOLD` and names it, and an
+invitation card says "Free apart from a HOLD" rather than calling it a clash. `Enter` blocks the time as an appointment with the email
 attached, and `z` removes it. `Ctrl+Enter` makes it a meeting with everyone on the
 thread instead. That opens in Outlook for you to check and send, because an invitation
 goes to other people.
@@ -283,9 +296,10 @@ redoes it.
 
 **Drafts know when you're free.** Every draft is given your free time for the
 next `AvailabilityWorkingDays` working days (10), starting tomorrow: gaps between
-`WorkdayStartHour` and `WorkdayEndHour` (07:00-16:00), with `MeetingBufferMinutes`
-(15) kept clear either side of your meetings. Busy, tentative and out-of-office time
-all count as taken. When the email is about meeting - someone asks "when works?", or
+`WorkdayStartHour` and `WorkdayEndHour` (07:00-16:00), right up to your meetings -
+no gap is kept either side. Busy and out-of-office time counts as taken. Tentative
+entries (shown as tentative, or answered "maybe") are holds: that time can be booked
+over, so it is offered, but it is marked `HOLD` and Claude prefers clear time first. When the email is about meeting - someone asks "when works?", or
 your notes say "offer a few times for an hour's walkthrough" - Claude offers
 `ProposedSlotCount` (3) times of the right length, on different days where it can.
 If they already proposed times, it says which of those suit you instead. Lunch

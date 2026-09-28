@@ -1191,6 +1191,23 @@ public sealed partial class TriageViewModel : ObservableObject
     }
 
     /// <summary>
+    /// The selected conversation as a page to print to PDF, with a file name
+    /// to suggest; null when nothing is selected.
+    /// </summary>
+    public async Task<(string Html, string FileName)?> RenderSelectedForPdfAsync()
+    {
+        if (Selected is not { } row) return null;
+
+        var (bodies, _) = await LoadThreadAsync(row.Thread).ConfigureAwait(true);
+        var subject = ConversationGrouper.StripPrefixes(row.Subject);
+        var hiddenOlder = row.Thread.Count - bodies.Count;
+        var blockRemote = _settings.BlockRemoteImages;
+
+        var html = await Task.Run(() => HtmlPresenter.RenderThreadForPdf(subject, bodies, blockRemote, hiddenOlder)).ConfigureAwait(true);
+        return (html, HtmlPresenter.PdfFileName(subject, bodies[0].ReceivedUtc));
+    }
+
+    /// <summary>
     /// Loads the next few conversations below the selected one, and the one
     /// above, into the caches. One message at a time, so a move or reply the
     /// user makes meanwhile waits for at most a single body read.

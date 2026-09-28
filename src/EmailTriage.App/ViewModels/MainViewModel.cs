@@ -67,7 +67,14 @@ public sealed partial class MainViewModel : ObservableObject
         Keys = keys;
 
         // The status bar shows the tab on screen, and keeps up as that tab's line changes.
-        Triage.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(TriageViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
+        Triage.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(TriageViewModel.Status)) return;
+
+            // A palette opened from the Calendar tab reports there, not on the hidden triage line.
+            if (_calendarPalette && Section == Section.Calendar) Calendar.Status = Triage.Status;
+            OnPropertyChanged(nameof(StatusText));
+        };
         Actions.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(ActionItemsViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
         Calendar.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(CalendarViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
 
@@ -270,6 +277,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSectionChanged(Section value)
     {
+        _calendarPalette = false;
         OnPropertyChanged(nameof(StatusText));
         if (value == Section.Triage) _refreshHeld = false;
         _ = value switch
@@ -610,6 +618,10 @@ public sealed partial class MainViewModel : ObservableObject
                 Triage.OpenReplyWithMeetingForSelected();
                 return true;
 
+            case TriageAction.SavePdf:
+                SavePdfRequested?.Invoke(this, EventArgs.Empty);
+                return true;
+
             default:
                 return false;
         }
@@ -648,6 +660,12 @@ public sealed partial class MainViewModel : ObservableObject
                 AnswerSelectedMeeting();
                 return true;
 
+            // s, as elsewhere, puts something on the calendar; n is "new" here.
+            case TriageAction.ScheduleTime:
+            case TriageAction.MarkNoAction:
+                NewCalendarEntry();
+                return true;
+
             // Undoes a block made with s, like everywhere else.
             case TriageAction.Undo:
                 await Triage.UndoAsync().ConfigureAwait(true);
@@ -657,6 +675,22 @@ public sealed partial class MainViewModel : ObservableObject
             default:
                 return false;
         }
+    }
+
+    /// <summary>Ctrl+P in triage: the window prints the conversation, since that takes its browser.</summary>
+    public event EventHandler? SavePdfRequested;
+
+    /// <summary>Set while the answer or schedule palette was opened from the Calendar tab.</summary>
+    private bool _calendarPalette;
+
+    /// <summary>
+    /// s or n on the Calendar tab, or its New button: a new entry, title and
+    /// time typed together.
+    /// </summary>
+    public void NewCalendarEntry()
+    {
+        _calendarPalette = true;
+        Triage.OpenSchedulePalette(new ScheduleTarget("", null, Array.Empty<string>(), "", TitleFromQuery: true));
     }
 
     /// <summary>y on the Calendar tab: answer the meeting straight from the calendar.</summary>
@@ -672,6 +706,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
+        _calendarPalette = true;
         Triage.OpenRsvpPalette(new RsvpTarget(
             ev.Ref,
             string.IsNullOrWhiteSpace(ev.Subject) ? "(no subject)" : ev.Subject,
@@ -852,6 +887,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.MoveToFolder), "Move to folder (type to search, Ctrl+Enter creates)"),
         ("Triage",  Keys.Describe(TriageAction.Snooze), "Come back to this later"),
         ("Triage",  Keys.Describe(TriageAction.Archive), "Archive"),
+        ("Triage",  Keys.Describe(TriageAction.SavePdf), "Save the conversation as a PDF (also the PDF button)"),
         ("Triage",  Keys.Describe(TriageAction.ToggleRead), "Toggle read / unread"),
         ("Triage",  Keys.Describe(TriageAction.OpenAttachment), "Open an attachment (or click it in the header)"),
         ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move or snooze"),

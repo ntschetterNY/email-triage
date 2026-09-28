@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using EmailTriage.App.Input;
 using EmailTriage.App.Services;
@@ -20,6 +21,9 @@ public partial class MainWindow : Window
 
     private bool _webViewReady;
     private string _pendingHtml = "";
+
+    /// <summary>The browser environment both mail views share, kept for printing to PDF.</summary>
+    private CoreWebView2Environment? _webEnv;
 
     // The action board's email view: a second WebView2 on the same browser profile.
     private bool _actionViewReady;
@@ -40,6 +44,7 @@ public partial class MainWindow : Window
         HintStrip.ItemsSource = BuildHints();
 
         viewModel.PropertyChanged += OnViewModelChanged;
+        viewModel.SavePdfRequested += async (_, _) => await SavePdfAsync();
         viewModel.Triage.PropertyChanged += OnTriageChanged;
         viewModel.Triage.Palette.PropertyChanged += OnPaletteChanged;
         viewModel.Triage.Composer.PropertyChanged += OnComposerChanged;
@@ -178,6 +183,7 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(userData);
 
             var env = await CoreWebView2Environment.CreateAsync(BundledWebView2Folder(), userData);
+            _webEnv = env;
 
             await ConfigureMailViewAsync(BodyView, env);
             _webViewReady = true;
@@ -221,6 +227,97 @@ public partial class MainWindow : Window
         catch (WebView2RuntimeNotFoundException) { }
 
         return bundled;
+    }
+
+    // ---- saving a conversation as PDF ----------------------------------------
+
+    private async void OnSavePdf(object sender, RoutedEventArgs e) => await SavePdfAsync();
+
+    /// <summary>
+    /// The PDF button and Ctrl+P: renders the conversation for paper and
+    /// prints it in a browser nobody sees, so the reading pane stays as it is.
+    /// </summary>
+    private async Task SavePdfAsync()
+    {
+        var triage = ViewModel.Triage;
+        if (_webEnv is null)
+        {
+            triage.Status = "Saving as PDF needs the WebView2 runtime, which is not available";
+            return;
+        }
+
+        (string Html, string FileName)? page;
+        try
+        {
+            triage.Status = "Preparing the PDF...";
+            page = await triage.RenderSelectedForPdfAsync();
+        }
+        catch (Exception ex)
+        {
+            triage.Status = $"Could not read the conversation for the PDF: {ex.Message}";
+            return;
+        }
+
+        if (page is not { } p)
+        {
+            triage.Status = "Select a conversation to save it as a PDF";
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "Save the conversation as a PDF",
+            FileName = p.FileName,
+            DefaultExt = ".pdf",
+            Filter = "PDF document (*.pdf)|*.pdf",
+            AddExtension = true,
+            OverwritePrompt = true,
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            triage.Status = "";
+            return;
+        }
+
+        CoreWebView2Controller? controller = null;
+        try
+        {
+            triage.Status = "Saving the PDF...";
+            controller = await _webEnv.CreateCoreWebView2ControllerAsync(new WindowInteropHelper(this).Handle);
+            controller.IsVisible = false;
+
+            var core = controller.CoreWebView2;
+            core.Settings.IsScriptEnabled = false;
+            core.Settings.AreHostObjectsAllowed = false;
+            core.SetVirtualHostNameToFolderMapping(
+                MailImages.InlineImageHost, EmailTriage.Outlook.OutlookMailStore.DefaultInlineImageFolder,
+                CoreWebView2HostResourceAccessKind.DenyCors);
+
+            // Only the page itself loads; a link or refresh in the mail goes nowhere.
+            var loaded = new TaskCompletionSource<bool>();
+            var navigations = 0;
+            core.NavigationStarting += (_, e) => { if (++navigations > 1) e.Cancel = true; };
+            core.NavigationCompleted += (_, e) => loaded.TrySetResult(e.IsSuccess);
+            core.NavigateToString(p.Html);
+            if (!await loaded.Task) throw new InvalidOperationException("the page did not load");
+
+            var settings = _webEnv.CreatePrintSettings();
+            settings.ShouldPrintBackgrounds = true;
+            settings.ShouldPrintHeaderAndFooter = false;
+
+            var saved = await core.PrintToPdfAsync(dialog.FileName, settings);
+            triage.Status = saved
+                ? $"Saved {Path.GetFileName(dialog.FileName)} to {Path.GetDirectoryName(dialog.FileName)}"
+                : "Could not save the PDF - is the file open somewhere else?";
+        }
+        catch (Exception ex)
+        {
+            triage.Status = $"Could not save the PDF: {ex.Message}";
+        }
+        finally
+        {
+            controller?.Close();
+        }
     }
 
     /// <summary>
@@ -552,6 +649,8 @@ public partial class MainWindow : Window
     private void OnCalendarPrev(object sender, RoutedEventArgs e) { ViewModel.Calendar.Step(-1); Focus(); }
     private void OnCalendarNext(object sender, RoutedEventArgs e) { ViewModel.Calendar.Step(1); Focus(); }
     private void OnCalendarToday(object sender, RoutedEventArgs e) { ViewModel.Calendar.GoToToday(); Focus(); }
+
+    private void OnCalendarNew(object sender, RoutedEventArgs e) => ViewModel.NewCalendarEntry();
 
     /// <summary>A meeting in the grid, the all-day row or a month cell: show it, joining it if it is on.</summary>
     private async void OnCalendarItemClick(object sender, MouseButtonEventArgs e)
