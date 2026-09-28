@@ -18,6 +18,7 @@ public sealed class FakeMailStore : IMailStore
 {
     public bool IsConnected { get; private set; }
     public event EventHandler? InboxChanged;
+    public event EventHandler? ConnectionChanged { add { } remove { } }
 
     public List<FolderNode> Folders { get; } = new();
     public Dictionary<string, MailRef> ByMessageId { get; } = new();
