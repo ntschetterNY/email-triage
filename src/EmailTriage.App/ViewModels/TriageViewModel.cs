@@ -893,6 +893,22 @@ public sealed partial class TriageViewModel : ObservableObject
         PreviewName = "";
     }
 
+    /// <summary>Hands the previewed attachment to its usual program.</summary>
+    public void OpenPreviewExternally()
+    {
+        if (PreviewPath is not { } path) return;
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            Status = $"Opened {PreviewName}";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not open {PreviewName}: {ex.Message}";
+        }
+    }
+
     partial void OnSelectedChanged(MailRowViewModel? oldValue, MailRowViewModel? newValue)
     {
         // As in Outlook, a conversation folds back up once you move off it.
