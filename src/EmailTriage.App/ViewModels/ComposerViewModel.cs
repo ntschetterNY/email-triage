@@ -9,10 +9,14 @@ using EmailTriage.Core.Services;
 namespace EmailTriage.App.ViewModels;
 
 /// <summary>A message away or scheduled: the status line, what it answered, and whether to archive that.</summary>
-public sealed record SentEventArgs(string Message, MailRef InReplyTo, bool MarkDone);
+public sealed record SentEventArgs(string Message, MailRef InReplyTo, bool MarkDone)
+{
+    /// <summary>The follow-up to file against the answered mail, when one was set.</summary>
+    public FollowUpRequest? FollowUp { get; init; }
+}
 
 /// <summary>Where suggestions are showing: a recipient line, or an @mention in the message.</summary>
-public enum RecipientField { None, To, Cc, Bcc, Body, Subject }
+public enum RecipientField { None, To, Cc, Bcc, Body, Subject, FollowUp }
 
 /// <summary>
 /// The inline reply and forward box. Outlook builds the draft - quoted history,
@@ -41,6 +45,14 @@ public sealed partial class ComposerViewModel : ObservableObject
     [ObservableProperty] private bool _isScheduling;
     [ObservableProperty] private string _scheduleText = "";
     [ObservableProperty] private bool _holdIfReplied = true;
+
+    // Follow-up row (Ctrl+Shift+F): who owes what, by when. An empty date means none.
+    [ObservableProperty] private bool _isFollowingUp;
+    [ObservableProperty] private string _followUpWhen = "";
+    [ObservableProperty] private string _followUpWho = "";
+    [ObservableProperty] private string _followUpWhat = "";
+    [ObservableProperty] private bool _trackAsTask = true;
+    [ObservableProperty] private bool _mentionInEmail = true;
 
     [ObservableProperty] private RecipientField _suggestingFor;
     [ObservableProperty] private ContactEntry? _selectedSuggestion;
@@ -90,6 +102,94 @@ public sealed partial class ComposerViewModel : ObservableObject
     {
         IsScheduling = !IsScheduling;
         Status = "";
+    }
+
+    // ---- follow-up ------------------------------------------------------------
+
+    /// <summary>Shows or hides the follow-up row.</summary>
+    public void ToggleFollowUp()
+    {
+        IsFollowingUp = !IsFollowingUp;
+        Status = "";
+    }
+
+    public void ToggleTrackAsTask()
+    {
+        if (IsFollowingUp) TrackAsTask = !TrackAsTask;
+    }
+
+    /// <summary>A new message answers nothing, so there is no mail to hang a task on.</summary>
+    public bool CanTrackAsTask => Draft is { } d && !d.InReplyTo.IsEmpty;
+
+    public DateTimeOffset? FollowUpDue =>
+        NaturalDateParser.TryParse(FollowUpWhen, _clock.Now, out var when, _dayShape) ? when : null;
+
+    public bool HasFollowUp => IsFollowingUp && FollowUpWhen.Trim().Length > 0;
+
+    public string FollowUpWhenPreview => FollowUpWhen.Trim().Length == 0
+        ? "e.g. fri, 3d, 14 oct"
+        : FollowUpDue is { } d ? d.ToLocalTime().ToString("dddd d MMM") : "not a date I understand";
+
+    /// <summary>
+    /// Who the name box means. People on the message come first, so a first
+    /// name is usually enough; then the contact directory.
+    /// </summary>
+    public Recipient? FollowUpPerson
+    {
+        get
+        {
+            var onMessage = RecipientLine.Parse(ToLine).Concat(RecipientLine.Parse(CcLine))
+                .Select(text => PersonResolver.Resolve(text, Array.Empty<Recipient>()))
+                .Where(r => r is not null)
+                .Select(r => r!.Value);
+
+            var directory = FollowUpWho.Trim().Length == 0
+                ? Enumerable.Empty<Recipient>()
+                : _contacts.Search(FollowUpWho.Trim(), 5)
+                    .Where(c => c.Address.Length > 0)
+                    .Select(c => new Recipient(c.Name, c.Address));
+
+            return PersonResolver.Resolve(FollowUpWho, onMessage.Concat(directory).ToList());
+        }
+    }
+
+    public string FollowUpWhoPreview => FollowUpPerson switch
+    {
+        null => "who owes it?",
+        { Address.Length: 0 } p => $"{p.Name} - no address found, so no chase mail",
+        { } p when p.Name == p.Address => p.Address,
+        { } p => $"{p.Name} <{p.Address}>",
+    };
+
+    partial void OnFollowUpWhenChanged(string value)
+    {
+        OnPropertyChanged(nameof(FollowUpDue));
+        OnPropertyChanged(nameof(FollowUpWhenPreview));
+    }
+
+    partial void OnFollowUpWhoChanged(string value)
+    {
+        OnPropertyChanged(nameof(FollowUpPerson));
+        OnPropertyChanged(nameof(FollowUpWhoPreview));
+    }
+
+    private string FollowUpTask =>
+        FollowUpWhat.Trim() is { Length: > 0 } what ? what : $"Get back to me on: {Subject}";
+
+    /// <summary>The line put under the message so the recipient sees the ask.</summary>
+    private string FollowUpLine(Recipient person, DateTimeOffset due)
+    {
+        static string Enc(string s) => System.Net.WebUtility.HtmlEncode(s);
+        var what = FollowUpWhat.Trim() is { Length: > 0 } w ? $" - {Enc(w)}" : "";
+        return $"""<div style="font-family:Calibri,sans-serif;font-size:11pt"><b>Follow-up:</b> {Enc(person.Display)}{what} by <b>{due.ToLocalTime():dddd d MMM}</b></div><br>""";
+    }
+
+    private void ResetFollowUp()
+    {
+        IsFollowingUp = false;
+        FollowUpWhen = FollowUpWho = FollowUpWhat = "";
+        TrackAsTask = true;
+        MentionInEmail = true;
     }
 
     public ObservableCollection<ContactEntry> Suggestions { get; } = new();
@@ -181,6 +281,8 @@ public sealed partial class ComposerViewModel : ObservableObject
         IsScheduling = false;
         ScheduleText = "";
         HoldIfReplied = true;
+        ResetFollowUp();
+        FollowUpWho = draft.To.FirstOrDefault().Display ?? "";
 
         _settingLines = true;
         ToLine = _initialTo = RecipientLine.Format(draft.To);
@@ -198,6 +300,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         OnPropertyChanged(nameof(IsNew));
         OnPropertyChanged(nameof(StartsWithRecipients));
         OnPropertyChanged(nameof(Subject));
+        OnPropertyChanged(nameof(CanTrackAsTask));
 
         // Last, so the view sees the right IsForward when it picks what to focus.
         IsOpen = true;
@@ -362,6 +465,35 @@ public sealed partial class ComposerViewModel : ObservableObject
             }
         }
 
+        FollowUpRequest? followUp = null;
+        var followUpLine = "";
+        if (HasFollowUp)
+        {
+            // Refuse rather than silently drop a follow-up the user asked for.
+            if (FollowUpDue is not { } due)
+            {
+                Status = "When is the follow-up? Type a date like \"fri\", or Ctrl+Shift+F to close the row.";
+                return;
+            }
+            if (FollowUpPerson is not { } person)
+            {
+                Status = "Who is the follow-up for?";
+                return;
+            }
+
+            if (MentionInEmail) followUpLine = FollowUpLine(person, due);
+            if (TrackAsTask && CanTrackAsTask)
+            {
+                followUp = new FollowUpRequest
+                {
+                    Person = person,
+                    Task = FollowUpTask,
+                    DueUtc = due.ToUniversalTime(),
+                    ToldUtc = (sendAt ?? _clock.Now).ToUniversalTime(),
+                };
+            }
+        }
+
         // Only the lines the user changed are rewritten; the rest keep the
         // exact recipients Outlook resolved when it built the draft.
         var overrides = new RecipientOverrides(
@@ -385,9 +517,9 @@ public sealed partial class ComposerViewModel : ObservableObject
 
         try
         {
-            var html = string.IsNullOrWhiteSpace(BodyText)
+            var html = (string.IsNullOrWhiteSpace(BodyText)
                 ? ""
-                : HtmlPresenter.ComposeReplyFragment(BodyText, _mentions);
+                : HtmlPresenter.ComposeReplyFragment(BodyText, _mentions)) + followUpLine;
 
             string done;
             if (sendAt is { } when)
@@ -414,7 +546,7 @@ public sealed partial class ComposerViewModel : ObservableObject
 
             var inReplyTo = Draft.InReplyTo;
             Reset();
-            Sent?.Invoke(this, new SentEventArgs(done, inReplyTo, markDone));
+            Sent?.Invoke(this, new SentEventArgs(done, inReplyTo, markDone) { FollowUp = followUp });
         }
         catch (Exception ex)
         {
@@ -445,6 +577,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         Status = "";
         IsScheduling = false;
         ScheduleText = "";
+        ResetFollowUp();
 
         _settingLines = true;
         ToLine = CcLine = BccLine = SubjectLine = "";

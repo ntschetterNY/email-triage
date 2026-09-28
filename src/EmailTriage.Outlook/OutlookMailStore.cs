@@ -79,6 +79,9 @@ public sealed partial class OutlookMailStore : IMailStore
     /// the call once more.
     /// </summary>
     private Task<T> RunAsync<T>(Func<T> work, CancellationToken ct = default) =>
+        RunAsync(work, urgent: false, ct);
+
+    private Task<T> RunAsync<T>(Func<T> work, bool urgent, CancellationToken ct = default) =>
         _sta.InvokeAsync(() =>
         {
             try { return work(); }
@@ -87,7 +90,7 @@ public sealed partial class OutlookMailStore : IMailStore
                 Reconnect();
                 return work();
             }
-        }, ct);
+        }, urgent, ct);
 
     private Task RunAsync(Action work, CancellationToken ct = default) =>
         RunAsync<object?>(() => { work(); return null; }, ct);
@@ -485,7 +488,7 @@ public sealed partial class OutlookMailStore : IMailStore
                 };
             }
             finally { ComUtil.Release(item); }
-        }, ct);
+        }, urgent: true, ct);
 
     public Task<IReadOnlyDictionary<string, MailRecipients>> GetRecipientsAsync(
         IReadOnlyList<MailRef> mail, CancellationToken ct = default) =>

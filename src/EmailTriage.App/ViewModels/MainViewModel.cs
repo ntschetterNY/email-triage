@@ -89,6 +89,15 @@ public sealed partial class MainViewModel : ObservableObject
 
             // Ctrl+Shift+Enter: send & mark done, archiving the conversation replied to.
             var status = sent.Message;
+
+            // Filed before any archive, while the answered mail is still where it was.
+            if (sent.FollowUp is { } followUp)
+            {
+                status = $"{status} · {await Triage.RecordFollowUpAsync(sent.InReplyTo, followUp).ConfigureAwait(true)}";
+                if (Section == Section.Actions) Actions.Status = status;
+                _ = Actions.LoadAsync();
+            }
+
             if (sent.MarkDone)
             {
                 await Triage.ArchiveConversationOfAsync(sent.InReplyTo).ConfigureAwait(true);
@@ -347,6 +356,11 @@ public sealed partial class MainViewModel : ObservableObject
             switch (stroke.Key)
             {
                 case System.Windows.Input.Key.L: composer.ToggleSchedule(); return true;
+                case System.Windows.Input.Key.F:
+                    composer.ToggleFollowUp();
+                    composer.RequestFocus(composer.IsFollowingUp ? RecipientField.FollowUp : RecipientField.Body);
+                    return true;
+                case System.Windows.Input.Key.T: composer.ToggleTrackAsTask(); return true;
                 case System.Windows.Input.Key.OemComma: await composer.DiscardAsync().ConfigureAwait(true); return true;
                 case System.Windows.Input.Key.O: composer.RequestFocus(RecipientField.To); return true;
                 case System.Windows.Input.Key.C: composer.RequestFocus(RecipientField.Cc); return true;
@@ -354,6 +368,13 @@ public sealed partial class MainViewModel : ObservableObject
                 case System.Windows.Input.Key.M: composer.RequestFocus(RecipientField.Body); return true;
                 case System.Windows.Input.Key.S when composer.IsNew: composer.RequestFocus(RecipientField.Subject); return true;
             }
+        }
+
+        if (action == TriageAction.Cancel && composer.IsFollowingUp && !composer.HasSuggestions)
+        {
+            composer.ToggleFollowUp();
+            composer.RequestFocus(RecipientField.Body);
+            return true;
         }
 
         if (action == TriageAction.Cancel && composer.IsScheduling && !composer.HasSuggestions)
@@ -509,6 +530,8 @@ public sealed partial class MainViewModel : ObservableObject
             case TriageAction.PageUp: Triage.Move(-10); return true;
             case TriageAction.FirstMail: Triage.MoveToEnd(false); return true;
             case TriageAction.LastMail: Triage.MoveToEnd(true); return true;
+            case TriageAction.ExtendSelectionDown: Triage.ExtendSelection(1); return true;
+            case TriageAction.ExtendSelectionUp: Triage.ExtendSelection(-1); return true;
 
             // As in Outlook's conversation view: Right opens the conversation to
             // list each message, Left goes back to the conversation and folds it.
@@ -822,6 +845,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Move",    $"{Keys.Describe(TriageAction.NextColumn)} / {Keys.Describe(TriageAction.PrevColumn)}", "Expand a conversation to read (and see the attachments of) each message, even filed ones / fold it back"),
         ("Move",    Keys.Describe(TriageAction.Search), "Filter the list"),
         ("Move",    Keys.Describe(TriageAction.AiSearch), "Ask your inbox a question - Claude picks the matches (uses your Claude sign-in)"),
+        ("Move",    $"{Keys.Describe(TriageAction.ExtendSelectionDown)} / {Keys.Describe(TriageAction.ExtendSelectionUp)}", "Select several - e, v, h, a and n act on all of them"),
 
         ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - send to the action list"),
         ("Triage",  Keys.Describe(TriageAction.MarkNoAction), "No action needed"),
@@ -840,6 +864,8 @@ public sealed partial class MainViewModel : ObservableObject
         ("Reply",   "Ctrl+Enter", "Send"),
         ("Reply",   "Ctrl+Shift+Enter", "Send & mark done - archives the conversation"),
         ("Reply",   "Ctrl+Shift+L", "Send later - optionally held for review if they reply first"),
+        ("Reply",   "Ctrl+Shift+F", "Follow-up - who owes what by when; files it on the board for a chase"),
+        ("Reply",   "Ctrl+Shift+T", "Follow-up: toggle tracking it as a task"),
         ("Reply",   "Ctrl+Shift+O / C / B / M", "Jump to To / Cc / Bcc / the message"),
         ("Reply",   "Ctrl+Shift+,", "Discard the draft (Esc too)"),
 

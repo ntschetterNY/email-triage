@@ -15,6 +15,9 @@ public sealed partial class MailRowViewModel : ObservableObject
     [ObservableProperty] private ConversationThread _thread;
     [ObservableProperty] private bool _isActionRequired;
 
+    /// <summary>Part of a Shift+arrow multi-selection that triage actions apply to.</summary>
+    [ObservableProperty] private bool _isMarked;
+
     /// <summary>Set while a move or snooze animates the row out of the list.</summary>
     [ObservableProperty] private bool _isLeaving;
 
