@@ -94,6 +94,13 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private List<MailRowViewModel> _allRows = new();
 
+    // Conversations a field search found in Outlook beyond the loaded Inbox
+    // page - older mail, the Archive, filed folders - and the filter that
+    // found them. Dropped when the search changes or closes.
+    private List<MailRowViewModel> _searchRows = new();
+    private string? _outlookFilter;
+    private CancellationTokenSource? _outlookSearch;
+
     // Reloads are serialised: one that arrives mid-load is folded into a
     // single follow-up pass rather than racing the one in flight.
     private bool _loadRunning;
@@ -325,11 +332,68 @@ public sealed partial class TriageViewModel : ObservableObject
         // In ask mode the box holds a question, not a filter; the list stays
         // whole until Enter sends the question to Claude.
         var query = InboxQuery.Parse(IsAiSearch ? "" : SearchQuery);
+        if (query.OutlookFilter != _outlookFilter) StartOutlookSearch(query.OutlookFilter);
         if (query.NeedsAddresses) _ = LoadRecipientsAsync();
 
-        SyncRows(query.IsEmpty
-            ? _allRows
-            : _allRows.Where(r => query.Matches(field => SearchValues(r, field))).ToList());
+        if (query.IsEmpty) { SyncRows(_allRows); return; }
+
+        var matches = SearchableRows().Where(r => query.Matches(field => SearchValues(r, field)));
+        SyncRows((_searchRows.Count == 0 ? matches : matches.OrderByDescending(r => r.Thread.LastActivityUtc)).ToList());
+    }
+
+    /// <summary>The loaded Inbox, plus whatever a field search found beyond it.</summary>
+    private IEnumerable<MailRowViewModel> SearchableRows()
+    {
+        if (_searchRows.Count == 0) return _allRows;
+
+        var inbox = _allRows.Select(r => r.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _allRows.Concat(_searchRows.Where(r => !inbox.Contains(r.Key)));
+    }
+
+    /// <summary>
+    /// The list only holds the newest Inbox page, so "from:*@acme" alone
+    /// would miss older and archived mail. Field terms are also run as an
+    /// Outlook filter over every mail folder, once typing pauses, and what
+    /// comes back joins the results.
+    /// </summary>
+    private void StartOutlookSearch(string? filter)
+    {
+        _outlookSearch?.Cancel();
+        _outlookSearch = null;
+        _outlookFilter = filter;
+        _searchRows = new();
+        if (filter is null) return;
+
+        var cts = _outlookSearch = new CancellationTokenSource();
+        _ = SearchOutlookAsync(filter, cts.Token);
+    }
+
+    private async Task SearchOutlookAsync(string filter, CancellationToken ct)
+    {
+        try
+        {
+            // Each keystroke would otherwise walk every folder.
+            await Task.Delay(400, ct).ConfigureAwait(true);
+
+            Status = "Searching all mail folders...";
+            var found = await _store.SearchMailAsync(filter, _settings.SearchResultLimit, ct).ConfigureAwait(true);
+            var flagged = (await _actions.GetOpenAsync(ct).ConfigureAwait(true))
+                .Select(a => a.InternetMessageId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (ct.IsCancellationRequested) return;
+
+            _searchRows = ConversationGrouper.Group(found, Array.Empty<MailSummary>())
+                .Select(t => new MailRowViewModel(t, t.InboxMessages.Any(m => flagged.Contains(m.InternetMessageId))))
+                .ToList();
+
+            RefilterForSearch();
+            Status = $"{Rows.Count} match{(Rows.Count == 1 ? "" : "es")} across all mail folders";
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            Status = $"Could not search Outlook beyond the Inbox: {ex.Message}";
+        }
     }
 
     /// <summary>The text each search field can match in one conversation.</summary>
@@ -397,7 +461,7 @@ public sealed partial class TriageViewModel : ObservableObject
         {
             while (true)
             {
-                var missing = _allRows
+                var missing = SearchableRows()
                     .SelectMany(r => r.Thread.Messages)
                     .Where(m => !_recipients.ContainsKey(m.Ref.EntryId))
                     .ToList();
@@ -1823,6 +1887,7 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         var index = Rows.IndexOf(row);
         _allRows.Remove(row);
+        _searchRows.Remove(row);
 
         // A live refresh may already have taken it out and moved the
         // selection on; doing it again would jump to the top of the list.
