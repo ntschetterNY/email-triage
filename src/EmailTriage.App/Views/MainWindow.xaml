@@ -635,15 +635,19 @@
                             </ItemsControl>
 
                             <!-- previewing an attachment instead of the email -->
-                            <Border Background="#337AA2F7" CornerRadius="4" Padding="10,5" Margin="0,4,0,0"
-                                    HorizontalAlignment="Left"
-                                    Visibility="{Binding Triage.IsPreviewing, Converter={StaticResource BoolVis}}">
-                                <TextBlock FontSize="12" Foreground="{StaticResource Text}">
-                                    <Run Text="Previewing" />
-                                    <Run Text="{Binding Triage.PreviewName, Mode=OneWay}" FontWeight="SemiBold" />
-                                    <Run Text="· Esc back to the email" Foreground="{StaticResource Muted}" />
-                                </TextBlock>
-                            </Border>
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0"
+                                        Visibility="{Binding Triage.IsPreviewing, Converter={StaticResource BoolVis}}">
+                                <Border Background="#337AA2F7" CornerRadius="4" Padding="10,5">
+                                    <TextBlock FontSize="12" Foreground="{StaticResource Text}">
+                                        <Run Text="Previewing" />
+                                        <Run Text="{Binding Triage.PreviewName, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text="· Esc back to the email" Foreground="{StaticResource Muted}" />
+                                    </TextBlock>
+                                </Border>
+                                <Button Content="Open in System Viewer" Click="OnOpenPreviewExternally" Margin="8,0,0,0"
+                                        VerticalAlignment="Center" Style="{StaticResource ReportButton}"
+                                        ToolTip="Open this attachment in its usual program" />
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 

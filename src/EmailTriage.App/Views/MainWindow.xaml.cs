@@ -1005,6 +1005,8 @@ public partial class MainWindow : Window
     /// <summary>Private host the panes map onto the attachment cache, for in-app previews.</summary>
     private const string AttachmentHost = "attachments.example";
 
+    private void OnOpenPreviewExternally(object sender, RoutedEventArgs e) => ViewModel.Triage.OpenPreviewExternally();
+
     private void ShowPreviewOrBody()
     {
         if (!_webViewReady || BodyView.CoreWebView2 is null) return;
