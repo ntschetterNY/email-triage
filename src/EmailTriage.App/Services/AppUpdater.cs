@@ -50,7 +50,9 @@ public static class AppUpdater
         var installDir = Path.GetDirectoryName(exe);
         if (exe is null || installDir is null || !CanWrite(installDir)) return false;
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        // Each request gets its own limit: HttpClient.Timeout can't change once
+        // the client has sent anything, which used to make every update fail.
+        using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("EmailTriage-Updater");
 
         // The latest/download redirect is not subject to the API's rate limit,
@@ -60,7 +62,8 @@ public static class AppUpdater
         Version latest;
         try
         {
-            var text = await http.GetStringAsync(baseUrl + VersionAsset);
+            using var check = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var text = await http.GetStringAsync(baseUrl + VersionAsset, check.Token);
             if (!Version.TryParse(text.Trim().TrimStart('v'), out latest!)) return false;
         }
         catch { return false; }
@@ -79,12 +82,12 @@ public static class AppUpdater
 
             // The zip carries the whole .NET runtime (tens of MB); allow for
             // a slow office connection.
-            http.Timeout = TimeSpan.FromMinutes(10);
+            using var download = new CancellationTokenSource(TimeSpan.FromMinutes(10));
             var zip = Path.Combine(work, ZipAsset);
-            await using (var source = await http.GetStreamAsync(baseUrl + ZipAsset))
+            await using (var source = await http.GetStreamAsync(baseUrl + ZipAsset, download.Token))
             await using (var target = File.Create(zip))
             {
-                await source.CopyToAsync(target);
+                await source.CopyToAsync(target, download.Token);
             }
             ZipFile.ExtractToDirectory(zip, staging);
 
