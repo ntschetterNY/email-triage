@@ -26,7 +26,8 @@ public sealed record ScheduleTarget(
     IReadOnlyList<string> People,
     string Note,
     bool OfferUndo = true,
-    bool AsMeeting = false);
+    bool AsMeeting = false,
+    bool TitleFromQuery = false);
 
 /// <summary>A switch on the meeting palette, each on its own Ctrl key.</summary>
 public enum MeetingSwitch { Teams, AllDay, Repeat, ShowAs }
@@ -57,6 +58,9 @@ public sealed partial class TriageViewModel
     private CancellationTokenSource? _inviteLoad;
     private RsvpTarget? _rsvp;
     private ScheduleTarget? _schedule;
+
+    /// <summary>The title typed with the time, for a new entry made on the Calendar tab.</summary>
+    private string _scheduleTitle = "";
     private IReadOnlyList<CalendarEvent> _scheduleEvents = Array.Empty<CalendarEvent>();
     private DateTimeOffset? _scheduleCheckedUntil;
     private MeetingOptions _meeting = new();
@@ -113,11 +117,13 @@ public sealed partial class TriageViewModel
             var events = await _calendar.GetEventsAsync(invite.Start, invite.End).ConfigureAwait(true);
             if (cts.IsCancellationRequested) return;
 
-            var clash = CalendarMath.Conflicts(events, invite.Start, invite.End, invite.Appointment);
+            var overlap = CalendarMath.Conflicts(events, invite.Start, invite.End, invite.Appointment);
+            var clash = overlap.Where(e => !e.IsHold).ToList();
+            var holds = overlap.Where(e => e.IsHold).ToList();
             var first = invite.IsRecurring ? " (first one)" : "";
             InviteHasClash = clash.Count > 0;
-            InviteClash = clash.Count > 0
-                ? $"Clashes with {DescribeClash(clash)}{first}"
+            InviteClash = clash.Count > 0 ? $"Clashes with {DescribeClash(clash)}{first}"
+                : holds.Count > 0 ? $"Free apart from a HOLD: {DescribeClash(holds)}{first}"
                 : $"You're free then{first}";
         }
         catch (Exception) when (cts.IsCancellationRequested) { }
@@ -372,6 +378,7 @@ public sealed partial class TriageViewModel
     public void OpenSchedulePalette(ScheduleTarget target)
     {
         _schedule = target;
+        _scheduleTitle = "";
         _scheduleEvents = Array.Empty<CalendarEvent>();
         _scheduleCheckedUntil = null;
         _meeting = new MeetingOptions { Teams = target.AsMeeting && _settings.TeamsByDefault };
@@ -384,6 +391,14 @@ public sealed partial class TriageViewModel
                 "Reply with a meeting",
                 "Enter opens it in Outlook to send · Ctrl+T Teams · Ctrl+D all day · Ctrl+R repeat · Ctrl+B show as · Esc cancel",
                 $"{target.Subject}  ·  with {who}");
+        }
+        else if (target.TitleFromQuery)
+        {
+            Palette.Open(
+                PaletteMode.Schedule,
+                "New calendar entry",
+                "Type a title and a time - \"Site walk tomorrow 2pm 1h\", \"fri 10-11am budget review\" or \"Focus 2h\" · Enter adds it · Esc cancel",
+                "");
         }
         else
         {
@@ -427,7 +442,14 @@ public sealed partial class TriageViewModel
         var length = TimeSpan.FromMinutes(Math.Max(5, _settings.DefaultEventMinutes));
         DateTimeOffset? start = null;
 
-        if (query.Length > 0)
+        if (_schedule is { TitleFromQuery: true })
+        {
+            // Title and time in one box; no time yet just means "offer free slots".
+            EventTimeParser.TryParseWithTitle(query, now, out _scheduleTitle, out start, out var typed, _settings.DayShape);
+            length = typed ?? length;
+            Palette.ContextLine = _scheduleTitle.Length > 0 ? _scheduleTitle : "(type a title)";
+        }
+        else if (query.Length > 0)
         {
             if (!EventTimeParser.TryParse(query, now, out start, out var typed, _settings.DayShape))
             {
@@ -532,10 +554,12 @@ public sealed partial class TriageViewModel
         else if (slot.End > _scheduleCheckedUntil) secondary = "further out than the calendar was read - clashes not checked";
         else
         {
-            var clash = CalendarMath.Conflicts(_scheduleEvents, slot.Start, slot.End);
-            secondary = clash.Count == 0
-                ? $"free · {CalendarMath.Countdown(slot.Start - now)}"
-                : $"clashes with {DescribeClash(clash)}";
+            var overlap = CalendarMath.Conflicts(_scheduleEvents, slot.Start, slot.End);
+            var clash = overlap.Where(e => !e.IsHold).ToList();
+            var holds = overlap.Where(e => e.IsHold).ToList();
+            secondary = clash.Count > 0 ? $"clashes with {DescribeClash(clash)}"
+                : holds.Count > 0 ? $"over a HOLD: {DescribeClash(holds)} · {CalendarMath.Countdown(slot.Start - now)}"
+                : $"free · {CalendarMath.Countdown(slot.Start - now)}";
         }
 
         return new PaletteEntry(primary, secondary, slot, Array.Empty<int>());
@@ -563,7 +587,8 @@ public sealed partial class TriageViewModel
         var when = $"{CalendarMath.DayLabel(slot.Start.Date, _clock.Now.Date)} {CalendarMath.TimeRange(slot.Start, slot.End)}";
         var spec = new NewCalendarEvent
         {
-            Subject = t.Subject.Length > 0 ? t.Subject : "Follow up",
+            Subject = t.TitleFromQuery ? (_scheduleTitle.Length > 0 ? _scheduleTitle : "Busy")
+                    : t.Subject.Length > 0 ? t.Subject : "Follow up",
             Start = slot.Start,
             End = slot.End,
             Body = t.Note,

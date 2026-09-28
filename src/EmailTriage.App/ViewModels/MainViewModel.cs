@@ -67,7 +67,14 @@ public sealed partial class MainViewModel : ObservableObject
         Keys = keys;
 
         // The status bar shows the tab on screen, and keeps up as that tab's line changes.
-        Triage.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(TriageViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
+        Triage.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(TriageViewModel.Status)) return;
+
+            // A palette opened from the Calendar tab reports there, not on the hidden triage line.
+            if (_calendarPalette && Section == Section.Calendar) Calendar.Status = Triage.Status;
+            OnPropertyChanged(nameof(StatusText));
+        };
         Actions.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(ActionItemsViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
         Calendar.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(CalendarViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
 
@@ -270,6 +277,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSectionChanged(Section value)
     {
+        _calendarPalette = false;
         OnPropertyChanged(nameof(StatusText));
         if (value == Section.Triage) _refreshHeld = false;
         _ = value switch
@@ -648,6 +656,12 @@ public sealed partial class MainViewModel : ObservableObject
                 AnswerSelectedMeeting();
                 return true;
 
+            // s, as elsewhere, puts something on the calendar; n is "new" here.
+            case TriageAction.ScheduleTime:
+            case TriageAction.MarkNoAction:
+                NewCalendarEntry();
+                return true;
+
             // Undoes a block made with s, like everywhere else.
             case TriageAction.Undo:
                 await Triage.UndoAsync().ConfigureAwait(true);
@@ -657,6 +671,19 @@ public sealed partial class MainViewModel : ObservableObject
             default:
                 return false;
         }
+    }
+
+    /// <summary>Set while the answer or schedule palette was opened from the Calendar tab.</summary>
+    private bool _calendarPalette;
+
+    /// <summary>
+    /// s or n on the Calendar tab, or its New button: a new entry, title and
+    /// time typed together.
+    /// </summary>
+    public void NewCalendarEntry()
+    {
+        _calendarPalette = true;
+        Triage.OpenSchedulePalette(new ScheduleTarget("", null, Array.Empty<string>(), "", TitleFromQuery: true));
     }
 
     /// <summary>y on the Calendar tab: answer the meeting straight from the calendar.</summary>
@@ -672,6 +699,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
+        _calendarPalette = true;
         Triage.OpenRsvpPalette(new RsvpTarget(
             ev.Ref,
             string.IsNullOrWhiteSpace(ev.Subject) ? "(no subject)" : ev.Subject,

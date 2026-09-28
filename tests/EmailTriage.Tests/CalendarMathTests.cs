@@ -104,6 +104,29 @@ public class CalendarMathTests
     }
 
     [Fact]
+    public void Free_slots_book_over_holds()
+    {
+        var events = new[]
+        {
+            Event("Pencilled", At(11, 10), At(11, 12), busy: BusyStatus.Tentative),
+            Event("Maybe", At(11, 12), At(11, 13), response: MeetingResponse.Tentative),
+            Event("Firm", At(11, 13), At(11, 17)),
+        };
+
+        var slots = Slots(events, Now, 60, max: 1);
+
+        Assert.Equal(new TimeSlot(At(11, 10), At(11, 11)), Assert.Single(slots));
+    }
+
+    [Fact]
+    public void Holds_still_show_as_overlaps_so_they_can_be_named()
+    {
+        var hold = Event("Pencilled", At(11, 14), At(11, 15), busy: BusyStatus.Tentative);
+
+        Assert.True(Assert.Single(CalendarMath.Conflicts(new[] { hold }, At(11, 14), At(11, 15))).IsHold);
+    }
+
+    [Fact]
     public void Weekends_are_skipped()
     {
         // Friday 13 March at 16:50: nothing fits today, and the weekend is not offered.

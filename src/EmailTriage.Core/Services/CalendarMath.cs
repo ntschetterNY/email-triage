@@ -10,7 +10,8 @@ namespace EmailTriage.Core.Services;
 public static class CalendarMath
 {
     /// <summary>
-    /// Events that take up any of [start, end). <paramref name="exclude"/>
+    /// Events that take up any of [start, end), holds included - callers tell
+    /// a real clash from a hold with <see cref="CalendarEvent.IsHold"/>. <paramref name="exclude"/>
     /// leaves out a meeting's own entry - Outlook pencils an invitation in as
     /// soon as it arrives, and it would otherwise clash with itself.
     /// </summary>
@@ -25,13 +26,14 @@ public static class CalendarMath
     /// <summary>
     /// Gaps of at least <paramref name="length"/> in the working day, soonest
     /// first, starting no earlier than the next half hour. At most one per gap,
-    /// so a free afternoon is one suggestion rather than eight.
+    /// so a free afternoon is one suggestion rather than eight. Holds do not
+    /// count as busy: tentative time can be booked over.
     /// </summary>
     public static IReadOnlyList<TimeSlot> FreeSlots(
         IEnumerable<CalendarEvent> events, DateTimeOffset now, TimeSpan length,
         TimeSpan dayStart, TimeSpan dayEnd, int days, int max)
     {
-        var busy = events.Where(e => e.BlocksTime).OrderBy(e => e.Start).ToList();
+        var busy = events.Where(e => e.IsFirm).OrderBy(e => e.Start).ToList();
         var slots = new List<TimeSlot>();
         var earliest = RoundUp(now, TimeSpan.FromMinutes(30));
 

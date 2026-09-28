@@ -553,6 +553,8 @@ public partial class MainWindow : Window
     private void OnCalendarNext(object sender, RoutedEventArgs e) { ViewModel.Calendar.Step(1); Focus(); }
     private void OnCalendarToday(object sender, RoutedEventArgs e) { ViewModel.Calendar.GoToToday(); Focus(); }
 
+    private void OnCalendarNew(object sender, RoutedEventArgs e) => ViewModel.NewCalendarEntry();
+
     /// <summary>A meeting in the grid, the all-day row or a month cell: show it, joining it if it is on.</summary>
     private async void OnCalendarItemClick(object sender, MouseButtonEventArgs e)
     {

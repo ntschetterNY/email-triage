@@ -61,6 +61,15 @@ public sealed record CalendarEvent
     /// <summary>Takes up the time: not all day, not shown as free, not declined.</summary>
     public bool BlocksTime => !IsAllDay && Busy != BusyStatus.Free && !IsDeclined;
 
+    /// <summary>
+    /// Pencilled in: shown as tentative, or answered "maybe". A hold still
+    /// shows on the calendar, but its time can be booked over.
+    /// </summary>
+    public bool IsHold => Busy == BusyStatus.Tentative || Response == MeetingResponse.Tentative;
+
+    /// <summary>Takes up the time firmly: it blocks the time and is not a hold.</summary>
+    public bool IsFirm => BlocksTime && !IsHold;
+
     public bool Overlaps(DateTimeOffset start, DateTimeOffset end) => Start < end && End > start;
 }
 
