@@ -156,6 +156,7 @@ their own letters.
 |---|---|
 | `y` | Answer an invitation: `Enter` accepts, `↓` for maybe or decline. Type first to send a note with it. On a cancellation, takes it off your calendar |
 | `s` | Put the mail (or the card, on the board) on your calendar: `Enter` blocks the time for you, `Ctrl+Enter` invites the people on the thread |
+| `Shift+S` | Reply with a meeting to everyone on the thread. In the palette, `Ctrl+T` turns Teams on or off, `Ctrl+D` makes it all day, `Ctrl+R` cycles one time / weekly / fortnightly / monthly / daily / weekdays, `Ctrl+B` cycles how it shows (busy, tentative, free, out of office, working elsewhere). `Enter` opens it in Outlook to send |
 | `Ctrl+J` | Join the meeting on now or about to start, from any tab |
 | `Enter` | On the Calendar tab: join the meeting (Teams, Zoom, Meet, Webex), or open it in Outlook if it has no link |
 | `o` | On the Calendar tab: open the meeting in Outlook |
@@ -214,6 +215,21 @@ optional length or range: `tomorrow 2pm 1h`, `fri 10-11:30am`. Or type just a le
 attached, and `z` removes it. `Ctrl+Enter` makes it a meeting with everyone on the
 thread instead. That opens in Outlook for you to check and send, because an invitation
 goes to other people.
+
+`Shift+S` replies with a meeting, as Outlook's Reply with Meeting does: everyone on the
+thread is invited, and the mail's text is quoted into the invitation. Pick a time the
+same way as `s`. The line under the subject shows the switches, and each has its own key:
+`Ctrl+T` for a Teams meeting (on by default; `TeamsByDefault` in settings), `Ctrl+D`
+for all day (the list then offers days rather than times, and it shows you as free, as
+Outlook does), `Ctrl+R` to make it a series, and `Ctrl+B` for how the time shows on
+your calendar. A series has no end date; set one in Outlook before sending if it needs
+one. `Enter` opens the invitation in Outlook to check and send.
+
+Outlook has no way for another program to add a Teams meeting, so the app presses the
+Teams Meeting button on the invitation for you. That needs the button to be there and
+named in English. If it can't find it, the status line says so and you press it
+yourself. If your Outlook already adds Teams to every new meeting, set `TeamsByDefault`
+to false: there's no need for the app to press the button as well.
 
 The top bar shows the meeting on now or next, with a countdown. It turns amber five
 minutes before a meeting. Click it to see the meeting in the Calendar tab. The Calendar

@@ -85,9 +85,11 @@ public sealed class KeyMap
         ("shift+c",     TriageAction.Chase),
         ("g",           TriageAction.ToggleBoardView),
 
-        // Calendar: y answers an invitation, s schedules time for a mail or task
+        // Calendar: y answers an invitation, s schedules time for a mail or
+        // task, Shift+S replies with a meeting invitation
         ("y",           TriageAction.Rsvp),
         ("s",           TriageAction.ScheduleTime),
+        ("shift+s",     TriageAction.ReplyWithMeeting),
         ("ctrl+j",      TriageAction.JoinMeeting),
 
         // AI: Ctrl+G drafts the open (or a new reply-all) message with Claude,

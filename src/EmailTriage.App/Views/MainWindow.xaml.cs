@@ -99,6 +99,7 @@ public partial class MainWindow : Window
                 Hint("archive", TriageAction.Archive),
                 Hint("later", TriageAction.Snooze),
                 Hint("schedule", TriageAction.ScheduleTime),
+                Hint("meeting", TriageAction.ReplyWithMeeting),
                 // Reply all lives on Enter (Confirm) in the Superhuman layout.
                 HintFirst("reply all", TriageAction.ReplyAll, TriageAction.Confirm),
                 Hint("reply", TriageAction.ReplySender),
