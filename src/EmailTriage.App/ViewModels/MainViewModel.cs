@@ -24,6 +24,9 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ISnoozeRepository _snoozes;
     private readonly AppSettings _settings;
     private readonly IClock _clock;
+    private readonly AiUsageLog _aiUsage;
+    private readonly ClaudeCodeCli _claude;
+    private AiAuthInfo? _aiAuth;
 
     public KeyMap Keys { get; }
     public TriageViewModel Triage { get; }
@@ -38,6 +41,13 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private int _pendingSnoozeCount;
     [ObservableProperty] private int _pendingScheduledCount;
 
+    /// <summary>Top-bar AI readout: today's calls, tokens and cost, and which account pays.</summary>
+    [ObservableProperty] private string _aiUsageText = "";
+    [ObservableProperty] private string _aiUsageDetail = "";
+
+    /// <summary>"Login" (Claude plan), "ApiKey" (API credits), or "" while unknown.</summary>
+    [ObservableProperty] private string _aiAuthState = "";
+
     public MainViewModel(
         IMailStore store,
         TriageViewModel triage,
@@ -50,8 +60,12 @@ public sealed partial class MainViewModel : ObservableObject
         IScheduledSendRepository scheduled,
         CalendarViewModel calendar,
         AppSettings settings,
-        IClock clock)
+        IClock clock,
+        AiUsageLog aiUsage,
+        ClaudeCodeCli claude)
     {
+        _aiUsage = aiUsage;
+        _claude = claude;
         _settings = settings;
         _clock = clock;
         _contacts = contacts;
@@ -146,6 +160,16 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _ui = SynchronizationContext.Current;
 
+        // Calls finish on background threads; the readout rereads on the UI one.
+        // A failed call may mean the sign-in changed, so that asks again.
+        _aiUsage.Changed += (_, _) => OnUi(async () =>
+        {
+            RefreshAiUsage();
+            if (_aiUsage.Calls.LastOrDefault() is { Succeeded: false }) await RefreshAiAuthAsync().ConfigureAwait(true);
+        });
+        RefreshAiUsage();
+        _ = RefreshAiAuthAsync();
+
         try
         {
             ConnectionStatus = "Connecting to Outlook...";
@@ -232,6 +256,57 @@ public sealed partial class MainViewModel : ObservableObject
     private static readonly TimeSpan OutlookStallAfter = TimeSpan.FromSeconds(20);
 
     private SynchronizationContext? _ui;
+
+    private async Task RefreshAiAuthAsync()
+    {
+        _aiAuth = await _claude.GetAuthAsync().ConfigureAwait(true);
+        AiAuthState = _aiAuth is null ? "" : _aiAuth.LoggedIn && _aiAuth.IsSubscription ? "Login" : "ApiKey";
+        RefreshAiUsage();
+    }
+
+    private void RefreshAiUsage()
+    {
+        var now = _clock.Now;
+        var today = _aiUsage.Summarise(new DateTimeOffset(now.Date, now.Offset));
+        var week = _aiUsage.Summarise(now.AddDays(-7));
+        var month = _aiUsage.Summarise(now.AddDays(-30));
+
+        AiUsageText = _aiAuth is null && month.Calls == 0
+            ? ""
+            : $"AI today {today.Calls} · {Tokens(today.TotalTokens)} tok · ~${today.CostUsd:0.00}";
+
+        var lines = new List<string>
+        {
+            $"Runs through: {_aiAuth?.Describe() ?? "unknown - Claude Code not found"}",
+            "",
+            Period("Today", today),
+        };
+        lines.AddRange(today.ByFeature.Select(f =>
+            $"    {f.Feature,-8} {f.Calls} calls · {Tokens(f.Tokens)} tok · ~${f.CostUsd:0.000}"));
+        lines.Add(Period("Last 7 days", week));
+        lines.Add(Period("Last 30 days", month));
+        if (month.Calls > 0)
+            lines.Add($"Average per call: {Tokens(month.TotalTokens / month.Calls)} tok · ~${month.CostUsd / month.Calls:0.000}");
+        if (_aiUsage.Calls.LastOrDefault(c => !c.Succeeded) is { } failed)
+            lines.Add($"Last failure ({failed.At:ddd HH:mm}): {failed.Error}");
+        lines.Add("");
+        lines.Add(_aiAuth?.IsSubscription == false
+            ? "Cost is billed to your API credits."
+            : "Cost is Claude's list-price estimate; on your plan it counts against usage limits, not a bill.");
+        lines.Add($"Log: {AiUsageLog.DefaultPath}");
+        AiUsageDetail = string.Join(Environment.NewLine, lines);
+
+        static string Period(string name, AiUsageSummary s) =>
+            $"{name}: {s.Calls} calls{(s.Failures > 0 ? $" ({s.Failures} failed)" : "")} · " +
+            $"{Tokens(s.InputTokens + s.CacheTokens)} in / {Tokens(s.OutputTokens)} out · ~${s.CostUsd:0.00}";
+    }
+
+    private static string Tokens(long n) => n switch
+    {
+        >= 1_000_000 => $"{n / 1_000_000d:0.#}M",
+        >= 1_000 => $"{n / 1_000d:0.#}k",
+        _ => n.ToString(),
+    };
 
     /// <summary>Set when a live refresh was held back, so it can run once the way is clear.</summary>
     private bool _refreshHeld;

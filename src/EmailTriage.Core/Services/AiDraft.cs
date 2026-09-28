@@ -56,7 +56,7 @@ public sealed class AiDraftService
     public async Task<string> DraftAsync(
         DraftContext context, string? model = null, CancellationToken ct = default)
     {
-        var answer = await _assistant.AskAsync(BuildPrompt(context), model, ct).ConfigureAwait(false);
+        var answer = await _assistant.AskAsync(BuildPrompt(context), model, "draft", ct).ConfigureAwait(false);
         var text = Clean(answer);
 
         return text.Length > 0
