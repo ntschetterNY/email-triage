@@ -27,6 +27,14 @@ public interface IMailStore : IAsyncDisposable
     Task<IReadOnlyList<MailSummary>> GetMailAsync(
         FolderRef folder, int max, CancellationToken ct = default);
 
+    /// <summary>
+    /// Received mail matching a DASL <paramref name="filter"/> in every mail
+    /// folder - Inbox, Archive and anything filed away - newest first. Sent
+    /// Items, Drafts, Outbox, Junk and Deleted Items are left out.
+    /// </summary>
+    Task<IReadOnlyList<MailSummary>> SearchMailAsync(
+        string filter, int max, CancellationToken ct = default);
+
     Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default);
 
     /// <summary>

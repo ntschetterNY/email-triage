@@ -1562,7 +1562,7 @@
                         </ListBox>
                     </Border>
 
-                    <!-- files to attach: dropped on the composer, ✕ to take one off -->
+                    <!-- files going out: a forward's originals and any dropped on the composer, ✕ to take one off -->
                     <ItemsControl Grid.Row="2" ItemsSource="{Binding Triage.Composer.Attachments}" Margin="18,0,18,8"
                                   Visibility="{Binding Triage.Composer.Attachments.Count, Converter={StaticResource CountVis}}">
                         <ItemsControl.ItemsPanel>
@@ -1571,7 +1571,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Margin="0,0,6,6" Background="{StaticResource Raised}" BorderBrush="{StaticResource Border}"
-                                        BorderThickness="1" CornerRadius="5" Padding="9,4,4,4" ToolTip="{Binding Path}">
+                                        BorderThickness="1" CornerRadius="5" Padding="9,4,4,4" ToolTip="{Binding Where}">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="📎" FontSize="11" Margin="0,0,5,0" Foreground="{StaticResource Muted}" />
                                         <TextBlock Text="{Binding Name}" FontSize="12" MaxWidth="260"

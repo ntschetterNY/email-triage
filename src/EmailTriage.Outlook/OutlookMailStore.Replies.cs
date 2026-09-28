@@ -57,6 +57,9 @@ public sealed partial class OutlookMailStore
                     To = to,
                     Cc = cc,
                     InReplyTo = mail,
+                    Attachments = scope == ReplyScope.Forward
+                        ? ReadAttachments((object)dyn, NullIfEmpty(ComUtil.Str(() => dyn.HTMLBody)))
+                        : Array.Empty<MailAttachment>(),
                 };
 
                 reply = null; // ownership transferred to _openDrafts
@@ -159,6 +162,19 @@ public sealed partial class OutlookMailStore
                         "Outlook could not resolve every recipient. Check the To, Cc and Bcc lines.");
             }
             finally { ComUtil.Release(list); }
+        }
+
+        if (recipients is { RemoveAttachments.Count: > 0 })
+        {
+            // Highest first, so each removal leaves the other positions as read.
+            dynamic? attachments = null;
+            try
+            {
+                attachments = item.Attachments;
+                foreach (var index in recipients.RemoveAttachments.Distinct().OrderByDescending(i => i))
+                    attachments!.Remove(index);
+            }
+            finally { ComUtil.Release(attachments); }
         }
 
         if (recipients is { Attachments.Count: > 0 })

@@ -15,6 +15,12 @@ public sealed record ReplyDraft
     /// <summary>The source message, so the UI can show what is being answered.</summary>
     public required MailRef InReplyTo { get; init; }
 
+    /// <summary>
+    /// Files already on the draft - a forward carries the original's - by
+    /// their position on the draft. Inline images are left out.
+    /// </summary>
+    public IReadOnlyList<MailAttachment> Attachments { get; init; } = Array.Empty<MailAttachment>();
+
     public string RecipientSummary
     {
         get

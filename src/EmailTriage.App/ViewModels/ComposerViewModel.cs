@@ -96,7 +96,11 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     public bool HasSuggestions => Suggestions.Count > 0;
 
-    /// <summary>Files dropped on the composer, attached to the draft as it is sent.</summary>
+    /// <summary>
+    /// The files going out: any the draft already carries (a forward's
+    /// originals) and any dropped on the composer. Taking one off the list
+    /// leaves it out of the message.
+    /// </summary>
     public ObservableCollection<ComposeAttachment> Attachments { get; } = new();
 
     /// <summary>
@@ -112,7 +116,7 @@ public sealed partial class ComposerViewModel : ObservableObject
             if (!File.Exists(path)) continue;
             if (Attachments.Any(a => string.Equals(a.Path, path, StringComparison.OrdinalIgnoreCase))) continue;
 
-            Attachments.Add(new ComposeAttachment(path, new FileInfo(path).Length));
+            Attachments.Add(ComposeAttachment.FromFile(path, new FileInfo(path).Length));
         }
 
         Status = skippedFolders == 0 ? "" : "Folders can't be attached - drop the files inside, or zip it first.";
@@ -186,6 +190,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         _settingLines = false;
         _mentions.Clear();
         Attachments.Clear();
+        foreach (var carried in draft.Attachments) Attachments.Add(ComposeAttachment.Carried(carried));
         CloseSuggestions();
 
         OnPropertyChanged(nameof(Header));
@@ -324,7 +329,7 @@ public sealed partial class ComposerViewModel : ObservableObject
 
         // Forwarding with no note of your own is normal, as is sending just a
         // file; an empty reply is not.
-        var hasFiles = Attachments.Count > 0;
+        var hasFiles = Attachments.Any(a => a.Path is not null);
         if (IsNew)
         {
             if (string.IsNullOrWhiteSpace(SubjectLine) && string.IsNullOrWhiteSpace(BodyText) && !hasFiles)
@@ -365,9 +370,15 @@ public sealed partial class ComposerViewModel : ObservableObject
             BccLine != _initialBcc ? bcc : null)
         {
             Subject = IsNew ? SubjectLine.Trim() : null,
-            Attachments = Attachments.Select(a => a.Path).ToList(),
+            Attachments = Attachments.Where(a => a.Path is not null).Select(a => a.Path!).ToList(),
+            RemoveAttachments = Draft.Attachments
+                .Where(c => !Attachments.Any(a => a.CarriedIndex == c.Index))
+                .Select(c => c.Index)
+                .ToList(),
         };
-        var changes = overrides is { ChangesRecipients: false, Subject: null, Attachments.Count: 0 } ? null : overrides;
+        var changes = overrides is { ChangesRecipients: false, Subject: null, Attachments.Count: 0, RemoveAttachments.Count: 0 }
+            ? null
+            : overrides;
 
         IsSending = true;
         Status = sendAt is null ? "Sending..." : "Scheduling...";
@@ -444,10 +455,25 @@ public sealed partial class ComposerViewModel : ObservableObject
     }
 }
 
-/// <summary>A file waiting to go out with the message being written.</summary>
-public sealed record ComposeAttachment(string Path, long Size)
+/// <summary>
+/// A file waiting to go out with the message being written: one dropped from
+/// disk (<see cref="Path"/>), or one the draft already carries
+/// (<see cref="CarriedIndex"/>, its position on the draft).
+/// </summary>
+public sealed record ComposeAttachment(string Name, long Size)
 {
-    public string Name => System.IO.Path.GetFileName(Path);
+    public string? Path { get; init; }
+
+    public int CarriedIndex { get; init; }
 
     public string SizeDisplay => MailAttachment.FormatSize(Size);
+
+    /// <summary>Where it comes from, for the chip's tooltip.</summary>
+    public string Where => Path ?? "From the message being forwarded";
+
+    public static ComposeAttachment FromFile(string path, long size) =>
+        new(System.IO.Path.GetFileName(path), size) { Path = path };
+
+    public static ComposeAttachment Carried(MailAttachment attachment) =>
+        new(attachment.Name, attachment.Size) { CarriedIndex = attachment.Index };
 }

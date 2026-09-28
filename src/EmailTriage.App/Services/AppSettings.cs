@@ -16,6 +16,9 @@ public sealed class AppSettings
     /// <summary>How many messages to pull into the triage list.</summary>
     public int InboxPageSize { get; set; } = 250;
 
+    /// <summary>Most messages a from:, to: or subject: search pulls in from beyond the Inbox page.</summary>
+    public int SearchResultLimit { get; set; } = 500;
+
     /// <summary>How many of your recent sent messages to fold into conversations.</summary>
     public int SentPageSize { get; set; } = 200;
 
