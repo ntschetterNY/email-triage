@@ -40,7 +40,7 @@ public enum TriageAction
     /// <summary>Forward, typing the recipients in. Bound to `f`.</summary>
     Forward,
 
-    /// <summary>Write a new message from scratch, from any tab. Bound to Ctrl+N, as in Outlook.</summary>
+    /// <summary>Write a new message from scratch, from any tab. Bound to `c`, as in Superhuman.</summary>
     Compose,
 
     /// <summary>Pick one of the open message's attachments to open. Bound to `v`.</summary>
@@ -90,6 +90,12 @@ public enum TriageAction
 
     /// <summary>Put the mail or task on the calendar: time for yourself, or a meeting with the people on it.</summary>
     ScheduleTime,
+
+    /// <summary>
+    /// Answer the mail with a meeting invitation to everyone on it, with
+    /// Teams, all day, repeat and show-as switches. Opens in Outlook to send.
+    /// </summary>
+    ReplyWithMeeting,
 
     /// <summary>Join the meeting under way or about to start, from anywhere.</summary>
     JoinMeeting,

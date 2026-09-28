@@ -22,6 +22,14 @@ public sealed record MailSummary
     /// <summary>First ~200 chars of the plain-text body, for the list preview.</summary>
     public string Preview { get; init; } = "";
 
+    /// <summary>
+    /// Outlook's display line for To and CC: names joined by "; ", with an
+    /// address only where no name is known. Cheap to read for a whole folder,
+    /// so the filter box can search recipients without opening each message.
+    /// </summary>
+    public string DisplayTo { get; init; } = "";
+    public string DisplayCc { get; init; } = "";
+
     public IReadOnlyList<string> Categories { get; init; } = Array.Empty<string>();
 
     public int ConversationSize { get; init; } = 1;

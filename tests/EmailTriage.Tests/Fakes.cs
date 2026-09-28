@@ -93,6 +93,10 @@ public sealed class FakeMailStore : IMailStore
     public Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");
 
+    public Task<IReadOnlyDictionary<string, MailRecipients>> GetRecipientsAsync(
+        IReadOnlyList<MailRef> mail, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyDictionary<string, MailRecipients>>(new Dictionary<string, MailRecipients>());
+
     public Task<ReplyDraft> BuildReplyAsync(
         MailRef mail, ReplyScope scope, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");

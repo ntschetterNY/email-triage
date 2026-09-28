@@ -49,6 +49,9 @@ public sealed class AppSettings
     /// <summary>Reminder on blocks made from mail; 0 for none.</summary>
     public int BlockReminderMinutes { get; set; } = 5;
 
+    /// <summary>Whether a reply with a meeting (Shift+S) starts with Teams switched on.</summary>
+    public bool TeamsByDefault { get; set; } = true;
+
     /// <summary>How soon before a meeting the join key picks it over the one you are in.</summary>
     public int JoinLeadMinutes { get; set; } = 10;
 
@@ -81,6 +84,12 @@ public sealed class AppSettings
     /// for a follow-up chase. 0 turns the flagging off.
     /// </summary>
     public int FollowUpAfterDays { get; set; } = 5;
+
+    /// <summary>
+    /// On launch, install the latest GitHub release if it is newer. Only
+    /// release builds update themselves; a local build never does.
+    /// </summary>
+    public bool CheckForUpdates { get; set; } = true;
 
     /// <summary>The model each feature runs on: its own setting, or AiModel.</summary>
     public string ResolveDraftModel() => Pick(AiDraftModel);

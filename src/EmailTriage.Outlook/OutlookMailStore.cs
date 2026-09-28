@@ -41,29 +41,99 @@ public sealed partial class OutlookMailStore : IMailStore
         _sta.InvokeAsync(() =>
         {
             if (IsConnected) return;
-
-            var progId = Type.GetTypeFromProgID("Outlook.Application")
-                ?? throw new InvalidOperationException(
-                    "Outlook is not installed, or the classic desktop client is missing. " +
-                    "This app needs classic Outlook (the new Outlook does not expose COM).");
-
-            // For Outlook this attaches to the running instance when there is
-            // one, and starts it otherwise.
-            _app = Activator.CreateInstance(progId)
-                ?? throw new InvalidOperationException("Could not start Outlook.");
-
-            _session = _app!.GetNamespace("MAPI");
-
-            // Reuses the profile already signed in; does not prompt when Outlook
-            // is running.
-            try { _session!.Logon(Type.Missing, Type.Missing, false, false); }
-            catch { /* already logged on */ }
-
-            IsConnected = true;
-            PruneInlineImages();
-            StartWatching();
-            StartPolling();
+            ConnectCore();
         }, ct);
+
+    /// <summary>Attaches to Outlook. Dispatcher thread only.</summary>
+    private void ConnectCore()
+    {
+        var progId = Type.GetTypeFromProgID("Outlook.Application")
+            ?? throw new InvalidOperationException(
+                "Outlook is not installed, or the classic desktop client is missing. " +
+                "This app needs classic Outlook (the new Outlook does not expose COM).");
+
+        // For Outlook this attaches to the running instance when there is
+        // one, and starts it otherwise.
+        _app = Activator.CreateInstance(progId)
+            ?? throw new InvalidOperationException("Could not start Outlook.");
+
+        _session = _app!.GetNamespace("MAPI");
+
+        // Reuses the profile already signed in; does not prompt when Outlook
+        // is running.
+        try { _session!.Logon(Type.Missing, Type.Missing, false, false); }
+        catch { /* already logged on */ }
+
+        IsConnected = true;
+        PruneInlineImages();
+        StartWatching();
+        StartPolling();
+    }
+
+    /// <summary>
+    /// Runs one Outlook call on the dispatcher thread. When Outlook has gone
+    /// away underneath us (closed, crashed, or restarted by an update), every
+    /// COM pointer we hold is dead and each call fails with "The RPC server is
+    /// unavailable". Rather than surface that on every keystroke until the app
+    /// is restarted, drop the stale pointers, attach to Outlook again and run
+    /// the call once more.
+    /// </summary>
+    private Task<T> RunAsync<T>(Func<T> work, CancellationToken ct = default) =>
+        RunAsync(work, urgent: false, ct);
+
+    private Task<T> RunAsync<T>(Func<T> work, bool urgent, CancellationToken ct = default) =>
+        _sta.InvokeAsync(() =>
+        {
+            try { return work(); }
+            catch (Exception ex) when (IsOutlookGone(ex))
+            {
+                Reconnect();
+                return work();
+            }
+        }, urgent, ct);
+
+    private Task RunAsync(Action work, CancellationToken ct = default) =>
+        RunAsync<object?>(() => { work(); return null; }, ct);
+
+    /// <summary>
+    /// True for the failures a dead Outlook process produces: the RPC server
+    /// gone or the call failing mid-flight, or a disconnected proxy. A busy
+    /// Outlook (call rejected, retry later) is deliberately not included.
+    /// </summary>
+    internal static bool IsOutlookGone(Exception ex)
+    {
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is System.Runtime.InteropServices.COMException com &&
+                com.HResult is unchecked((int)0x800706BA)   // RPC_S_SERVER_UNAVAILABLE
+                            or unchecked((int)0x800706BE)   // RPC_S_CALL_FAILED
+                            or unchecked((int)0x800706BF)   // RPC_S_CALL_FAILED_DNE
+                            or unchecked((int)0x80010108))  // RPC_E_DISCONNECTED
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Lets go of everything held against the old Outlook process and attaches
+    /// to the current one. Dispatcher thread only. Folder and message ids are
+    /// MAPI entry ids, which survive a restart, so callers' cached refs stay
+    /// good; only the live COM objects are replaced.
+    /// </summary>
+    private void Reconnect()
+    {
+        ReleaseOpenDrafts();
+        StopWatching();
+        ComUtil.ReleaseAll(_session, _app);
+        _session = null;
+        _app = null;
+        IsConnected = false;
+
+        ConnectCore();
+
+        // Whatever happened while we were cut off, the list is stale.
+        SignalInboxChanged();
+    }
 
     private void StartPolling()
     {
@@ -106,10 +176,15 @@ public sealed partial class OutlookMailStore : IMailStore
                     ComUtil.ReleaseAll(items, inbox);
                 }
             }
-            catch
+            catch (Exception ex)
             {
                 // Outlook may be mid-restart or showing a modal dialog. The next
-                // tick will pick things up.
+                // tick will pick things up. If it has gone altogether, try to
+                // attach again now, so the list heals without a keystroke.
+                if (IsOutlookGone(ex))
+                {
+                    try { Reconnect(); } catch { /* not back yet; next tick */ }
+                }
             }
             finally
             {
@@ -139,7 +214,7 @@ public sealed partial class OutlookMailStore : IMailStore
     }
 
     public Task<FolderRef> GetInboxAsync(CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
             dynamic? inbox = null;
@@ -181,6 +256,10 @@ public sealed partial class OutlookMailStore : IMailStore
 
     private const string PropHasAttach = "http://schemas.microsoft.com/mapi/proptag/0x0E1B000B";
 
+    /// <summary>PR_DISPLAY_TO / PR_DISPLAY_CC: the recipient names, one string per line.</summary>
+    private const string PropDisplayToLine = "http://schemas.microsoft.com/mapi/proptag/0x0E04001F";
+    private const string PropDisplayCcLine = "http://schemas.microsoft.com/mapi/proptag/0x0E03001F";
+
     /// <summary>PR_CONVERSATION_ID: shared by every message in a thread, sent or received.</summary>
     private const string PropConversationId = "http://schemas.microsoft.com/mapi/proptag/0x30130102";
 
@@ -193,7 +272,7 @@ public sealed partial class OutlookMailStore : IMailStore
     };
 
     public Task<FolderRef> GetSentItemsAsync(CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
             dynamic? sent = null;
@@ -228,6 +307,9 @@ public sealed partial class OutlookMailStore : IMailStore
             columns.Add(ComUtil.PropInternetMessageId);
             columns.Add(PropHasAttach);
             columns.Add(PropConversationId);
+            columns.Add(PropDisplayToLine);
+            columns.Add(PropDisplayCcLine);
+            columns.Add(ComUtil.PropSenderSmtpAddress);
 
             table.Sort("ReceivedTime", 2 /* olDescending */);
 
@@ -249,7 +331,12 @@ public sealed partial class OutlookMailStore : IMailStore
                         InternetMessageId = ComUtil.Str(() => row![ComUtil.PropInternetMessageId]),
                         Subject = ComUtil.Str(() => row!["Subject"]),
                         SenderName = ComUtil.Str(() => row!["SenderName"]),
-                        SenderAddress = ComUtil.Str(() => row!["SenderEmailAddress"]),
+                        // Exchange senders come back as X.500 names; the SMTP column is what search and replies want.
+                        SenderAddress = ComUtil.Str(() => row![ComUtil.PropSenderSmtpAddress]) is { Length: > 0 } smtp
+                            ? smtp
+                            : ComUtil.Str(() => row!["SenderEmailAddress"]),
+                        DisplayTo = ComUtil.Str(() => row![PropDisplayToLine]),
+                        DisplayCc = ComUtil.Str(() => row![PropDisplayCcLine]),
                         ReceivedUtc = ComUtil.Date(() => row!["ReceivedTime"]),
                         IsUnread = ComUtil.Bool(() => row!["UnRead"]),
                         HasAttachments = ComUtil.Bool(() => row![PropHasAttach]),
@@ -315,6 +402,8 @@ public sealed partial class OutlookMailStore : IMailStore
         ReceivedUtc = ComUtil.Date(() => mail.ReceivedTime),
         IsUnread = ComUtil.Bool(() => mail.UnRead),
         HasAttachments = ComUtil.Int(() => mail.Attachments.Count) > 0,
+            DisplayTo = ComUtil.Str(() => mail.To),
+            DisplayCc = ComUtil.Str(() => mail.CC),
             Categories = ComUtil.ParseCategories(ComUtil.Str(() => mail.Categories)),
             ConversationKey = ComUtil.Str(() => mail.ConversationID),
             Kind = MailKinds.FromMessageClass(ComUtil.Str(() => mail.MessageClass)) ?? MailKind.Mail,
@@ -322,7 +411,7 @@ public sealed partial class OutlookMailStore : IMailStore
     }
 
     public Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default) =>
-        _sta.InvokeAsync(() =>
+        RunAsync(() =>
         {
             EnsureConnected();
 
@@ -353,6 +442,33 @@ public sealed partial class OutlookMailStore : IMailStore
             }
             finally { ComUtil.Release(item); }
         }, urgent: true, ct);
+
+    public Task<IReadOnlyDictionary<string, MailRecipients>> GetRecipientsAsync(
+        IReadOnlyList<MailRef> mail, CancellationToken ct = default) =>
+        _sta.InvokeAsync<IReadOnlyDictionary<string, MailRecipients>>(() =>
+        {
+            EnsureConnected();
+
+            var result = new Dictionary<string, MailRecipients>(StringComparer.Ordinal);
+            foreach (var m in mail)
+            {
+                if (ct.IsCancellationRequested) break;
+
+                dynamic? item = null;
+                try
+                {
+                    item = GetItem(m);
+                    var (to, cc) = ReadRecipients((object)item!);
+                    result[m.EntryId] = new MailRecipients(to, cc);
+                }
+                catch
+                {
+                    // Moved or deleted since the list was read; search just skips it.
+                }
+                finally { ComUtil.Release(item); }
+            }
+            return result;
+        }, ct);
 
     /// <summary>Plain-text mail has an empty HTMLBody; treat that as "no HTML".</summary>
     private static string? NullIfEmpty(string value) =>

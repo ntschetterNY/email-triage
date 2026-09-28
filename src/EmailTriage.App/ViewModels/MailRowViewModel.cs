@@ -1,5 +1,7 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using EmailTriage.Core.Models;
+using EmailTriage.Core.Services;
 
 namespace EmailTriage.App.ViewModels;
 
@@ -12,13 +14,22 @@ public sealed partial class MailRowViewModel : ObservableObject
 {
     [ObservableProperty] private ConversationThread _thread;
     [ObservableProperty] private bool _isActionRequired;
-    [ObservableProperty] private bool _isBusy;
 
     /// <summary>Part of a Shift+arrow multi-selection that triage actions apply to.</summary>
     [ObservableProperty] private bool _isMarked;
 
     /// <summary>Set while a move or snooze animates the row out of the list.</summary>
     [ObservableProperty] private bool _isLeaving;
+
+    /// <summary>Opened with the arrow (or Right): each message listed under the row.</summary>
+    [ObservableProperty] private bool _isExpanded;
+    [ObservableProperty] private bool _isLoadingMessages;
+
+    /// <summary>
+    /// The whole conversation, newest first, filled when the row is expanded.
+    /// Unlike <see cref="Thread"/> this includes messages already filed away.
+    /// </summary>
+    public ObservableCollection<ConversationMessageViewModel> Messages { get; } = new();
 
     public MailRowViewModel(ConversationThread thread, bool isActionRequired)
     {
@@ -49,6 +60,13 @@ public sealed partial class MailRowViewModel : ObservableObject
     public bool IsUnread => Thread.IsUnread;
 
     public bool HasAttachments => Thread.HasAttachments;
+
+    /// <summary>
+    /// Worth an expand arrow: several messages here, or a reply whose earlier
+    /// messages may already be filed away.
+    /// </summary>
+    public bool CanExpand => Thread.Count > 1 ||
+        !string.Equals(ConversationGrouper.StripPrefixes(Thread.Latest.Subject), Thread.Latest.Subject.Trim(), StringComparison.Ordinal);
 
     /// <summary>"INVITE", "CANCELLED", "ACCEPTED"... for meeting messages; empty for mail.</summary>
     public string KindTag => Summary.Kind switch
@@ -94,6 +112,7 @@ public sealed partial class MailRowViewModel : ObservableObject
         OnPropertyChanged(nameof(IsUnread));
         OnPropertyChanged(nameof(When));
         OnPropertyChanged(nameof(HasAttachments));
+        OnPropertyChanged(nameof(CanExpand));
         OnPropertyChanged(nameof(KindTag));
         OnPropertyChanged(nameof(HasKindTag));
     }

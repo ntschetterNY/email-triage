@@ -53,7 +53,7 @@ public static partial class HtmlPresenter
         if (hidden > 0)
         {
             sb.Append($"<p class=\"older\">{hidden} older message{(hidden == 1 ? "" : "s")} in this conversation " +
-                      "not shown here - open it in Outlook to see them.</p>");
+                      "not shown here - expand the conversation in the list (the arrow, or Right) to read each one, or open it in Outlook.</p>");
         }
 
         return Document(sb.ToString(), blockRemoteImages, darkTheme);

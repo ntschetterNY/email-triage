@@ -15,9 +15,11 @@
 
         <!-- ===== triage list row ===== -->
         <DataTemplate x:Key="MailRowTemplate" DataType="{x:Type vm:MailRowViewModel}">
+            <StackPanel>
             <Grid Margin="0,1">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="4" />
+                    <ColumnDefinition Width="18" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
@@ -27,7 +29,27 @@
                         Background="{StaticResource Accent}"
                         Visibility="{Binding IsUnread, Converter={StaticResource BoolVis}}" />
 
-                <StackPanel Grid.Column="1" Margin="10,6,8,6">
+                <!-- conversation arrow, as in Outlook: lists each message, filed ones too (Right / Left) -->
+                <Button Grid.Column="1" Click="OnExpandClick" Focusable="False" Cursor="Hand"
+                        VerticalAlignment="Top" Margin="2,7,0,0" Padding="2,0"
+                        ToolTip="Show each message in this conversation"
+                        Visibility="{Binding CanExpand, Converter={StaticResource BoolVis}}">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Hit" CornerRadius="3" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Hit" Property="Background" Value="#337AA2F7" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <TextBlock x:Name="ExpandGlyph" Text="&#x25B8;" FontSize="12" Foreground="{StaticResource Muted}" />
+                </Button>
+
+                <StackPanel Grid.Column="2" Margin="2,6,8,6">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock x:Name="SenderText" Text="{Binding Sender}" FontSize="12.5"
                                    TextTrimming="CharacterEllipsis" MaxWidth="240">
@@ -80,10 +102,54 @@
                                Foreground="{StaticResource Text}" />
                 </StackPanel>
 
-                <TextBlock x:Name="WhenText" Grid.Column="2" Text="{Binding When}" FontSize="11"
+                <TextBlock x:Name="WhenText" Grid.Column="3" Text="{Binding When}" FontSize="11"
                            Foreground="{StaticResource Muted}"
                            VerticalAlignment="Top" Margin="0,8,10,0" />
             </Grid>
+
+            <!-- the expanded conversation: click a message to read just it, with its attachments -->
+            <StackPanel Margin="22,0,6,6" Visibility="{Binding IsExpanded, Converter={StaticResource BoolVis}}">
+                <TextBlock Text="Finding the rest of the conversation..." FontSize="11" Margin="8,0,0,4"
+                           Foreground="{StaticResource SelectedMuted}"
+                           Visibility="{Binding IsLoadingMessages, Converter={StaticResource BoolVis}}" />
+                <ItemsControl ItemsSource="{Binding Messages}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:ConversationMessageViewModel}">
+                            <Border x:Name="MsgRow" Cursor="Hand" CornerRadius="4" Padding="8,4" Margin="0,1"
+                                    Background="Transparent" BorderThickness="2,0,0,0" BorderBrush="Transparent"
+                                    PreviewMouseLeftButtonDown="OnConversationMessageClick">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="MsgSender" Text="{Binding Sender}" FontSize="12"
+                                               TextTrimming="CharacterEllipsis" Foreground="{StaticResource SelectedText}" />
+                                    <TextBlock Grid.Column="1" Text="&#x1F4CE;" FontSize="10" Margin="6,0,0,0"
+                                               Foreground="{StaticResource SelectedMuted}"
+                                               Visibility="{Binding HasAttachments, Converter={StaticResource BoolVis}}" />
+                                    <TextBlock Grid.Column="2" Text="{Binding When}" FontSize="11" Margin="8,0,0,0"
+                                               Foreground="{StaticResource SelectedMuted}" />
+                                </Grid>
+                            </Border>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding IsUnread}" Value="True">
+                                    <Setter TargetName="MsgSender" Property="FontWeight" Value="SemiBold" />
+                                </DataTrigger>
+                                <Trigger SourceName="MsgRow" Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="MsgRow" Property="Background" Value="#14000000" />
+                                </Trigger>
+                                <DataTrigger Binding="{Binding IsFocused}" Value="True">
+                                    <Setter TargetName="MsgRow" Property="Background" Value="#26000000" />
+                                    <Setter TargetName="MsgRow" Property="BorderBrush" Value="{StaticResource SelectedText}" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+            </StackPanel>
 
             <!-- The selected row sits on light yellow, so its text turns dark to stay readable.
                  Template triggers outrank the sender's style triggers, so this wins for unread mail too. -->
@@ -97,6 +163,10 @@
                     <Setter TargetName="CountText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
                     <Setter TargetName="SentText" Property="Foreground" Value="#1F4FA8" />
                     <Setter TargetName="KindText" Property="Foreground" Value="#2E6B1F" />
+                    <Setter TargetName="ExpandGlyph" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsExpanded}" Value="True">
+                    <Setter TargetName="ExpandGlyph" Property="Text" Value="&#x25BE;" />
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
@@ -271,14 +341,14 @@
                     </Button>
                 </StackPanel>
 
-                <!-- today strip: what is on now or next; click for the Calendar tab -->
+                <!-- today strip: what is on now or next; click opens it in the Calendar tab and joins it if on -->
                 <Border Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
                         Margin="16,0" Padding="10,3" CornerRadius="11" BorderThickness="1" Cursor="Hand"
                         MouseLeftButtonUp="OnStripClick"
                         Visibility="{Binding Calendar.StripText, Converter={StaticResource NullVis}}">
                     <Border.ToolTip>
                         <TextBlock>
-                            <Run Text="Click to see it in the Calendar tab ·" />
+                            <Run Text="Click to open it in the Calendar tab, and join if it is on ·" />
                             <Run Text="{Binding JoinKey, Mode=OneWay}" />
                             <Run Text="joins" />
                         </TextBlock>
@@ -397,6 +467,13 @@
                                            Foreground="{StaticResource Muted}"
                                            Text="Enter asks Claude"
                                            Visibility="{Binding Triage.IsAiSearch, Converter={StaticResource BoolVis}}" />
+                                <!-- filter mode: the field syntax InboxQuery understands -->
+                                <TextBlock DockPanel.Dock="Right" Margin="8,0,0,0"
+                                           VerticalAlignment="Center" FontSize="11"
+                                           Foreground="{StaticResource Muted}"
+                                           Text="from:  2:  subject:  * = anything"
+                                           ToolTip="from: sender or CC · 2: or to: the To line · subject: · * stands for anything, e.g. 2:*@acme"
+                                           Visibility="{Binding Triage.IsAiSearch, Converter={StaticResource BoolVisInv}}" />
                                 <TextBox x:Name="SearchBox" Style="{StaticResource FlatInput}"
                                          Text="{Binding Triage.SearchQuery, UpdateSourceTrigger=PropertyChanged}" />
                             </DockPanel>
@@ -414,7 +491,13 @@
                                  VirtualizingPanel.IsVirtualizing="True"
                                  VirtualizingPanel.VirtualizationMode="Recycling" />
 
-                        <TextBlock Grid.Row="1" Text="Inbox is clear" FontSize="13"
+                        <!-- a load in progress: a stalled Outlook must not pass for an empty inbox -->
+                        <ProgressBar Grid.Row="1" IsIndeterminate="True" Height="2" VerticalAlignment="Top"
+                                     Background="Transparent" BorderThickness="0"
+                                     Foreground="{StaticResource Accent}"
+                                     Visibility="{Binding Triage.IsLoading, Converter={StaticResource BoolVis}}" />
+
+                        <TextBlock Grid.Row="1" Text="{Binding Triage.EmptyListText}" FontSize="13"
                                    Foreground="{StaticResource Muted}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Visibility="{Binding Triage.Rows.Count, Converter={StaticResource CountVisInv}}" />
@@ -1336,6 +1419,10 @@
                                    FontWeight="SemiBold" Foreground="{StaticResource Muted}" />
                         <TextBlock Text="{Binding Triage.Palette.ContextLine}" FontSize="12.5"
                                    Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Triage.Palette.OptionsLine}" FontSize="12"
+                                   Margin="0,4,0,0" Foreground="{StaticResource Accent}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Visibility="{Binding Triage.Palette.OptionsLine, Converter={StaticResource NullVis}}" />
                     </StackPanel>
 
                     <TextBox Grid.Row="1" x:Name="PaletteBox" Margin="16,12,16,10"
@@ -1388,9 +1475,14 @@
         <!-- reply / forward composer (r / Shift+R / f) -->
         <Grid Grid.RowSpan="3" Background="#B0000000"
               Visibility="{Binding Triage.Composer.IsOpen, Converter={StaticResource BoolVis}}">
+            <!-- files dropped anywhere on it are attached; Preview events, because the
+                 text boxes would otherwise take the drop as text -->
             <Border Width="820" MaxHeight="660" VerticalAlignment="Center"
                     Background="{StaticResource Panel}" CornerRadius="9"
-                    BorderBrush="{StaticResource Border}" BorderThickness="1">
+                    BorderBrush="{StaticResource Border}" BorderThickness="1"
+                    AllowDrop="True"
+                    PreviewDragEnter="OnComposerDragOver" PreviewDragOver="OnComposerDragOver"
+                    PreviewDragLeave="OnComposerDragLeave" PreviewDrop="OnComposerDrop">
                 <Border.Effect>
                     <DropShadowEffect BlurRadius="32" ShadowDepth="6" Opacity="0.55" Color="Black" />
                 </Border.Effect>
@@ -1407,6 +1499,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
@@ -1483,7 +1576,54 @@
                         </ListBox>
                     </Border>
 
-                    <Border Grid.Row="2" Background="{StaticResource Raised}"
+                    <!-- files to attach: dropped on the composer, ✕ to take one off -->
+                    <ItemsControl Grid.Row="2" ItemsSource="{Binding Triage.Composer.Attachments}" Margin="18,0,18,8"
+                                  Visibility="{Binding Triage.Composer.Attachments.Count, Converter={StaticResource CountVis}}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,6,6" Background="{StaticResource Raised}" BorderBrush="{StaticResource Border}"
+                                        BorderThickness="1" CornerRadius="5" Padding="9,4,4,4" ToolTip="{Binding Path}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="📎" FontSize="11" Margin="0,0,5,0" Foreground="{StaticResource Muted}" />
+                                        <TextBlock Text="{Binding Name}" FontSize="12" MaxWidth="260"
+                                                   TextTrimming="CharacterEllipsis" Foreground="{StaticResource Text}" />
+                                        <TextBlock Text="{Binding SizeDisplay}" FontSize="11" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource Muted}" />
+                                        <Button Content="✕" Click="OnComposeAttachmentRemoveClick" Tag="{Binding}" Focusable="False"
+                                                Margin="6,0,0,0" Padding="4,0" Cursor="Hand" FontSize="10"
+                                                ToolTip="Don't attach this">
+                                            <Button.Template>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border x:Name="Remove" CornerRadius="3" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                                        <TextBlock Text="{TemplateBinding Content}" Foreground="{StaticResource Muted}" />
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="Remove" Property="Background" Value="#337AA2F7" />
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Button.Template>
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- shown while files are dragged over the composer -->
+                    <Border x:Name="ComposerDropHint" Grid.RowSpan="4" Panel.ZIndex="2" Visibility="Collapsed"
+                            CornerRadius="9" Background="#E6181B22" BorderBrush="{StaticResource Accent}"
+                            BorderThickness="2" IsHitTestVisible="False">
+                        <TextBlock Text="Drop to attach" FontSize="16" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="{StaticResource Accent}" />
+                    </Border>
+
+                    <Border Grid.Row="3" Background="{StaticResource Raised}"
                             CornerRadius="0,0,9,9" Padding="18,10">
                         <StackPanel>
                             <!-- follow-up (Ctrl+Shift+F): Tab runs by, who, what, then the two toggles -->
@@ -1552,10 +1692,10 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Esc discard · @ mentions"
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Esc discard · @ mentions · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Esc discard · @ mentions"
+                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Esc discard · @ mentions · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"

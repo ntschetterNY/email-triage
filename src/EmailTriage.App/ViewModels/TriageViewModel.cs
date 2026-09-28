@@ -35,6 +35,11 @@ public sealed partial class TriageViewModel : ObservableObject
     private CancellationTokenSource? _bodyLoad;
     private CancellationTokenSource? _prefetch;
 
+    // The folders e and h move mail into, found once and kept: walking to
+    // them through COM on every keystroke held the next email off the screen.
+    private Task<FolderRef>? _archiveFolder;
+    private Task<FolderRef>? _snoozeFolder;
+
     // Bodies by EntryId and finished thread pages by their message list. Tasks
     // rather than values, so the reading pane and the prefetcher share one
     // fetch when both want the same message. UI thread only.
@@ -42,12 +47,23 @@ public sealed partial class TriageViewModel : ObservableObject
     private readonly LruCache<string, Task<string>> _pages = new(24, StringComparer.Ordinal);
     private IReadOnlyList<SnoozeOption> _snoozePresets = Array.Empty<SnoozeOption>();
 
+    // Recipient addresses by EntryId, read on demand for "to:*@acme"-style
+    // searches. A message's recipients never change, so this lives all session.
+    private readonly Dictionary<string, MailRecipients> _recipients = new(StringComparer.Ordinal);
+    private bool _recipientsLoading;
+
     public ObservableCollection<MailRowViewModel> Rows { get; } = new();
     public PaletteViewModel Palette { get; } = new();
     public ComposerViewModel Composer { get; }
 
     [ObservableProperty] private MailRowViewModel? _selected;
     [ObservableProperty] private MailBody? _openBody;
+
+    /// <summary>
+    /// The one message picked under the expanded row, shown on its own with
+    /// its attachments; null shows the whole conversation.
+    /// </summary>
+    [ObservableProperty] private ConversationMessageViewModel? _focusedMessage;
 
     /// <summary>The attachment file shown in the reading pane instead of the email, if any.</summary>
     [ObservableProperty] private string? _previewPath;
@@ -57,6 +73,9 @@ public sealed partial class TriageViewModel : ObservableObject
     [ObservableProperty] private IReadOnlyList<MailAttachment> _threadAttachments = Array.Empty<MailAttachment>();
     [ObservableProperty] private string _bodyHtml = "";
     [ObservableProperty] private bool _isLoading;
+
+    /// <summary>What the empty list says: loading, stuck on Outlook, failed, or genuinely clear.</summary>
+    [ObservableProperty] private string _emptyListText = "Inbox is clear";
     [ObservableProperty] private string _status = "";
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private bool _isSearching;
@@ -86,10 +105,6 @@ public sealed partial class TriageViewModel : ObservableObject
     // finished: only a load started after that is trusted to show the truth.
     private readonly Dictionary<string, int> _leaving = new(StringComparer.OrdinalIgnoreCase);
     private int _loadNumber;
-
-    // Resolved once, then reused: looking a folder up is an Outlook round trip.
-    private FolderRef? _archiveFolder;
-    private FolderRef? _snoozeFolder;
 
     /// <summary>Where a Shift+arrow selection started.</summary>
     private MailRowViewModel? _anchor;
@@ -125,6 +140,27 @@ public sealed partial class TriageViewModel : ObservableObject
     }
 
     public bool CanUndo => _undo.Count > 0;
+
+    /// <summary>
+    /// The Archive beside the Inbox, created if missing, fetched once per
+    /// session. A faulted fetch is retried on the next use rather than cached.
+    /// </summary>
+    private Task<FolderRef> GetArchiveFolderAsync()
+    {
+        var task = _archiveFolder;
+        if (task is null || task.IsFaulted || task.IsCanceled)
+            _archiveFolder = task = _store.EnsureFolderPathAsync("Archive");
+        return task;
+    }
+
+    /// <summary>The snooze holding folder, likewise fetched once and kept.</summary>
+    private Task<FolderRef> GetSnoozeFolderAsync()
+    {
+        var task = _snoozeFolder;
+        if (task is null || task.IsFaulted || task.IsCanceled)
+            _snoozeFolder = task = _store.EnsureFolderPathAsync(_settings.SnoozeFolder);
+        return task;
+    }
 
     public Task LoadAsync(CancellationToken ct = default) => LoadCoreAsync(quiet: false, ct);
 
@@ -165,21 +201,23 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private async Task LoadOnceAsync(bool quiet, CancellationToken ct)
     {
-        if (!quiet) IsLoading = true;
+        if (!quiet)
+        {
+            IsLoading = true;
+            Status = "Loading inbox...";
+            EmptyListText = "Loading inbox...";
+        }
         var loadNumber = ++_loadNumber;
+
         try
         {
-            _inbox = await _store.GetInboxAsync(ct).ConfigureAwait(true);
-            _sent ??= await _store.GetSentItemsAsync(ct).ConfigureAwait(true);
-
-            var mail = await _store
-                .GetMailAsync(_inbox, _settings.InboxPageSize, ct).ConfigureAwait(true);
-
-            // Your side of each conversation. Only decoration for the list, so a
-            // failure here still shows the Inbox rather than nothing.
-            IReadOnlyList<MailSummary> sent;
-            try { sent = await _store.GetMailAsync(_sent.Value, _settings.SentPageSize, ct).ConfigureAwait(true); }
-            catch (Exception) when (!ct.IsCancellationRequested) { sent = Array.Empty<MailSummary>(); }
+            var (mail, sent) = quiet
+                ? await ReadFromOutlookAsync(ct).ConfigureAwait(true)
+                : await ReadFromOutlookAsync(ct).WarnIfSlow(OutlookStallAfter, () =>
+                {
+                    Status = OutlookStallWarning;
+                    EmptyListText = "Waiting on Outlook...";
+                }).ConfigureAwait(true);
 
             var threads = ConversationGrouper.Group(mail, sent)
                 .Where(t => !StillLeaving(t.Key, loadNumber))
@@ -194,6 +232,10 @@ public sealed partial class TriageViewModel : ObservableObject
             // reading pane on every change notification.
             var existing = new Dictionary<string, MailRowViewModel>(StringComparer.OrdinalIgnoreCase);
             foreach (var row in _allRows) existing.TryAdd(row.Key, row);
+
+            // Warm the Archive ref so the first e press pays nothing extra.
+            // (Most mailboxes already have Archive; this is a lookup, not a create.)
+            _ = GetArchiveFolderAsync();
 
             _allRows = threads.Select(t =>
             {
@@ -223,6 +265,7 @@ public sealed partial class TriageViewModel : ObservableObject
                            ?? (Rows.Count == 0 ? null : Rows[Math.Clamp(selectedIndex, 0, Rows.Count - 1)]);
             }
 
+            EmptyListText = "Inbox is clear";
             if (!quiet)
             {
                 Status = $"{Rows.Count} conversation{(Rows.Count == 1 ? "" : "s")}"
@@ -239,6 +282,7 @@ public sealed partial class TriageViewModel : ObservableObject
         catch (Exception ex)
         {
             Status = $"Could not read the inbox: {ex.Message}";
+            EmptyListText = "Could not read the inbox";
         }
         finally
         {
@@ -282,6 +326,41 @@ public sealed partial class TriageViewModel : ObservableObject
         catch (Exception ex) { Status = $"That did not work: {ex.Message}"; }
     }
 
+    /// <summary>
+    /// How long a load may take before the status line says Outlook is holding
+    /// it up. A normal first read takes a few seconds even on a large inbox.
+    /// </summary>
+    private static readonly TimeSpan OutlookStallAfter = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// Reading the list asks Outlook for sender addresses, which is exactly
+    /// what its "A program is trying to access email address information"
+    /// prompt guards. Outlook holds every call until someone answers it, and
+    /// it often opens behind other windows.
+    /// </summary>
+    internal const string OutlookStallWarning =
+        "Still waiting on Outlook - it is probably showing a dialog (often \"A program is trying to access " +
+        "email address information\"). Switch to Outlook and click Allow; the list loads as soon as you do.";
+
+    /// <summary>The inbox page, and your side of each conversation from Sent Items.</summary>
+    private async Task<(IReadOnlyList<MailSummary> Mail, IReadOnlyList<MailSummary> Sent)> ReadFromOutlookAsync(
+        CancellationToken ct)
+    {
+        _inbox = await _store.GetInboxAsync(ct).ConfigureAwait(true);
+        _sent ??= await _store.GetSentItemsAsync(ct).ConfigureAwait(true);
+
+        var mail = await _store
+            .GetMailAsync(_inbox, _settings.InboxPageSize, ct).ConfigureAwait(true);
+
+        // Only decoration for the list, so a failure here still shows the
+        // Inbox rather than nothing.
+        IReadOnlyList<MailSummary> sent;
+        try { sent = await _store.GetMailAsync(_sent.Value, _settings.SentPageSize, ct).ConfigureAwait(true); }
+        catch (Exception) when (!ct.IsCancellationRequested) { sent = Array.Empty<MailSummary>(); }
+
+        return (mail, sent);
+    }
+
     private void ApplySearchFilter()
     {
         // An AI answer pins the list to its conversations, in its order, until
@@ -299,17 +378,128 @@ public sealed partial class TriageViewModel : ObservableObject
             return;
         }
 
-        var query = SearchQuery.Trim();
-
         // In ask mode the box holds a question, not a filter; the list stays
         // whole until Enter sends the question to Claude.
-        var source = query.Length == 0 || IsAiSearch
-            ? _allRows
-            : _allRows.Where(r =>
-                  FuzzyMatcher.Score(query, r.Subject) is not null ||
-                  FuzzyMatcher.Score(query, r.Sender) is not null).ToList();
+        var query = InboxQuery.Parse(IsAiSearch ? "" : SearchQuery);
+        if (query.NeedsAddresses) _ = LoadRecipientsAsync();
 
-        SyncRows(source);
+        SyncRows(query.IsEmpty
+            ? _allRows
+            : _allRows.Where(r => query.Matches(field => SearchValues(r, field))).ToList());
+    }
+
+    /// <summary>The text each search field can match in one conversation.</summary>
+    private IEnumerable<string> SearchValues(MailRowViewModel row, QueryField field)
+    {
+        switch (field)
+        {
+            case QueryField.Text:
+                // Bare words search everything cheap to hand: subjects, people
+                // on every message, and the preview line.
+                yield return row.Subject;
+                yield return row.Sender;
+                foreach (var m in row.Thread.Messages)
+                {
+                    yield return m.Subject;
+                    yield return m.SenderName;
+                    yield return m.SenderAddress;
+                    yield return m.DisplayTo;
+                    yield return m.DisplayCc;
+                    yield return m.Preview;
+                    if (_recipients.TryGetValue(m.Ref.EntryId, out var people))
+                        foreach (var r in people.To.Concat(people.Cc)) { yield return r.Name; yield return r.Address; }
+                }
+                yield break;
+
+            case QueryField.Subject:
+                foreach (var m in row.Thread.Messages) yield return m.Subject;
+                yield break;
+        }
+
+        // from: is the sender or anyone copied; to: is the To line. Display
+        // names come with every row; addresses once LoadRecipientsAsync has them.
+        foreach (var m in row.Thread.Messages)
+        {
+            _recipients.TryGetValue(m.Ref.EntryId, out var known);
+
+            if (field == QueryField.From)
+            {
+                yield return m.SenderName;
+                yield return m.SenderAddress;
+                yield return m.DisplayCc;
+                if (known is not null)
+                    foreach (var r in known.Cc) { yield return r.Name; yield return r.Address; }
+            }
+            else
+            {
+                yield return m.DisplayTo;
+                if (known is not null)
+                    foreach (var r in known.To) { yield return r.Name; yield return r.Address; }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads recipient addresses for every message in the list that does not
+    /// have them yet - a few at a time, so Outlook stays free for the reading
+    /// pane - and re-filters as each batch lands.
+    /// </summary>
+    private async Task LoadRecipientsAsync()
+    {
+        if (_recipientsLoading) return;
+        _recipientsLoading = true;
+
+        try
+        {
+            while (true)
+            {
+                var missing = _allRows
+                    .SelectMany(r => r.Thread.Messages)
+                    .Where(m => !_recipients.ContainsKey(m.Ref.EntryId))
+                    .ToList();
+                if (missing.Count == 0) break;
+
+                // Bodies already fetched carry their recipients; no need to ask Outlook again.
+                var ask = new List<MailRef>();
+                foreach (var m in missing)
+                {
+                    if (_bodies.TryGet(m.Ref.EntryId, out var body) && body.IsCompletedSuccessfully)
+                        _recipients[m.Ref.EntryId] = new MailRecipients(body.Result.To, body.Result.Cc);
+                    else if (ask.Count < 25)
+                        ask.Add(m.Ref);
+                }
+
+                if (ask.Count > 0)
+                {
+                    Status = $"Reading addresses for search... {missing.Count} left";
+                    var found = await _store.GetRecipientsAsync(ask).ConfigureAwait(true);
+
+                    // Unreadable messages get an empty entry so the loop moves past them.
+                    foreach (var mail in ask)
+                        _recipients[mail.EntryId] = found.GetValueOrDefault(mail.EntryId)
+                            ?? new MailRecipients(Array.Empty<Recipient>(), Array.Empty<Recipient>());
+                }
+
+                if (!IsSearching || !InboxQuery.Parse(SearchQuery).NeedsAddresses) break;
+                RefilterForSearch();
+            }
+
+            if (IsSearching) Status = $"{Rows.Count} match{(Rows.Count == 1 ? "" : "es")}";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not read addresses for search: {ex.Message}";
+        }
+        finally
+        {
+            _recipientsLoading = false;
+        }
+    }
+
+    private void RefilterForSearch()
+    {
+        ApplySearchFilter();
+        if (Selected is null || !Rows.Contains(Selected)) Selected = Rows.FirstOrDefault();
     }
 
     /// <summary>
@@ -335,11 +525,7 @@ public sealed partial class TriageViewModel : ObservableObject
         }
     }
 
-    partial void OnSearchQueryChanged(string value)
-    {
-        ApplySearchFilter();
-        if (Selected is null || !Rows.Contains(Selected)) Selected = Rows.FirstOrDefault();
-    }
+    partial void OnSearchQueryChanged(string value) => RefilterForSearch();
 
     // ---- AI search (Ctrl+/) and AI drafting (Ctrl+G) -----------------------
     //
@@ -370,7 +556,7 @@ public sealed partial class TriageViewModel : ObservableObject
         Status = "Ask your inbox anything - Enter asks Claude, Esc cancels";
     }
 
-    /// <summary>Closes the search box and drops every filter, fuzzy or AI.</summary>
+    /// <summary>Closes the search box and drops every filter, typed or AI.</summary>
     public void CloseSearch()
     {
         IsSearching = false;
@@ -601,11 +787,168 @@ public sealed partial class TriageViewModel : ObservableObject
         PreviewName = "";
     }
 
-    partial void OnSelectedChanged(MailRowViewModel? value)
+    partial void OnSelectedChanged(MailRowViewModel? oldValue, MailRowViewModel? newValue)
     {
+        // As in Outlook, a conversation folds back up once you move off it.
+        if (oldValue is not null && oldValue != newValue) CollapseRow(oldValue);
+        SetFocusedMessage(null);
+
         ClosePreview();
-        _ = LoadBodyAsync(value);
-        _ = LoadInviteAsync(value);
+        _ = LoadBodyAsync(newValue);
+        _ = LoadInviteAsync(newValue);
+    }
+
+    // ---- conversation view: expand a row, read its messages one by one ----
+
+    /// <summary>How many messages an expanded row lists - Outlook's own scan limit.</summary>
+    private const int ExpandedMessageLimit = 300;
+
+    /// <summary>Changes the focused message without loading anything.</summary>
+    private void SetFocusedMessage(ConversationMessageViewModel? message)
+    {
+        if (FocusedMessage == message) return;
+        if (FocusedMessage is { } old) old.IsFocused = false;
+        if (message is not null) message.IsFocused = true;
+
+#pragma warning disable MVVMTK0034 // the field, so the change handler does not load the body a second time
+        _focusedMessage = message;
+#pragma warning restore MVVMTK0034
+        OnPropertyChanged(nameof(FocusedMessage));
+    }
+
+    public Task ToggleExpandAsync(MailRowViewModel row)
+    {
+        if (!row.IsExpanded) return ExpandAsync(row);
+
+        if (Selected != row) Selected = row;
+        else CollapseRow(row);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Lists every message in the row's conversation under it - including the
+    /// ones already archived or filed, which the Inbox view leaves out.
+    /// </summary>
+    public async Task ExpandAsync(MailRowViewModel? row = null)
+    {
+        row ??= Selected;
+        if (row is null || row.IsExpanded) return;
+        if (Selected != row) Selected = row;
+
+        row.IsExpanded = true;
+        FillMessages(row, row.Thread.Messages);
+
+        row.IsLoadingMessages = true;
+        try
+        {
+            var all = await _store.GetConversationAsync(row.Summary.Ref, ExpandedMessageLimit).ConfigureAwait(true);
+            if (row.IsExpanded) FillMessages(row, row.Thread.Messages.Concat(all));
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not read the rest of the conversation: {ex.Message}";
+        }
+        finally
+        {
+            row.IsLoadingMessages = false;
+        }
+    }
+
+    /// <summary>Newest first, one entry per message, keeping the entries already shown.</summary>
+    private static void FillMessages(MailRowViewModel row, IEnumerable<MailSummary> messages)
+    {
+        var existing = new Dictionary<string, ConversationMessageViewModel>(StringComparer.Ordinal);
+        foreach (var m in row.Messages) existing.TryAdd(m.Summary.Ref.EntryId, m);
+
+        var ordered = messages
+            .DistinctBy(m => string.IsNullOrEmpty(m.InternetMessageId) ? m.Ref.EntryId : m.InternetMessageId,
+                        StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(m => m.ReceivedUtc)
+            .Select(m => existing.GetValueOrDefault(m.Ref.EntryId) ?? new ConversationMessageViewModel(row, m))
+            .ToList();
+
+        row.Messages.Clear();
+        foreach (var m in ordered) row.Messages.Add(m);
+    }
+
+    private static void CollapseRow(MailRowViewModel row)
+    {
+        row.IsExpanded = false;
+        row.Messages.Clear();
+    }
+
+    /// <summary>
+    /// Left in the list: from a single message back to the whole
+    /// conversation, and from there folds the row up.
+    /// </summary>
+    public void CollapseSelected()
+    {
+        if (Selected is not { } row) return;
+
+        if (FocusedMessage is not null) FocusedMessage = null;
+        else if (row.IsExpanded) CollapseRow(row);
+    }
+
+    /// <summary>Shows one message from the expanded row, as clicking it in Outlook does.</summary>
+    public void FocusMessage(ConversationMessageViewModel message)
+    {
+        if (Selected != message.Row) Selected = message.Row;
+        FocusedMessage = message;
+    }
+
+    partial void OnFocusedMessageChanged(ConversationMessageViewModel? oldValue, ConversationMessageViewModel? newValue)
+    {
+        if (oldValue is not null) oldValue.IsFocused = false;
+        if (newValue is not null) newValue.IsFocused = true;
+
+        ClosePreview();
+        _ = newValue is null ? LoadBodyAsync(Selected) : LoadMessageAsync(newValue);
+    }
+
+    /// <summary>Just the one message in the reading pane, with its own attachments.</summary>
+    private async Task LoadMessageAsync(ConversationMessageViewModel message)
+    {
+        _bodyLoad?.Cancel();
+
+        var cts = new CancellationTokenSource();
+        _bodyLoad = cts;
+
+        var entryId = message.Summary.Ref.EntryId;
+        try
+        {
+            MailBody body;
+            try { body = await _bodies.GetOrAdd(entryId, _ => _store.GetBodyAsync(message.Summary.Ref)).ConfigureAwait(true); }
+            catch { _bodies.Remove(entryId); throw; }
+            if (cts.IsCancellationRequested) return;
+
+            var html = await RenderSingleAsync(body).ConfigureAwait(true);
+            if (cts.IsCancellationRequested) return;
+
+            OpenBody = body;
+            ThreadAttachments = body.Attachments;
+            BodyHtml = html;
+
+            if (!message.IsUnread || _settings.MarkReadAfterMs <= 0) return;
+
+            await Task.Delay(_settings.MarkReadAfterMs, cts.Token).ConfigureAwait(true);
+            if (cts.IsCancellationRequested || FocusedMessage != message) return;
+
+            await _store.SetReadAsync(message.Summary.Ref, true, cts.Token).ConfigureAwait(true);
+            message.IsUnread = false;
+
+            var row = message.Row;
+            row.Refresh(row.Thread with
+            {
+                Messages = row.Thread.Messages
+                    .Select(m => m.Ref.EntryId == entryId ? m with { IsUnread = false } : m)
+                    .ToList(),
+            });
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (!cts.IsCancellationRequested) Status = $"Could not open that message: {ex.Message}";
+        }
     }
 
     private async Task LoadBodyAsync(MailRowViewModel? row)
@@ -629,24 +972,14 @@ public sealed partial class TriageViewModel : ObservableObject
 
         try
         {
-            var load = LoadThreadAsync(row.Thread);
+            var load = LoadThreadAsync(row.Thread, cts.Token);
 
-            // Not cached yet: show who and what straight away rather than
-            // leaving the previous message on screen while Outlook reads it.
-            if (!load.IsCompleted)
-            {
-                var s = row.Summary;
-                OpenBody = new MailBody
-                {
-                    Ref = s.Ref,
-                    Subject = row.Subject,
-                    SenderName = s.SenderName,
-                    SenderAddress = s.SenderAddress,
-                    ReceivedUtc = s.ReceivedUtc,
-                };
-                ThreadAttachments = Array.Empty<MailAttachment>();
-                BodyHtml = "";
-            }
+            // A conversation nothing has read yet - typically a search result
+            // from far down the list, which prefetch never reached - costs one
+            // Outlook read per message. Show the newest as soon as it is in
+            // rather than leave the pane on the old mail until all are.
+            if (!load.IsCompleted && row.Thread.Messages.Count > 1)
+                await ShowNewestAsync(row.Thread, load, cts.Token).ConfigureAwait(true);
 
             var (bodies, html) = await load.ConfigureAwait(true);
             if (cts.IsCancellationRequested) return;
@@ -671,18 +1004,55 @@ public sealed partial class TriageViewModel : ObservableObject
     }
 
     /// <summary>
+    /// The newest message on its own, as a stand-in while the rest of the
+    /// conversation is still being read. Shares the body read the whole
+    /// load already started, so it costs no extra trip to Outlook.
+    /// </summary>
+    private async Task ShowNewestAsync(ConversationThread thread, Task whole, CancellationToken ct)
+    {
+        var newest = thread.Messages[0];
+        try
+        {
+            var body = await _bodies.GetOrAdd(newest.Ref.EntryId, _ => _store.GetBodyAsync(newest.Ref)).ConfigureAwait(true);
+            if (ct.IsCancellationRequested || whole.IsCompleted) return;
+
+            var html = await RenderSingleAsync(body).ConfigureAwait(true);
+            if (ct.IsCancellationRequested || whole.IsCompleted) return;
+
+            OpenBody = body;
+            ThreadAttachments = body.Attachments;
+            BodyHtml = html;
+        }
+        catch { /* the whole-conversation load reports any failure */ }
+    }
+
+    /// <summary>One message's page, rendered off the UI thread and cached.</summary>
+    private async Task<string> RenderSingleAsync(MailBody body)
+    {
+        var blockRemote = _settings.BlockRemoteImages;
+        var pageKey = "one:" + body.Ref.EntryId;
+        try { return await _pages.GetOrAdd(pageKey, _ => Task.Run(() => HtmlPresenter.Render(body, blockRemote))).ConfigureAwait(true); }
+        catch { _pages.Remove(pageKey); throw; }
+    }
+
+    /// <summary>
     /// Every message in the conversation (yours included, newest first) and
     /// the rendered page, from cache where possible. Bodies are fetched without
     /// a cancellation token: a fetch is shared through the cache, so one
-    /// caller moving on must not cancel it for another.
+    /// caller moving on must not cancel it for another. <paramref name="stop"/>
+    /// is checked between reads instead, so a load the user has moved on from
+    /// stops queuing work on Outlook's single thread ahead of the one they want.
     /// </summary>
-    private async Task<(List<MailBody> Bodies, string Html)> LoadThreadAsync(ConversationThread thread)
+    private async Task<(List<MailBody> Bodies, string Html)> LoadThreadAsync(
+        ConversationThread thread, CancellationToken stop = default)
     {
         var messages = thread.Messages.Take(Math.Max(1, _settings.ThreadMessageLimit)).ToList();
 
         var bodies = new List<MailBody>(messages.Count);
         foreach (var message in messages)
         {
+            stop.ThrowIfCancellationRequested();
+
             var task = _bodies.GetOrAdd(message.Ref.EntryId, _ => _store.GetBodyAsync(message.Ref));
             try { bodies.Add(await task.ConfigureAwait(true)); }
             catch (Exception) when (bodies.Count > 0 || message != messages[^1])
@@ -742,7 +1112,7 @@ public sealed partial class TriageViewModel : ObservableObject
         foreach (var thread in threads)
         {
             if (ct.IsCancellationRequested) return;
-            try { await LoadThreadAsync(thread).ConfigureAwait(true); }
+            try { await LoadThreadAsync(thread, ct).ConfigureAwait(true); }
             catch { /* only a head start; the real open will report any problem */ }
         }
     }
@@ -769,6 +1139,22 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         ClearMarks();
         if (Rows.Count == 0) return;
+
+        // Inside an expanded conversation, j/k step through its messages
+        // first: down from the row enters them, up from the first leaves them.
+        if (Selected is { IsExpanded: true } open && Math.Abs(delta) == 1 && open.Messages.Count > 0)
+        {
+            var at = FocusedMessage is null ? -1 : open.Messages.IndexOf(FocusedMessage);
+            var next = at + delta;
+            if (at >= 0 || delta > 0)
+            {
+                if (next < open.Messages.Count)
+                {
+                    FocusedMessage = next < 0 ? null : open.Messages[next];
+                    return;
+                }
+            }
+        }
 
         var index = Selected is null ? 0 : Rows.IndexOf(Selected) + delta;
         Selected = Rows[Math.Clamp(index, 0, Rows.Count - 1)];
@@ -835,10 +1221,10 @@ public sealed partial class TriageViewModel : ObservableObject
     /// Flags or clears the selection and moves on at once. The returned task is
     /// the Outlook and database work, which finishes in the background.
     /// </summary>
-    public Task ToggleActionRequiredAsync(bool required)
+    public async Task ToggleActionRequiredAsync(bool required)
     {
         var rows = Targets();
-        if (rows.Count == 0) return Task.CompletedTask;
+        if (rows.Count == 0) return;
 
         var before = rows.ToDictionary(r => r, r => r.IsActionRequired);
         foreach (var row in rows) row.IsActionRequired = required;
@@ -850,30 +1236,25 @@ public sealed partial class TriageViewModel : ObservableObject
         var what = rows.Count == 1 ? rows[0].Subject : $"{rows.Count} conversations";
         Status = required ? $"Flagged for action · {what}" : $"Marked as needing no action · {what}";
 
-        return RunInBackground(async () =>
+        string? error = null;
+        foreach (var row in rows)
         {
-            string? error = null;
-            foreach (var row in rows)
+            try { await SetActionRequiredAsync(row.Summary, required, row, before[row]).ConfigureAwait(true); }
+            catch (Exception ex)
             {
-                try { await SetActionRequiredAsync(row.Summary, required).ConfigureAwait(true); }
-                catch (Exception ex)
-                {
-                    row.IsActionRequired = before[row];
-                    error ??= ex.Message;
-                }
+                row.IsActionRequired = before[row];
+                error ??= ex.Message;
             }
+        }
 
-            if (error is not null) Status = $"Could not update that message: {error}";
-        });
+        if (error is not null) Status = $"Could not update that message: {error}";
     }
 
-    private async Task SetActionRequiredAsync(MailSummary summary, bool required)
+    private async Task SetActionRequiredAsync(
+        MailSummary summary, bool required, MailRowViewModel? row = null, bool wasActionRequired = false)
     {
-        // The Outlook category makes the flag visible inside Outlook itself,
-        // so the state is not trapped in this app.
-        await _store.SetCategoryAsync(summary.Ref, _settings.ActionCategory, required)
-            .ConfigureAwait(true);
-
+        // The local record is awaited (it is what the action board reads
+        // the moment this returns); the Outlook category write is not.
         if (required)
         {
             await _actions.UpsertAsync(new ActionItem
@@ -895,6 +1276,26 @@ public sealed partial class TriageViewModel : ObservableObject
 
             if (existing is not null)
                 await _actions.DeleteAsync(existing.Id).ConfigureAwait(true);
+        }
+
+        _ = SetCategoryInBackgroundAsync(row, summary.Ref, required, wasActionRequired);
+    }
+
+    /// <summary>
+    /// The Outlook category makes the flag visible inside Outlook itself, so
+    /// the state is not trapped in this app. Written behind the keystroke; a
+    /// failure (the message moved or vanished) rolls the flag back and says so.
+    /// </summary>
+    private async Task SetCategoryInBackgroundAsync(MailRowViewModel? row, MailRef mail, bool on, bool wasActionRequired)
+    {
+        try
+        {
+            await _store.SetCategoryAsync(mail, _settings.ActionCategory, on).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            if (row is not null) row.IsActionRequired = wasActionRequired;
+            Status = $"Could not update that message: {ex.Message}";
         }
     }
 
@@ -1248,6 +1649,10 @@ public sealed partial class TriageViewModel : ObservableObject
 
         _snoozePresets = SnoozePresets.For(_clock.Now, _settings.DayShape);
 
+        // Find (or make) the holding folder while the user is still picking a
+        // time, so confirming costs no folder walk.
+        _ = GetSnoozeFolderAsync();
+
         Palette.Open(
             PaletteMode.Snooze,
             "Come back to this",
@@ -1312,8 +1717,7 @@ public sealed partial class TriageViewModel : ObservableObject
 
             try
             {
-                var holding = _snoozeFolder ??= await _store
-                    .EnsureFolderPathAsync(_settings.SnoozeFolder).ConfigureAwait(true);
+                var holding = await GetSnoozeFolderAsync().ConfigureAwait(true);
 
                 // Every Inbox message in the conversation is parked, each with
                 // its own entry, so they all come back together.
@@ -1454,7 +1858,9 @@ public sealed partial class TriageViewModel : ObservableObject
         try
         {
             Status = scope == ReplyScope.Forward ? "Preparing forward..." : "Preparing reply...";
-            var draft = await _store.BuildReplyAsync(row.Summary.Ref, scope).ConfigureAwait(true);
+            // A message picked in the expanded conversation is the one answered, as in Outlook.
+            var target = FocusedMessage?.Summary.Ref ?? row.Summary.Ref;
+            var draft = await _store.BuildReplyAsync(target, scope).ConfigureAwait(true);
             Composer.Open(draft);
             Status = "";
         }
@@ -1475,7 +1881,7 @@ public sealed partial class TriageViewModel : ObservableObject
         // or find nothing and leave the message sitting in the list.
         return MoveInBackground("Archive", async () =>
         {
-            var archive = _archiveFolder ??= await _store.EnsureFolderPathAsync("Archive").ConfigureAwait(true);
+            var archive = await GetArchiveFolderAsync().ConfigureAwait(true);
             return new FolderNode
             {
                 Ref = archive,

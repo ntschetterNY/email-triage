@@ -10,7 +10,7 @@ Native Windows WPF application (.NET 8), not one of web/ios/android/adaptive. De
 
 ## Users
 
-Primary: knowledge workers on **classic Outlook desktop for Windows** whose inbox is their task queue and who want keyboard-driven speed Outlook doesn't offer. The author (n.tschetter@vorea.com, construction-industry PM/engineering context) is the founding user, but the product is intended for **wider distribution** — strangers who didn't build it will install and learn it. First-run experience, discoverability of shortcuts, and edge-case behavior are product concerns, not polish.
+Primary: knowledge workers on **classic Outlook desktop for Windows** whose inbox is their task queue and who want keyboard-driven speed Outlook doesn't offer. The author (a construction-industry PM/engineer) is the founding user, but the product is intended for **wider distribution** — strangers who didn't build it will install and learn it. First-run experience, discoverability of shortcuts, and edge-case behavior are product concerns, not polish.
 
 Users are stuck on classic Outlook (usually by corporate IT policy), often in Microsoft 365 shops. They cannot switch to Superhuman/Gmail-family tools; this app meets them where they are.
 

@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using EmailTriage.App.Input;
+using EmailTriage.App.Services;
 using EmailTriage.App.ViewModels;
 using Microsoft.Web.WebView2.Core;
 
@@ -29,6 +30,7 @@ public partial class MainWindow : Window
         DataContext = viewModel;
 
         InitializeComponent();
+        Title = $"Email Triage {AppUpdater.DisplayVersion}";
 
         HelpList.ItemsSource = viewModel.HelpRows
             .Select(r => new { r.Group, r.Keys, r.Description })
@@ -91,12 +93,14 @@ public partial class MainWindow : Window
             Section.Triage => new[]
             {
                 Hint("next/prev", TriageAction.NextMail, TriageAction.PrevMail),
+                Hint("expand", TriageAction.NextColumn, TriageAction.PrevColumn),
                 Hint("action", TriageAction.MarkActionRequired),
                 Hint("no action", TriageAction.MarkNoAction),
                 Hint("move", TriageAction.MoveToFolder),
                 Hint("archive", TriageAction.Archive),
                 Hint("later", TriageAction.Snooze),
                 Hint("schedule", TriageAction.ScheduleTime),
+                Hint("meeting", TriageAction.ReplyWithMeeting),
                 // Reply all lives on Enter (Confirm) in the Superhuman layout.
                 HintFirst("reply all", TriageAction.ReplyAll, TriageAction.Confirm),
                 Hint("reply", TriageAction.ReplySender),
@@ -157,7 +161,7 @@ public partial class MainWindow : Window
                 "EmailTriage", "WebView2");
             Directory.CreateDirectory(userData);
 
-            var env = await CoreWebView2Environment.CreateAsync(null, userData);
+            var env = await CoreWebView2Environment.CreateAsync(BundledWebView2Folder(), userData);
 
             await ConfigureMailViewAsync(BodyView, env);
             _webViewReady = true;
@@ -174,6 +178,33 @@ public partial class MainWindow : Window
             ViewModel.Triage.Status =
                 $"Message preview unavailable (WebView2 runtime missing?): {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// The WebView2 runtime is normally already on the machine (Windows 11 and
+    /// Microsoft 365 both ship it). Where it isn't and can't be installed, a
+    /// "Fixed Version" copy of it can be dropped into a WebView2Runtime folder
+    /// next to EmailTriage.exe; this returns that folder so it gets used.
+    /// Null means "use whatever Windows has", which is the usual case.
+    /// </summary>
+    private static string? BundledWebView2Folder()
+    {
+        var installDir = Path.GetDirectoryName(Environment.ProcessPath);
+        if (installDir is null) return null;
+
+        var bundled = Path.Combine(installDir, "WebView2Runtime");
+        if (!File.Exists(Path.Combine(bundled, "msedgewebview2.exe"))) return null;
+
+        // Prefer the system runtime when present: it is kept current by
+        // Windows Update, whereas the bundled copy only changes with the app.
+        try
+        {
+            if (!string.IsNullOrEmpty(CoreWebView2Environment.GetAvailableBrowserVersionString()))
+                return null;
+        }
+        catch (WebView2RuntimeNotFoundException) { }
+
+        return bundled;
     }
 
     /// <summary>
@@ -328,13 +359,18 @@ public partial class MainWindow : Window
 
     private async Task SubmitFormAsync(string form)
     {
-        switch (form)
+        var saved = form switch
         {
-            case "form:due": await ViewModel.Actions.SaveDueFromFormAsync(); break;
-            case "form:blocker": await ViewModel.Actions.AddBlockerFromFormAsync(); break;
-            case "form:assign": await ViewModel.Actions.AddAssignmentFromFormAsync(); break;
-            case "form:notes": await ViewModel.Actions.SaveNotesFromFormAsync(); break;
-        }
+            "form:due" => await ViewModel.Actions.SaveDueFromFormAsync(),
+            "form:blocker" => await ViewModel.Actions.AddBlockerFromFormAsync(),
+            "form:assign" => await ViewModel.Actions.AddAssignmentFromFormAsync(),
+            "form:notes" => await ViewModel.Actions.SaveNotesFromFormAsync(),
+            _ => false,
+        };
+
+        // Saved: back to the board, so its keys (chase, Ctrl+G) work at once.
+        // Not saved: stay in the field to fix what the status line says.
+        if (saved) Focus();
     }
 
     /// <summary>The form a focused field belongs to, from the Tag on it or an ancestor.</summary>
@@ -351,8 +387,10 @@ public partial class MainWindow : Window
     /// <summary>
     /// While typing in the action form, keys are text: Enter saves that form
     /// (Ctrl+Enter for the multi-line notes), Esc leaves the field, and
-    /// nothing else is taken as a shortcut. Decided synchronously, so the key
-    /// is marked handled before the field can also act on it.
+    /// nothing else is taken as a shortcut - except Ctrl+G, which a text box
+    /// has no use for, so Claude can draft straight from the form. Decided
+    /// synchronously, so the key is marked handled before the field can also
+    /// act on it.
     /// </summary>
     /// <returns>True when the form owns the key; <paramref name="submit"/> names a form to save.</returns>
     private bool TryHandleFormKey(KeyEventArgs e, out string? submit)
@@ -379,6 +417,8 @@ public partial class MainWindow : Window
             else submit = form;
             return true;
         }
+
+        if (ctrl && ViewModel.Keys.Resolve(KeyStroke.FromEvent(e)) == TriageAction.AiDraftReply) return false;
 
         return true; // the field has it; not a shortcut
     }
@@ -421,17 +461,24 @@ public partial class MainWindow : Window
 
     // ---- calendar ------------------------------------------------------------
 
-    /// <summary>The strip in the top bar: show that meeting in the Calendar tab.</summary>
-    private void OnStripClick(object sender, MouseButtonEventArgs e)
+    /// <summary>The strip in the top bar: show that meeting in the Calendar tab, joining it if it is on.</summary>
+    private async void OnStripClick(object sender, MouseButtonEventArgs e)
     {
         var ev = ViewModel.Calendar.StripEvent;
         ViewModel.Section = Section.Calendar;
-        if (ev is not null) ViewModel.Calendar.Select(ev);
         Focus();
+        if (ev is not null) await ViewModel.Calendar.ClickAsync(ev);
     }
 
     // Keep the keyboard on the window, where the calendar keys live.
-    private void OnAgendaClick(object sender, MouseButtonEventArgs e) => Focus();
+    private async void OnAgendaClick(object sender, MouseButtonEventArgs e)
+    {
+        Focus();
+
+        // Only a click on a meeting row - not the scroll bar or a day heading.
+        var item = ItemsControl.ContainerFromElement(AgendaList, (DependencyObject)e.OriginalSource) as ListBoxItem;
+        if (item?.DataContext is AgendaRow row) await ViewModel.Calendar.ClickAsync(row.Event);
+    }
 
     private async void OnAgendaJoin(object sender, RoutedEventArgs e) { await ViewModel.Calendar.ActivateAsync(); Focus(); }
     private async void OnAgendaOpen(object sender, RoutedEventArgs e) { await ViewModel.Calendar.OpenInOutlookAsync(); Focus(); }
@@ -641,6 +688,64 @@ public partial class MainWindow : Window
         _ = UpdateAirspaceAsync();
         if (ViewModel.Triage.Palette.IsOpen) FocusLater(PaletteBox);
         else Dispatcher.BeginInvoke(Focus);
+    }
+
+    // The arrow on a conversation row lists its messages; clicking one reads just it.
+    private async void OnExpandClick(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is MailRowViewModel row)
+            await ViewModel.Triage.ToggleExpandAsync(row);
+        Focus();
+    }
+
+    // ---- attaching files by dropping them on the composer -------------------
+
+    private static string[]? DroppedFiles(DragEventArgs e) =>
+        e.Data.GetDataPresent(DataFormats.FileDrop) ? e.Data.GetData(DataFormats.FileDrop) as string[] : null;
+
+    private void OnComposerDragOver(object sender, DragEventArgs e)
+    {
+        // Text dragged within the message still moves as text.
+        if (DroppedFiles(e) is null) return;
+
+        e.Effects = DragDropEffects.Copy;
+        e.Handled = true;
+        ComposerDropHint.Visibility = Visibility.Visible;
+    }
+
+    private void OnComposerDragLeave(object sender, DragEventArgs e)
+    {
+        // Leave also fires moving between the composer's own children; only
+        // hide the hint once the pointer is really outside it.
+        var element = (FrameworkElement)sender;
+        var at = e.GetPosition(element);
+        if (at.X > 0 && at.Y > 0 && at.X < element.ActualWidth && at.Y < element.ActualHeight) return;
+
+        ComposerDropHint.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnComposerDrop(object sender, DragEventArgs e)
+    {
+        ComposerDropHint.Visibility = Visibility.Collapsed;
+        if (DroppedFiles(e) is not { } files) return;
+
+        e.Handled = true;
+        ViewModel.Triage.Composer.AddAttachments(files);
+    }
+
+    private void OnComposeAttachmentRemoveClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is ComposeAttachment attachment)
+            ViewModel.Triage.Composer.RemoveAttachment(attachment);
+    }
+
+    private void OnConversationMessageClick(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is ConversationMessageViewModel message)
+            ViewModel.Triage.FocusMessage(message);
+        Focus();
     }
 
     // Pressing on a chip starts saving the file, so a drag that follows has it

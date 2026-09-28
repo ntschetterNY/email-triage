@@ -30,6 +30,9 @@ public sealed partial class PaletteViewModel : ObservableObject
     [ObservableProperty] private PaletteMode _mode;
     [ObservableProperty] private string _contextLine = "";
 
+    /// <summary>Switches on what is being made, such as a meeting's Teams and repeat; empty hides the line.</summary>
+    [ObservableProperty] private string _optionsLine = "";
+
     /// <summary>
     /// Shown when nothing matches, offering to create the typed folder. Null
     /// when creation does not apply.
@@ -53,6 +56,7 @@ public sealed partial class PaletteViewModel : ObservableObject
         Title = title;
         Hint = hint;
         ContextLine = contextLine;
+        OptionsLine = "";
         Query = "";
         SelectedIndex = 0;
         CreatePrompt = null;

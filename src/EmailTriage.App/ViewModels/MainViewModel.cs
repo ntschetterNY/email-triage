@@ -117,7 +117,7 @@ public sealed partial class MainViewModel : ObservableObject
         _ => Triage.Status,
     };
 
-    /// <summary>A new message, from any tab: Ctrl+N or the button in the top bar.</summary>
+    /// <summary>A new message, from any tab: `c` or the button in the top bar.</summary>
     public async Task ComposeAsync()
     {
         if (Triage.Composer.IsOpen) return;
@@ -142,10 +142,13 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             ConnectionStatus = "Connecting to Outlook...";
-            await _store.ConnectAsync().ConfigureAwait(true);
+            await _store.ConnectAsync().WarnIfSlow(OutlookStallAfter, () =>
+                ConnectionStatus = "Waiting on Outlook - check it for a sign-in or profile dialog").ConfigureAwait(true);
 
+            // Attached, but nothing is read yet. "Connected" waits for the inbox,
+            // so a stalled first read doesn't look like an empty mailbox.
             IsConnected = true;
-            ConnectionStatus = "Connected";
+            ConnectionStatus = "Loading inbox...";
 
             // Autocomplete works from the cache at once, and fills out as
             // Outlook's contacts and directory are read in the background.
@@ -195,6 +198,7 @@ public sealed partial class MainViewModel : ObservableObject
             _sender.Start();
 
             await Triage.LoadAsync().ConfigureAwait(true);
+            ConnectionStatus = "Connected";
             await Actions.LoadAsync().ConfigureAwait(true);
 
             // The strip in the top bar needs the calendar whichever tab is showing.
@@ -211,6 +215,9 @@ public sealed partial class MainViewModel : ObservableObject
             FatalError = ex.Message;
         }
     }
+
+    /// <summary>How long attaching to Outlook may take before the top bar says it is stuck.</summary>
+    private static readonly TimeSpan OutlookStallAfter = TimeSpan.FromSeconds(20);
 
     private SynchronizationContext? _ui;
 
@@ -290,7 +297,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             // "3 pm" must reach the box, not move the highlight via `p`.
             if (stroke.IsTyping) return false;
-            return await HandlePaletteKeyAsync(action, ctrlEnter).ConfigureAwait(true);
+            return await HandlePaletteKeyAsync(stroke, action, ctrlEnter).ConfigureAwait(true);
         }
         if (Actions.Editor != EditorMode.None) return await HandleEditorKeyAsync(action, ctrlEnter).ConfigureAwait(true);
 
@@ -394,8 +401,22 @@ public sealed partial class MainViewModel : ObservableObject
         return false;
     }
 
-    private async Task<bool> HandlePaletteKeyAsync(TriageAction action, bool ctrlEnter)
+    private async Task<bool> HandlePaletteKeyAsync(KeyStroke stroke, TriageAction action, bool ctrlEnter)
     {
+        // The meeting palette's switches: Teams, all day, repeat, show as.
+        if (stroke.Modifiers == System.Windows.Input.ModifierKeys.Control)
+        {
+            MeetingSwitch? which = stroke.Key switch
+            {
+                System.Windows.Input.Key.T => MeetingSwitch.Teams,
+                System.Windows.Input.Key.D => MeetingSwitch.AllDay,
+                System.Windows.Input.Key.R => MeetingSwitch.Repeat,
+                System.Windows.Input.Key.B => MeetingSwitch.ShowAs,
+                _ => null,
+            };
+            if (which is { } w && Triage.ToggleMeetingSwitch(w)) return true;
+        }
+
         // Ctrl+Enter has no binding of its own - only plain Enter maps to
         // Confirm - so it must be caught before the action switch.
         if (ctrlEnter)
@@ -416,10 +437,12 @@ public sealed partial class MainViewModel : ObservableObject
 
             case TriageAction.NextMail:
                 Triage.Palette.MoveSelection(1);
+                Triage.UpdateMeetingOptionsLine();
                 return true;
 
             case TriageAction.PrevMail:
                 Triage.Palette.MoveSelection(-1);
+                Triage.UpdateMeetingOptionsLine();
                 return true;
 
             default:
@@ -510,6 +533,11 @@ public sealed partial class MainViewModel : ObservableObject
             case TriageAction.ExtendSelectionDown: Triage.ExtendSelection(1); return true;
             case TriageAction.ExtendSelectionUp: Triage.ExtendSelection(-1); return true;
 
+            // As in Outlook's conversation view: Right opens the conversation to
+            // list each message, Left goes back to the conversation and folds it.
+            case TriageAction.NextColumn: await Triage.ExpandAsync().ConfigureAwait(true); return true;
+            case TriageAction.PrevColumn: Triage.CollapseSelected(); return true;
+
             case TriageAction.MarkActionRequired:
                 await Triage.ToggleActionRequiredAsync(true).ConfigureAwait(true);
                 await Actions.LoadAsync().ConfigureAwait(true);
@@ -576,6 +604,10 @@ public sealed partial class MainViewModel : ObservableObject
 
             case TriageAction.ScheduleTime:
                 Triage.OpenScheduleForSelected();
+                return true;
+
+            case TriageAction.ReplyWithMeeting:
+                Triage.OpenReplyWithMeetingForSelected();
                 return true;
 
             default:
@@ -710,6 +742,13 @@ public sealed partial class MainViewModel : ObservableObject
         Actions.Status = await Triage.StartReplyToAsync(target.Value, scope).ConfigureAwait(true) ?? "";
     }
 
+    /// <summary>Ctrl+G on the board: reply all to the task's email and have Claude draft it.</summary>
+    private async Task AiDraftFromBoardAsync()
+    {
+        await ReplyFromBoardAsync(ReplyScope.All).ConfigureAwait(true);
+        if (Triage.Composer.IsOpen) await Triage.AiDraftAsync().ConfigureAwait(true);
+    }
+
     private async Task<bool> HandleActionsKeyAsync(TriageAction action)
     {
         switch (action)
@@ -737,6 +776,9 @@ public sealed partial class MainViewModel : ObservableObject
                 return true;
             case TriageAction.Forward:
                 await ReplyFromBoardAsync(ReplyScope.Forward).ConfigureAwait(true);
+                return true;
+            case TriageAction.AiDraftReply:
+                await AiDraftFromBoardAsync().ConfigureAwait(true);
                 return true;
 
             // The shortcuts put the cursor in the form beside the board, so the
@@ -786,6 +828,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         ("Move",    $"{Keys.Describe(TriageAction.NextMail)} / {Keys.Describe(TriageAction.PrevMail)}", "Next / previous message"),
         ("Move",    $"{Keys.Describe(TriageAction.SwitchSection)} / {Keys.Describe(TriageAction.PrevSection)}", "Next / previous tab: Triage, Action items, Calendar"),
+        ("Move",    $"{Keys.Describe(TriageAction.NextColumn)} / {Keys.Describe(TriageAction.PrevColumn)}", "Expand a conversation to read (and see the attachments of) each message, even filed ones / fold it back"),
         ("Move",    Keys.Describe(TriageAction.Search), "Filter the list"),
         ("Move",    Keys.Describe(TriageAction.AiSearch), "Ask your inbox a question - Claude picks the matches (uses your Claude sign-in)"),
         ("Move",    $"{Keys.Describe(TriageAction.ExtendSelectionDown)} / {Keys.Describe(TriageAction.ExtendSelectionUp)}", "Select several - e, v, h, a and n act on all of them"),
@@ -830,6 +873,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         ("Calendar", Keys.Describe(TriageAction.Rsvp), "Answer an invitation - accept, maybe or decline, with a note if you type one"),
         ("Calendar", Keys.Describe(TriageAction.ScheduleTime), "Put the mail or task on your calendar (Ctrl+Enter invites its people instead)"),
+        ("Calendar", Keys.Describe(TriageAction.ReplyWithMeeting), "Reply with a meeting: Ctrl+T Teams, Ctrl+D all day, Ctrl+R repeat, Ctrl+B show as - opens in Outlook to send"),
         ("Calendar", Keys.Describe(TriageAction.JoinMeeting), "Join the meeting on now or about to start - from any tab"),
         ("Calendar", Keys.Describe(TriageAction.Confirm), "On the Calendar tab: join the meeting, or open it in Outlook"),
         ("Calendar", Keys.Describe(TriageAction.OpenInOutlook), "On the Calendar tab: open the meeting in Outlook"),

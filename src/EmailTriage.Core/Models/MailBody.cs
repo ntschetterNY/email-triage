@@ -47,3 +47,6 @@ public readonly record struct Recipient(string Name, string Address)
     public string Display => string.IsNullOrWhiteSpace(Name) ? Address : Name;
     public override string ToString() => Display;
 }
+
+/// <summary>A message's To and CC lines, for searching by address.</summary>
+public sealed record MailRecipients(IReadOnlyList<Recipient> To, IReadOnlyList<Recipient> Cc);
