@@ -106,6 +106,13 @@ public sealed class AppSettings
     public int AiTimeoutSeconds { get; set; } = 180;
 
     /// <summary>
+    /// Let AI commands use an API key (ANTHROPIC_API_KEY, an apiKeyHelper, or
+    /// Bedrock/Vertex) when one is set. Off by default, so they always run on
+    /// your Claude login rather than on API credits.
+    /// </summary>
+    public bool AiAllowApiKey { get; set; }
+
+    /// <summary>
     /// Days a blocker or hand-off may sit unchanged before the board flags it
     /// for a follow-up chase. 0 turns the flagging off.
     /// </summary>

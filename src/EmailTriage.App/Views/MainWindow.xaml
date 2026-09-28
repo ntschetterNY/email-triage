@@ -406,6 +406,28 @@
                 </Border>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <!-- AI usage: green dot on your Claude login, amber on an API key; hover for the breakdown -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,14,0" Background="Transparent"
+                                ToolTip="{Binding AiUsageDetail}" ToolTipService.ShowDuration="60000"
+                                Visibility="{Binding AiUsageText, Converter={StaticResource NullVis}}">
+                        <Ellipse Width="6" Height="6" Margin="0,0,5,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{StaticResource Muted}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding AiAuthState}" Value="Login">
+                                            <Setter Property="Fill" Value="{StaticResource Ok}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding AiAuthState}" Value="ApiKey">
+                                            <Setter Property="Fill" Value="{StaticResource Warn}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="{Binding AiUsageText}" FontSize="11" Foreground="{StaticResource Muted}" />
+                    </StackPanel>
+
                     <TextBlock Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,14,0"
                                ToolTip="Sent while this app is running. Delete the draft in Outlook to cancel."
                                Visibility="{Binding PendingScheduledCount, Converter={StaticResource CountVis}}">

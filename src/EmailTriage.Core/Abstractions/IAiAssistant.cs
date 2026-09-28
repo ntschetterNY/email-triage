@@ -11,8 +11,9 @@ public interface IAiAssistant
     /// Asks with the given model, or the implementation's default when
     /// <paramref name="model"/> is null or empty - so each feature (drafting,
     /// follow-ups, search) can run on the model the user picked for it.
+    /// <paramref name="feature"/> names the command asking, for the usage log.
     /// </summary>
-    Task<string> AskAsync(string prompt, string? model = null, CancellationToken ct = default);
+    Task<string> AskAsync(string prompt, string? model = null, string? feature = null, CancellationToken ct = default);
 }
 
 /// <summary>

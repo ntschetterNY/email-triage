@@ -89,11 +89,16 @@ public partial class App : Application
         services.AddSingleton<IFolderUsageRepository, FolderUsageRepository>();
 
         // AI commands run through the Claude Code CLI, so they use the user's
-        // own Claude sign-in - this app never holds an API key.
-        services.AddSingleton<IAiAssistant>(new ClaudeCodeCli(
+        // own Claude sign-in - this app never holds an API key. Every call is
+        // logged for the usage readout in the top bar.
+        services.AddSingleton(new AiUsageLog(AiUsageLog.DefaultPath));
+        services.AddSingleton(sp => new ClaudeCodeCli(
             settings.ClaudeCliPath,
             settings.AiModel,
-            TimeSpan.FromSeconds(Math.Max(30, settings.AiTimeoutSeconds))));
+            TimeSpan.FromSeconds(Math.Max(30, settings.AiTimeoutSeconds)),
+            settings.AiAllowApiKey,
+            sp.GetRequiredService<AiUsageLog>()));
+        services.AddSingleton<IAiAssistant>(sp => sp.GetRequiredService<ClaudeCodeCli>());
         services.AddSingleton<AiDraftService>();
         services.AddSingleton<AiSearchService>();
 

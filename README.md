@@ -348,6 +348,22 @@ model for everything, and each job can override it - `AiDraftModel`,
 Opus for follow-ups" is two lines in settings.json. Also `FollowUpAfterDays`,
 `ClaudeCliPath` (set it if `claude` isn't on PATH), and `AiTimeoutSeconds`.
 
+**Your login, not API credits.** Claude Code prefers an `ANTHROPIC_API_KEY` (or
+`ANTHROPIC_AUTH_TOKEN`, an `apiKeyHelper`, Bedrock/Vertex) over your Claude login
+whenever one is set, which would quietly bill every draft to API credits. So the app
+removes those from the CLI's environment and skips your Claude Code user settings,
+and every call goes through the account `claude` is logged into. Set
+`AiAllowApiKey: true` if you do want a key used. Each call also runs without Claude
+Code's tools, MCP servers, skills and agent prompt - about 450 tokens of overhead
+instead of about 30,000.
+
+**Usage in the top bar.** `AI today 4 · 38k tok · ~$0.31` counts today's calls; the
+dot is green on your Claude login and amber on an API key. Hover for which account
+it runs through, a per-command breakdown, the last 7 and 30 days, and the last
+failure. Cost is Claude Code's list-price estimate: on an API key it is billed, on a
+subscription it only measures how much of your plan's usage went. Every call is
+logged as a JSON line in `%LOCALAPPDATA%\EmailTriage\ai-usage.jsonl` (30 days kept).
+
 ### Identity
 Outlook `EntryID`s change whenever an item moves between stores, which is what breaks
 naive Outlook tools. Everything persisted here is keyed by the RFC 5322 `Message-ID`
