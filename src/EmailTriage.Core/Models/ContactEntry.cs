@@ -33,5 +33,11 @@ public sealed record RecipientOverrides(
     /// <summary>Files on disk to attach, on top of any the draft already carries.</summary>
     public IReadOnlyList<string> Attachments { get; init; } = Array.Empty<string>();
 
+    /// <summary>
+    /// Files the draft already carried that the user took off, by their
+    /// <see cref="MailAttachment.Index"/> on the draft.
+    /// </summary>
+    public IReadOnlyList<int> RemoveAttachments { get; init; } = Array.Empty<int>();
+
     public bool ChangesRecipients => To is not null || Cc is not null || Bcc is not null;
 }

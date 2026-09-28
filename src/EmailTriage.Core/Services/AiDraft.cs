@@ -29,6 +29,13 @@ public sealed record DraftContext
     /// (see <see cref="WritingStyleService"/>). Empty means no guide yet.
     /// </summary>
     public string Style { get; init; } = "";
+
+    /// <summary>
+    /// When the user is free to meet, from their calendar (see
+    /// <see cref="Services.Availability"/>), or <see cref="Services.Availability.Unreadable"/>
+    /// when it could not be read. Empty leaves scheduling out of the prompt.
+    /// </summary>
+    public string Availability { get; init; } = "";
 }
 
 /// <summary>
@@ -77,6 +84,12 @@ public sealed class AiDraftService
             sb.AppendLine();
             sb.AppendLine("Write it in the user's own voice. A guide to how they write, learned from their sent mail:");
             sb.AppendLine(context.Style);
+        }
+
+        if (context.Availability.Length > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine(context.Availability);
         }
 
         sb.AppendLine();

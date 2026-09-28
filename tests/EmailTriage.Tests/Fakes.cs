@@ -90,6 +90,10 @@ public sealed class FakeMailStore : IMailStore
         FolderRef folder, int max, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<MailSummary>>(Array.Empty<MailSummary>());
 
+    public Task<IReadOnlyList<MailSummary>> SearchMailAsync(
+        string filter, int max, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<MailSummary>>(Array.Empty<MailSummary>());
+
     public Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");
 

@@ -619,14 +619,28 @@ public sealed partial class MainViewModel : ObservableObject
     {
         switch (action)
         {
+            case TriageAction.CalendarDay: Calendar.SetView(CalendarView.Day); return true;
+            case TriageAction.CalendarWorkWeek: Calendar.SetView(CalendarView.WorkWeek); return true;
+            case TriageAction.CalendarWeek: Calendar.SetView(CalendarView.Week); return true;
+            case TriageAction.CalendarMonth: Calendar.SetView(CalendarView.Month); return true;
+            case TriageAction.CalendarAgenda: Calendar.SetView(CalendarView.Agenda); return true;
+
+            // j and k go meeting to meeting; the arrows (and Page Up/Down, in
+            // the grid) go a day, week or month at a time.
             case TriageAction.NextMail: Calendar.Move(1); return true;
             case TriageAction.PrevMail: Calendar.Move(-1); return true;
-            case TriageAction.PageDown: Calendar.Move(10); return true;
-            case TriageAction.PageUp: Calendar.Move(-10); return true;
-            case TriageAction.FirstMail: Calendar.MoveToEnd(false); return true;
+            case TriageAction.NextColumn: Calendar.Step(1); return true;
+            case TriageAction.PrevColumn: Calendar.Step(-1); return true;
+            case TriageAction.PageDown when Calendar.IsAgenda: Calendar.Move(10); return true;
+            case TriageAction.PageUp when Calendar.IsAgenda: Calendar.Move(-10); return true;
+            case TriageAction.PageDown: Calendar.Step(1); return true;
+            case TriageAction.PageUp: Calendar.Step(-1); return true;
+            case TriageAction.FirstMail: Calendar.GoToToday(); return true;
             case TriageAction.LastMail: Calendar.MoveToEnd(true); return true;
 
             // Enter goes to the meeting: its Teams or Zoom link, else Outlook.
+            // In the month it opens the day instead, as a click on it does.
+            case TriageAction.Confirm when Calendar.IsMonth: Calendar.OpenSelectedDay(); return true;
             case TriageAction.Confirm: await Calendar.ActivateAsync().ConfigureAwait(true); return true;
             case TriageAction.OpenInOutlook: await Calendar.OpenInOutlookAsync().ConfigureAwait(true); return true;
 
@@ -871,6 +885,9 @@ public sealed partial class MainViewModel : ObservableObject
         ("Actions", Keys.Describe(TriageAction.CyclePriority), "Cycle priority"),
         ("Actions", Keys.Describe(TriageAction.OpenInOutlook), "Open the original in Outlook"),
 
+        ("Calendar", $"{Keys.Describe(TriageAction.CalendarDay)}-{Keys.Describe(TriageAction.CalendarAgenda)}", "On the Calendar tab: Day, Work week, Week, Month or Agenda view"),
+        ("Calendar", $"{Keys.Describe(TriageAction.PrevColumn)} {Keys.Describe(TriageAction.NextColumn)}  /  {Keys.Describe(TriageAction.FirstMail)}", "On the Calendar tab: previous / next day, week or month  /  back to today"),
+        ("Calendar", $"{Keys.Describe(TriageAction.NextMail)} / {Keys.Describe(TriageAction.PrevMail)}", "On the Calendar tab: next / previous meeting (Enter in the month opens its day)"),
         ("Calendar", Keys.Describe(TriageAction.Rsvp), "Answer an invitation - accept, maybe or decline, with a note if you type one"),
         ("Calendar", Keys.Describe(TriageAction.ScheduleTime), "Put the mail or task on your calendar (Ctrl+Enter invites its people instead)"),
         ("Calendar", Keys.Describe(TriageAction.ReplyWithMeeting), "Reply with a meeting: Ctrl+T Teams, Ctrl+D all day, Ctrl+R repeat, Ctrl+B show as - opens in Outlook to send"),

@@ -16,8 +16,8 @@ fast filing, a real action list, and snooze.
 | **Snooze** | `h` parks a mail and puts it back in your inbox at a time you pick. |
 | **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. |
 | **Write** | `Enter` reply-all, `r` reply-to-sender, `c` a new message, all sent from inside the app. |
-| **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. A Calendar tab lists what's coming, and the top bar counts down to your next meeting. |
-| **AI** (optional) | `Ctrl+G` has Claude draft the reply from the conversation - or from notes you type first. `Ctrl+/` asks your inbox a question in plain language. Runs through your own Claude Code sign-in; see below for what leaves the machine. |
+| **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. The Calendar tab shows your day, work week, week or month (keys `1`-`5`), and the top bar counts down to your next meeting. |
+| **AI** (optional) | `Ctrl+G` has Claude draft the reply from the conversation - or from notes you type first - offering times you're free when it's about meeting. `Ctrl+/` asks your inbox a question in plain language. Runs through your own Claude Code sign-in; see below for what leaves the machine. |
 
 ## Requirements
 
@@ -163,6 +163,9 @@ their own letters.
 | `Ctrl+J` | Join the meeting on now or about to start, from any tab |
 | `Enter` | On the Calendar tab: join the meeting (Teams, Zoom, Meet, Webex), or open it in Outlook if it has no link |
 | `o` | On the Calendar tab: open the meeting in Outlook |
+| `1` `2` `3` `4` `5` | On the Calendar tab: Day, Work week, Week, Month, Agenda |
+| `←` `→` / `Home` | On the Calendar tab: previous / next day, week or month / back to today |
+| `j` / `k` | On the Calendar tab: next / previous meeting. In the month, `Enter` opens the day |
 
 Every binding lives in `%APPDATA%\EmailTriage\keybindings.json`, written on first run.
 A file from before the Superhuman layout is upgraded on the next start: its copies of
@@ -250,9 +253,17 @@ yourself. If your Outlook already adds Teams to every new meeting, set `TeamsByD
 to false: there's no need for the app to press the button as well.
 
 The top bar shows the meeting on now or next, with a countdown. It turns amber five
-minutes before a meeting. Click it to see the meeting in the Calendar tab. The Calendar
-tab lists the next `CalendarDaysAhead` days (14 by default), with attendees, their
-answers and the invitation text. Settings also cover `DefaultEventMinutes` (30),
+minutes before a meeting. Click it to see the meeting in the Calendar tab.
+
+The Calendar tab has five views. `1` Day, `2` Work week and `3` Week are a time grid:
+overlapping meetings sit side by side, time outside your working hours is shaded, and a
+red line marks now. `4` Month shows six weeks, a few meetings a day, and a click on a day
+opens it in the Day view. `5` Agenda lists the next `CalendarDaysAhead` days (14 by
+default). The arrow keys step a day, week or month, and `Home` comes back to today.
+An unanswered invitation has a dashed amber outline, a tentative one is striped, and a
+declined one is struck through. The pane on the right shows the selected meeting's
+attendees, their answers and the invitation text. The tab opens on the view you used
+last, or `CalendarView` (`WorkWeek`) the first time. Settings also cover `DefaultEventMinutes` (30),
 `BlockReminderMinutes` (5), and `JoinLeadMinutes` (10), which is how close a meeting
 must be for `Ctrl+J` to join it rather than the one you're in.
 
@@ -269,6 +280,19 @@ in the box: type rough notes - `say yes, ask for the revised SOV by Friday` -
 and `Ctrl+G` turns them into the full message. The draft only ever lands in the
 composer for you to edit; sending stays your keystroke, and `Ctrl+G` again
 redoes it.
+
+**Drafts know when you're free.** Every draft is given your free time for the
+next `AvailabilityWorkingDays` working days (10), starting tomorrow: gaps between
+`WorkdayStartHour` and `WorkdayEndHour` (07:00-16:00), with `MeetingBufferMinutes`
+(15) kept clear either side of your meetings. Busy, tentative and out-of-office time
+all count as taken. When the email is about meeting - someone asks "when works?", or
+your notes say "offer a few times for an hour's walkthrough" - Claude offers
+`ProposedSlotCount` (3) times of the right length, on different days where it can.
+If they already proposed times, it says which of those suit you instead. Lunch
+(`LunchStartHour` to `LunchEndHour`, 12-1; set them equal to turn this off) is only
+offered when nothing else fits. For any other email, it ignores your free time. If Outlook
+can't give up the calendar, the draft goes ahead without it, Claude is told not to
+suggest times, and the status line says so.
 
 **`Ctrl+/` asks your inbox a question.** "what am I still waiting on from the
 architect?", "anything about the November invoice?" - Claude reads the list
@@ -298,7 +322,9 @@ sound like, or delete it to relearn from scratch.
 mail leaves the machine, and these two commands are the deliberate, opt-in
 exception. Nothing is sent anywhere until you press `Ctrl+G` or `Ctrl+/`; when
 you do, the conversation being answered (or the list being searched) goes to
-Anthropic through your own Claude account, under that account's data terms. If
+Anthropic through your own Claude account, under that account's data terms. A draft
+also carries your free time windows for the next two working weeks - times only,
+never what your meetings are or who is in them. If
 that trade isn't acceptable in your shop, don't install Claude Code - every
 other feature is unaffected.
 

@@ -16,6 +16,9 @@ public sealed class AppSettings
     /// <summary>How many messages to pull into the triage list.</summary>
     public int InboxPageSize { get; set; } = 250;
 
+    /// <summary>Most messages a from:, to: or subject: search pulls in from beyond the Inbox page.</summary>
+    public int SearchResultLimit { get; set; } = 500;
+
     /// <summary>How many of your recent sent messages to fold into conversations.</summary>
     public int SentPageSize { get; set; } = 200;
 
@@ -54,6 +57,30 @@ public sealed class AppSettings
 
     /// <summary>How soon before a meeting the join key picks it over the one you are in.</summary>
     public int JoinLeadMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// The view the Calendar tab opens on until you pick another (Day,
+    /// WorkWeek, Week, Month or Agenda); after that it remembers your last one.
+    /// </summary>
+    public string CalendarView { get; set; } = "WorkWeek";
+
+    /// <summary>
+    /// The hours AI drafts may offer people a meeting in, and how long a gap
+    /// they leave either side of your existing meetings.
+    /// </summary>
+    public int WorkdayStartHour { get; set; } = 7;
+    public int WorkdayEndHour { get; set; } = 16;
+    public int MeetingBufferMinutes { get; set; } = 15;
+
+    /// <summary>How many times a draft offers when the email is about meeting.</summary>
+    public int ProposedSlotCount { get; set; } = 3;
+
+    /// <summary>How many working days ahead, from tomorrow, drafts look for free time.</summary>
+    public int AvailabilityWorkingDays { get; set; } = 10;
+
+    /// <summary>Lunch, which drafts only offer when nothing else fits. Equal hours turn it off.</summary>
+    public int LunchStartHour { get; set; } = 12;
+    public int LunchEndHour { get; set; } = 13;
 
     /// <summary>
     /// Default model for every AI command. Anything the Claude Code CLI
@@ -106,6 +133,25 @@ public sealed class AppSettings
         Afternoon = TimeSpan.FromHours(AfternoonHour),
         Evening = TimeSpan.FromHours(EveningHour),
     };
+
+    /// <summary>The rules AI drafts follow when offering times you are free.</summary>
+    public AvailabilityRules Availability
+    {
+        get
+        {
+            var start = Math.Clamp(WorkdayStartHour, 0, 23);
+            return new()
+            {
+                DayStart = TimeSpan.FromHours(start),
+                DayEnd = TimeSpan.FromHours(Math.Clamp(WorkdayEndHour, start + 1, 24)),
+                Buffer = TimeSpan.FromMinutes(Math.Max(0, MeetingBufferMinutes)),
+                WorkingDays = Math.Clamp(AvailabilityWorkingDays, 1, 30),
+                LunchStart = LunchEndHour > LunchStartHour ? TimeSpan.FromHours(LunchStartHour) : null,
+                LunchEnd = LunchEndHour > LunchStartHour ? TimeSpan.FromHours(LunchEndHour) : null,
+                SlotCount = Math.Clamp(ProposedSlotCount, 1, 6),
+            };
+        }
+    }
 
     public static string DefaultPath =>
         Path.Combine(

@@ -254,6 +254,50 @@ public sealed partial class OutlookMailStore : IMailStore
             finally { ComUtil.Release(f); }
         }, ct);
 
+    public Task<IReadOnlyList<MailSummary>> SearchMailAsync(
+        string filter, int max, CancellationToken ct = default) =>
+        _sta.InvokeAsync<IReadOnlyList<MailSummary>>(() =>
+        {
+            EnsureConnected();
+
+            // Your own mail and the bins are not "mail you have got".
+            var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var id in new[] { FolderSentMail, FolderDeletedItems, FolderDrafts, FolderOutbox, FolderJunk })
+            {
+                dynamic? f = null;
+                try
+                {
+                    f = ComUtil.Try<object?>(() => _session!.GetDefaultFolder(id));
+                    if (f is not null) skip.Add(ComUtil.Str(() => f!.EntryID));
+                }
+                finally { ComUtil.Release(f); }
+            }
+
+            var found = new List<MailSummary>();
+            foreach (var node in MailFolders(ct))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (skip.Contains(node.Ref.EntryId)) continue;
+
+                dynamic? folder = null;
+                try
+                {
+                    folder = _session!.GetFolderFromID(node.Ref.EntryId, node.Ref.StoreId);
+                    found.AddRange(ReadViaTable((object)folder!, node.Ref.StoreId, max, filter));
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { /* a folder that will not filter should not sink the rest */ }
+                finally { ComUtil.Release(folder); }
+            }
+
+            return found.OrderByDescending(m => m.ReceivedUtc).Take(max).ToList();
+        }, ct);
+
+    // olFolderDrafts = 16, olFolderOutbox = 4, olFolderJunk = 23
+    private const int FolderDrafts = 16;
+    private const int FolderOutbox = 4;
+    private const int FolderJunk = 23;
+
     private const string PropHasAttach = "http://schemas.microsoft.com/mapi/proptag/0x0E1B000B";
 
     /// <summary>PR_DISPLAY_TO / PR_DISPLAY_CC: the recipient names, one string per line.</summary>
@@ -284,7 +328,8 @@ public sealed partial class OutlookMailStore : IMailStore
             finally { ComUtil.Release(sent); }
         }, ct);
 
-    private static IReadOnlyList<MailSummary> ReadViaTable(object folderObj, string storeId, int max)
+    private static IReadOnlyList<MailSummary> ReadViaTable(
+        object folderObj, string storeId, int max, string? filter = null)
     {
         dynamic folder = folderObj;
         dynamic? table = null, columns = null;
@@ -292,7 +337,9 @@ public sealed partial class OutlookMailStore : IMailStore
 
         try
         {
-            table = folder.GetTable(Type.Missing, Type.Missing);
+            table = filter is null
+                ? folder.GetTable(Type.Missing, Type.Missing)
+                : folder.GetTable(filter, 0 /* olUserItems */);
             columns = table!.Columns;
 
             columns!.RemoveAll();

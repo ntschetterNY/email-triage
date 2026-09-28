@@ -89,6 +89,13 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private List<MailRowViewModel> _allRows = new();
 
+    // Conversations a field search found in Outlook beyond the loaded Inbox
+    // page - older mail, the Archive, filed folders - and the filter that
+    // found them. Dropped when the search changes or closes.
+    private List<MailRowViewModel> _searchRows = new();
+    private string? _outlookFilter;
+    private CancellationTokenSource? _outlookSearch;
+
     // Reloads are serialised: one that arrives mid-load is folded into a
     // single follow-up pass rather than racing the one in flight.
     private bool _loadRunning;
@@ -381,11 +388,68 @@ public sealed partial class TriageViewModel : ObservableObject
         // In ask mode the box holds a question, not a filter; the list stays
         // whole until Enter sends the question to Claude.
         var query = InboxQuery.Parse(IsAiSearch ? "" : SearchQuery);
+        if (query.OutlookFilter != _outlookFilter) StartOutlookSearch(query.OutlookFilter);
         if (query.NeedsAddresses) _ = LoadRecipientsAsync();
 
-        SyncRows(query.IsEmpty
-            ? _allRows
-            : _allRows.Where(r => query.Matches(field => SearchValues(r, field))).ToList());
+        if (query.IsEmpty) { SyncRows(_allRows); return; }
+
+        var matches = SearchableRows().Where(r => query.Matches(field => SearchValues(r, field)));
+        SyncRows((_searchRows.Count == 0 ? matches : matches.OrderByDescending(r => r.Thread.LastActivityUtc)).ToList());
+    }
+
+    /// <summary>The loaded Inbox, plus whatever a field search found beyond it.</summary>
+    private IEnumerable<MailRowViewModel> SearchableRows()
+    {
+        if (_searchRows.Count == 0) return _allRows;
+
+        var inbox = _allRows.Select(r => r.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _allRows.Concat(_searchRows.Where(r => !inbox.Contains(r.Key)));
+    }
+
+    /// <summary>
+    /// The list only holds the newest Inbox page, so "from:*@acme" alone
+    /// would miss older and archived mail. Field terms are also run as an
+    /// Outlook filter over every mail folder, once typing pauses, and what
+    /// comes back joins the results.
+    /// </summary>
+    private void StartOutlookSearch(string? filter)
+    {
+        _outlookSearch?.Cancel();
+        _outlookSearch = null;
+        _outlookFilter = filter;
+        _searchRows = new();
+        if (filter is null) return;
+
+        var cts = _outlookSearch = new CancellationTokenSource();
+        _ = SearchOutlookAsync(filter, cts.Token);
+    }
+
+    private async Task SearchOutlookAsync(string filter, CancellationToken ct)
+    {
+        try
+        {
+            // Each keystroke would otherwise walk every folder.
+            await Task.Delay(400, ct).ConfigureAwait(true);
+
+            Status = "Searching all mail folders...";
+            var found = await _store.SearchMailAsync(filter, _settings.SearchResultLimit, ct).ConfigureAwait(true);
+            var flagged = (await _actions.GetOpenAsync(ct).ConfigureAwait(true))
+                .Select(a => a.InternetMessageId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (ct.IsCancellationRequested) return;
+
+            _searchRows = ConversationGrouper.Group(found, Array.Empty<MailSummary>())
+                .Select(t => new MailRowViewModel(t, t.InboxMessages.Any(m => flagged.Contains(m.InternetMessageId))))
+                .ToList();
+
+            RefilterForSearch();
+            Status = $"{Rows.Count} match{(Rows.Count == 1 ? "" : "es")} across all mail folders";
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            Status = $"Could not search Outlook beyond the Inbox: {ex.Message}";
+        }
     }
 
     /// <summary>The text each search field can match in one conversation.</summary>
@@ -453,7 +517,7 @@ public sealed partial class TriageViewModel : ObservableObject
         {
             while (true)
             {
-                var missing = _allRows
+                var missing = SearchableRows()
                     .SelectMany(r => r.Thread.Messages)
                     .Where(m => !_recipients.ContainsKey(m.Ref.EntryId))
                     .ToList();
@@ -672,7 +736,8 @@ public sealed partial class TriageViewModel : ObservableObject
             Composer.Status = "Claude is drafting...";
             var context = await BuildDraftContextAsync(draft, instructions ?? Composer.BodyText.Trim())
                 .ConfigureAwait(true);
-            context = context with { Style = style };
+            var (availability, calendarRead) = await GetAvailabilityQuietlyAsync().ConfigureAwait(true);
+            context = context with { Style = style, Availability = availability };
 
             var text = await _aiDraft
                 .DraftAsync(context, model ?? _settings.ResolveDraftModel())
@@ -683,7 +748,9 @@ public sealed partial class TriageViewModel : ObservableObject
 
             Composer.BodyText = text;
             Composer.CloseSuggestions();
-            Composer.Status = "Drafted - read it before sending. Ctrl+G redoes it.";
+            Composer.Status = calendarRead
+                ? "Drafted - read it before sending. Ctrl+G redoes it."
+                : "Drafted without your calendar - Outlook did not return it in time, so no times were offered. Read it before sending.";
             return true;
         }
         catch (AiUnavailableException ex)
@@ -720,6 +787,45 @@ public sealed partial class TriageViewModel : ObservableObject
             return "";
         }
     }
+
+    /// <summary>
+    /// When the user is free over the next couple of working weeks, for the
+    /// draft to offer times from when the email is about meeting. An
+    /// unreadable calendar never stops a draft: Claude is told not to guess.
+    /// </summary>
+    private async Task<(string Text, bool Read)> GetAvailabilityQuietlyAsync()
+    {
+        var now = _clock.Now;
+        var rules = _settings.Availability;
+        try
+        {
+            // Two weeks of weekdays span at most three calendar weeks, plus the weekend either side.
+            var from = new DateTimeOffset(now.Date, now.Offset).AddDays(1);
+            var to = from.AddDays(rules.WorkingDays / 5 * 7 + 7);
+
+            // Outlook's one thread has no timeout of its own; a stalled Outlook
+            // must not hold the draft at "Claude is drafting..." for ever.
+            var read = _calendar.GetEventsAsync(from, to);
+            if (await Task.WhenAny(read, Task.Delay(AvailabilityTimeout)).ConfigureAwait(true) != read)
+            {
+                _ = read.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe a late failure
+                return (Availability.Unreadable, false);
+            }
+            var events = await read.ConfigureAwait(true);
+
+            // The zone's own name ("(UTC-05:00) Eastern Time (US & Canada)") rather
+            // than today's offset, which would be wrong for days past a clock change.
+            var zone = TimeZoneInfo.Local;
+            var days = Availability.FreeWindows(events, now, rules, zone);
+            return (Availability.Describe(days, now, rules, zone.DisplayName), true);
+        }
+        catch
+        {
+            return (Availability.Unreadable, false);
+        }
+    }
+
+    private static readonly TimeSpan AvailabilityTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// The conversation behind the open draft, as prompt-ready messages. Bodies
@@ -1966,6 +2072,7 @@ public sealed partial class TriageViewModel : ObservableObject
         foreach (var row in rows)
         {
             _allRows.Remove(row);
+            _searchRows.Remove(row);
             Rows.Remove(row);
         }
     }
