@@ -76,6 +76,7 @@ public sealed class KeyMap
         ("x",           TriageAction.ToggleComplete),
         ("shift+p",     TriageAction.CyclePriority),
         ("o",           TriageAction.OpenInOutlook),
+        ("ctrl+p",      TriageAction.SavePdf),
 
         // Action board: arrows between columns, [ ] or Shift+arrows move the card
         ("left",        TriageAction.PrevColumn),

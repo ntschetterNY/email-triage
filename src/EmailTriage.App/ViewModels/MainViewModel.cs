@@ -618,6 +618,10 @@ public sealed partial class MainViewModel : ObservableObject
                 Triage.OpenReplyWithMeetingForSelected();
                 return true;
 
+            case TriageAction.SavePdf:
+                SavePdfRequested?.Invoke(this, EventArgs.Empty);
+                return true;
+
             default:
                 return false;
         }
@@ -672,6 +676,9 @@ public sealed partial class MainViewModel : ObservableObject
                 return false;
         }
     }
+
+    /// <summary>Ctrl+P in triage: the window prints the conversation, since that takes its browser.</summary>
+    public event EventHandler? SavePdfRequested;
 
     /// <summary>Set while the answer or schedule palette was opened from the Calendar tab.</summary>
     private bool _calendarPalette;
@@ -880,6 +887,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.MoveToFolder), "Move to folder (type to search, Ctrl+Enter creates)"),
         ("Triage",  Keys.Describe(TriageAction.Snooze), "Come back to this later"),
         ("Triage",  Keys.Describe(TriageAction.Archive), "Archive"),
+        ("Triage",  Keys.Describe(TriageAction.SavePdf), "Save the conversation as a PDF (also the PDF button)"),
         ("Triage",  Keys.Describe(TriageAction.ToggleRead), "Toggle read / unread"),
         ("Triage",  Keys.Describe(TriageAction.OpenAttachment), "Open an attachment (or click it in the header)"),
         ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move or snooze"),

@@ -123,6 +123,7 @@ their own letters.
 | `e` | Archive |
 | `u` | Toggle read / unread |
 | `Ctrl+O` | Open an attachment |
+| `Ctrl+P` | **Save as PDF** - the whole conversation, every message open (also the **PDF** button in the reading pane) |
 | `z` / `Ctrl+Z` | Undo the last move or snooze |
 
 ### Replying
@@ -191,6 +192,13 @@ every 30 seconds and moves it back, marked unread so it reads as new.
 **The app must be running for a snooze to fire.** Anything that came due while it was
 closed is swept back the moment you next open it. That is the honest trade for not
 installing a background service.
+
+### Save as PDF (`Ctrl+P`)
+The **PDF** button above the reading pane (or `Ctrl+P`) saves the selected conversation
+as a PDF: the subject on top, then every message, newest first, with From, Sent, To, Cc and
+attachment names, on white paper. It asks where to save, suggesting the newest message's
+date and the subject as the file name. Conversations longer than `ThreadMessageLimit`
+note the older messages left out. Remote images follow `BlockRemoteImages`, as on screen.
 
 ### Action items
 Flagging a mail does two things: it applies an Outlook category (so the flag is

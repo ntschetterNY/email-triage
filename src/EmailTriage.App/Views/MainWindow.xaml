@@ -519,8 +519,13 @@
                             BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1"
                             Visibility="{Binding Triage.OpenBody, Converter={StaticResource NullVis}}">
                         <StackPanel>
-                            <TextBlock Text="{Binding Triage.OpenBody.Subject}" FontSize="17"
-                                       FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="PDF" Click="OnSavePdf" Margin="12,0,0,0"
+                                        VerticalAlignment="Top" Style="{StaticResource ReportButton}"
+                                        ToolTip="Save this conversation as a PDF (Ctrl+P)" />
+                                <TextBlock Text="{Binding Triage.OpenBody.Subject}" FontSize="17"
+                                           FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </DockPanel>
                             <Grid Margin="0,7,0,0">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding Triage.OpenBody.SenderName}" FontSize="12" />

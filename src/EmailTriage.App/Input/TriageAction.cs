@@ -67,6 +67,9 @@ public enum TriageAction
     CyclePriority,
     OpenInOutlook,
 
+    /// <summary>Save the selected conversation, every message open, as a PDF.</summary>
+    SavePdf,
+
     // Action board
     PrevColumn,
     NextColumn,
