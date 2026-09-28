@@ -22,6 +22,13 @@ public interface IMailStore : IAsyncDisposable
     /// </summary>
     event EventHandler? InboxChanged;
 
+    /// <summary>
+    /// Raised when the link to Outlook drops for longer than one quick
+    /// reconnect, and again when it comes back. Read <see cref="IsConnected"/>
+    /// for which. Fired on a background thread.
+    /// </summary>
+    event EventHandler? ConnectionChanged;
+
     Task<FolderRef> GetInboxAsync(CancellationToken ct = default);
 
     Task<IReadOnlyList<MailSummary>> GetMailAsync(

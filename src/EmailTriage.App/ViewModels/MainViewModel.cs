@@ -165,6 +165,11 @@ public sealed partial class MainViewModel : ObservableObject
             // WPF, which rejects changes from any thread but its own, so every
             // reaction is posted back to the UI thread first.
             _store.InboxChanged += (_, _) => OnUi(RefreshTriageLiveAsync);
+            _store.ConnectionChanged += (_, _) => OnUi(() =>
+            {
+                ConnectionStatus = _store.IsConnected ? "Connected" : "Lost Outlook - reconnecting...";
+                return Task.CompletedTask;
+            });
 
             Triage.Palette.PropertyChanged += (_, e) =>
             {

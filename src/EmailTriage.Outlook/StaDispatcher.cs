@@ -53,10 +53,10 @@ public sealed class StaDispatcher : IDisposable
                 try { work(); }
                 catch { /* the Task carries the failure back to the caller */ }
             }
-            else
-            {
-                DrainMessageQueue();
-            }
+
+            // After each item as well as when idle: Outlook's item events arrive
+            // as window messages, and a steady run of work would hold them off.
+            DrainMessageQueue();
         }
     }
 

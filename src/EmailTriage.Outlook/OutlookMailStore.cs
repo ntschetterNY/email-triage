@@ -25,9 +25,13 @@ public sealed partial class OutlookMailStore : IMailStore
     private int _lastSeenCount = -1;
     private int _pollInFlight;
 
+    /// <summary>Set once the first connect succeeds; after that, a lost link is always retried.</summary>
+    private bool _hasConnected;
+
     public bool IsConnected { get; private set; }
 
     public event EventHandler? InboxChanged;
+    public event EventHandler? ConnectionChanged;
 
     /// <summary>
     /// How often to re-check the Inbox as a backstop. Outlook's item events
@@ -65,6 +69,7 @@ public sealed partial class OutlookMailStore : IMailStore
         catch { /* already logged on */ }
 
         IsConnected = true;
+        _hasConnected = true;
         PruneInlineImages();
         StartWatching();
         StartPolling();
@@ -76,7 +81,9 @@ public sealed partial class OutlookMailStore : IMailStore
     /// COM pointer we hold is dead and each call fails with "The RPC server is
     /// unavailable". Rather than surface that on every keystroke until the app
     /// is restarted, drop the stale pointers, attach to Outlook again and run
-    /// the call once more.
+    /// the call once more. A reconnect that failed earlier (Outlook was still
+    /// closing or starting) is tried again first, rather than every call
+    /// failing with "not connected" until the app is restarted.
     /// </summary>
     private Task<T> RunAsync<T>(Func<T> work, CancellationToken ct = default) =>
         RunAsync(work, urgent: false, ct);
@@ -84,6 +91,8 @@ public sealed partial class OutlookMailStore : IMailStore
     private Task<T> RunAsync<T>(Func<T> work, bool urgent, CancellationToken ct = default) =>
         _sta.InvokeAsync(() =>
         {
+            if (!IsConnected && _hasConnected) Reconnect();
+
             try { return work(); }
             catch (Exception ex) when (IsOutlookGone(ex))
             {
@@ -122,6 +131,7 @@ public sealed partial class OutlookMailStore : IMailStore
     /// </summary>
     private void Reconnect()
     {
+        var wasConnected = IsConnected;
         ReleaseOpenDrafts();
         StopWatching();
         ComUtil.ReleaseAll(_session, _app);
@@ -129,7 +139,15 @@ public sealed partial class OutlookMailStore : IMailStore
         _app = null;
         IsConnected = false;
 
-        ConnectCore();
+        try { ConnectCore(); }
+        catch
+        {
+            // Cut off until a later try gets through; the poll keeps trying.
+            if (wasConnected) ConnectionChanged?.Invoke(this, EventArgs.Empty);
+            throw;
+        }
+
+        if (!wasConnected) ConnectionChanged?.Invoke(this, EventArgs.Empty);
 
         // Whatever happened while we were cut off, the list is stale.
         SignalInboxChanged();
@@ -150,7 +168,12 @@ public sealed partial class OutlookMailStore : IMailStore
         {
             try
             {
-                if (!IsConnected) return;
+                // An earlier reconnect failed: try again each tick until Outlook is back.
+                if (!IsConnected)
+                {
+                    try { Reconnect(); } catch { /* not back yet; next tick */ }
+                    return;
+                }
 
                 dynamic? inbox = null, items = null;
                 try
@@ -237,7 +260,7 @@ public sealed partial class OutlookMailStore : IMailStore
 
     public Task<IReadOnlyList<MailSummary>> GetMailAsync(
         FolderRef folder, int max, CancellationToken ct = default) =>
-        _sta.InvokeAsync<IReadOnlyList<MailSummary>>(() =>
+        RunAsync<IReadOnlyList<MailSummary>>(() =>
         {
             EnsureConnected();
 
