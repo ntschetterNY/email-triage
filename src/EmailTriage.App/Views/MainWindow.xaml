@@ -1409,6 +1409,10 @@
                                    FontWeight="SemiBold" Foreground="{StaticResource Muted}" />
                         <TextBlock Text="{Binding Triage.Palette.ContextLine}" FontSize="12.5"
                                    Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Triage.Palette.OptionsLine}" FontSize="12"
+                                   Margin="0,4,0,0" Foreground="{StaticResource Accent}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Visibility="{Binding Triage.Palette.OptionsLine, Converter={StaticResource NullVis}}" />
                     </StackPanel>
 
                     <TextBox Grid.Row="1" x:Name="PaletteBox" Margin="16,12,16,10"

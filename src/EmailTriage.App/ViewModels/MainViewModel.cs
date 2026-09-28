@@ -288,7 +288,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             // "3 pm" must reach the box, not move the highlight via `p`.
             if (stroke.IsTyping) return false;
-            return await HandlePaletteKeyAsync(action, ctrlEnter).ConfigureAwait(true);
+            return await HandlePaletteKeyAsync(stroke, action, ctrlEnter).ConfigureAwait(true);
         }
         if (Actions.Editor != EditorMode.None) return await HandleEditorKeyAsync(action, ctrlEnter).ConfigureAwait(true);
 
@@ -380,8 +380,22 @@ public sealed partial class MainViewModel : ObservableObject
         return false;
     }
 
-    private async Task<bool> HandlePaletteKeyAsync(TriageAction action, bool ctrlEnter)
+    private async Task<bool> HandlePaletteKeyAsync(KeyStroke stroke, TriageAction action, bool ctrlEnter)
     {
+        // The meeting palette's switches: Teams, all day, repeat, show as.
+        if (stroke.Modifiers == System.Windows.Input.ModifierKeys.Control)
+        {
+            MeetingSwitch? which = stroke.Key switch
+            {
+                System.Windows.Input.Key.T => MeetingSwitch.Teams,
+                System.Windows.Input.Key.D => MeetingSwitch.AllDay,
+                System.Windows.Input.Key.R => MeetingSwitch.Repeat,
+                System.Windows.Input.Key.B => MeetingSwitch.ShowAs,
+                _ => null,
+            };
+            if (which is { } w && Triage.ToggleMeetingSwitch(w)) return true;
+        }
+
         // Ctrl+Enter has no binding of its own - only plain Enter maps to
         // Confirm - so it must be caught before the action switch.
         if (ctrlEnter)
@@ -402,10 +416,12 @@ public sealed partial class MainViewModel : ObservableObject
 
             case TriageAction.NextMail:
                 Triage.Palette.MoveSelection(1);
+                Triage.UpdateMeetingOptionsLine();
                 return true;
 
             case TriageAction.PrevMail:
                 Triage.Palette.MoveSelection(-1);
+                Triage.UpdateMeetingOptionsLine();
                 return true;
 
             default:
@@ -565,6 +581,10 @@ public sealed partial class MainViewModel : ObservableObject
 
             case TriageAction.ScheduleTime:
                 Triage.OpenScheduleForSelected();
+                return true;
+
+            case TriageAction.ReplyWithMeeting:
+                Triage.OpenReplyWithMeetingForSelected();
                 return true;
 
             default:
@@ -827,6 +847,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         ("Calendar", Keys.Describe(TriageAction.Rsvp), "Answer an invitation - accept, maybe or decline, with a note if you type one"),
         ("Calendar", Keys.Describe(TriageAction.ScheduleTime), "Put the mail or task on your calendar (Ctrl+Enter invites its people instead)"),
+        ("Calendar", Keys.Describe(TriageAction.ReplyWithMeeting), "Reply with a meeting: Ctrl+T Teams, Ctrl+D all day, Ctrl+R repeat, Ctrl+B show as - opens in Outlook to send"),
         ("Calendar", Keys.Describe(TriageAction.JoinMeeting), "Join the meeting on now or about to start - from any tab"),
         ("Calendar", Keys.Describe(TriageAction.Confirm), "On the Calendar tab: join the meeting, or open it in Outlook"),
         ("Calendar", Keys.Describe(TriageAction.OpenInOutlook), "On the Calendar tab: open the meeting in Outlook"),

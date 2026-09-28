@@ -49,6 +49,9 @@ public sealed class AppSettings
     /// <summary>Reminder on blocks made from mail; 0 for none.</summary>
     public int BlockReminderMinutes { get; set; } = 5;
 
+    /// <summary>Whether a reply with a meeting (Shift+S) starts with Teams switched on.</summary>
+    public bool TeamsByDefault { get; set; } = true;
+
     /// <summary>How soon before a meeting the join key picks it over the one you are in.</summary>
     public int JoinLeadMinutes { get; set; } = 10;
 

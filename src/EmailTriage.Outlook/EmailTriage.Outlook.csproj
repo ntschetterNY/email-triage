@@ -11,6 +11,13 @@
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
+  <!-- UI Automation (System.Windows.Automation), which presses the Teams
+       button on a meeting window. Only the framework reference: nothing here
+       draws any WPF, so UseWPF and its implicit usings stay off. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\EmailTriage.Core\EmailTriage.Core.csproj" />
   </ItemGroup>

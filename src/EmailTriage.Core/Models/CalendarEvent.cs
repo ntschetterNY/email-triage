@@ -122,6 +122,33 @@ public sealed record NewCalendarEvent
     public MailRef? AttachMail { get; init; }
 
     public int ReminderMinutes { get; init; } = 5;
+
+    /// <summary>Whole days: <see cref="Start"/> and <see cref="End"/> are midnights.</summary>
+    public bool IsAllDay { get; init; }
+
+    /// <summary>How the time shows on your calendar, and to anyone checking your availability.</summary>
+    public BusyStatus ShowAs { get; init; } = BusyStatus.Busy;
+
+    public Repeat Repeat { get; init; } = Repeat.Once;
+
+    /// <summary>Have Outlook's Teams button add a Teams meeting before it is sent.</summary>
+    public bool AddTeams { get; init; }
+}
+
+/// <summary>How often a new event happens. The pattern follows its first day.</summary>
+public enum Repeat { Once, Daily, Weekdays, Weekly, Fortnightly, Monthly }
+
+/// <summary>What became of the Teams meeting asked for when an invitation was opened in Outlook.</summary>
+public enum TeamsOutcome
+{
+    /// <summary>Not asked for.</summary>
+    None,
+
+    /// <summary>The Teams button was pressed; Outlook fills in the join details.</summary>
+    Added,
+
+    /// <summary>No Teams button was found to press, so it has to be added by hand.</summary>
+    NotFound,
 }
 
 /// <summary>A stretch of time, such as a free slot.</summary>
