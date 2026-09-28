@@ -662,6 +662,21 @@ public partial class MainWindow : Window
         await ViewModel.Calendar.ClickAsync(item.Event);
     }
 
+    /// <summary>
+    /// A double-click on an empty stretch of a day column: a new entry there,
+    /// starting on the half hour clicked and running 30 minutes.
+    /// </summary>
+    private void OnCalendarColumnMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2 || sender is not FrameworkElement { DataContext: CalendarDayColumn day } column) return;
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is CalendarBlock) return; // on a meeting, not a gap
+
+        e.Handled = true;
+        var halfHours = Math.Clamp((int)(e.GetPosition(column).Y / (CalendarViewModel.HourHeight / 2)), 0, 47);
+        var start = new DateTimeOffset(DateTime.SpecifyKind(day.Date.Date.AddMinutes(halfHours * 30), DateTimeKind.Local));
+        ViewModel.NewCalendarEntryAt(start);
+    }
+
     /// <summary>A month day, away from its meetings: open it in the Day view.</summary>
     private void OnMonthDayClick(object sender, MouseButtonEventArgs e)
     {

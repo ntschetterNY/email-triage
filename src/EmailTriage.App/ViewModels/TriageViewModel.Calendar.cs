@@ -18,7 +18,9 @@ public sealed record RsvpTarget(
 /// <summary>
 /// What the schedule palette is putting on the calendar, and who would be
 /// invited: time for yourself (s), or, as a meeting, a reply with an
-/// invitation to everyone on the mail (Shift+S).
+/// invitation to everyone on the mail (Shift+S). Start and Length, when
+/// set, are the time offered until another is typed - a double-click in
+/// the calendar grid.
 /// </summary>
 public sealed record ScheduleTarget(
     string Subject,
@@ -27,7 +29,9 @@ public sealed record ScheduleTarget(
     string Note,
     bool OfferUndo = true,
     bool AsMeeting = false,
-    bool TitleFromQuery = false);
+    bool TitleFromQuery = false,
+    DateTimeOffset? Start = null,
+    TimeSpan? Length = null);
 
 /// <summary>A switch on the meeting palette, each on its own Ctrl key.</summary>
 public enum MeetingSwitch { Teams, AllDay, Repeat, ShowAs }
@@ -392,6 +396,14 @@ public sealed partial class TriageViewModel
                 "Enter opens it in Outlook to send · Ctrl+T Teams · Ctrl+D all day · Ctrl+R repeat · Ctrl+B show as · Esc cancel",
                 $"{target.Subject}  ·  with {who}");
         }
+        else if (target is { TitleFromQuery: true, Start: { } at })
+        {
+            Palette.Open(
+                PaletteMode.Schedule,
+                "New calendar entry",
+                $"Type a title - Enter adds it {CalendarMath.DayLabel(at.Date, _clock.Now.Date)} at {at:HH:mm}, or type another time · Esc cancel",
+                "");
+        }
         else if (target.TitleFromQuery)
         {
             Palette.Open(
@@ -439,13 +451,15 @@ public sealed partial class TriageViewModel
     {
         var now = _clock.Now;
         var query = Palette.Query.Trim();
-        var length = TimeSpan.FromMinutes(Math.Max(5, _settings.DefaultEventMinutes));
+        var length = _schedule?.Length ?? TimeSpan.FromMinutes(Math.Max(5, _settings.DefaultEventMinutes));
         DateTimeOffset? start = null;
 
         if (_schedule is { TitleFromQuery: true })
         {
-            // Title and time in one box; no time yet just means "offer free slots".
+            // Title and time in one box; no time yet just means "offer free slots",
+            // or the slot double-clicked in the grid.
             EventTimeParser.TryParseWithTitle(query, now, out _scheduleTitle, out start, out var typed, _settings.DayShape);
+            start ??= _schedule.Start;
             length = typed ?? length;
             Palette.ContextLine = _scheduleTitle.Length > 0 ? _scheduleTitle : "(type a title)";
         }

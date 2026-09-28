@@ -693,6 +693,17 @@ public sealed partial class MainViewModel : ObservableObject
         Triage.OpenSchedulePalette(new ScheduleTarget("", null, Array.Empty<string>(), "", TitleFromQuery: true));
     }
 
+    /// <summary>How long an entry made with a double-click in the calendar grid runs.</summary>
+    private static readonly TimeSpan DoubleClickLength = TimeSpan.FromMinutes(30);
+
+    /// <summary>A double-click in the calendar grid: a new entry at that time, half an hour long.</summary>
+    public void NewCalendarEntryAt(DateTimeOffset start)
+    {
+        _calendarPalette = true;
+        Triage.OpenSchedulePalette(new ScheduleTarget(
+            "", null, Array.Empty<string>(), "", TitleFromQuery: true, Start: start, Length: DoubleClickLength));
+    }
+
     /// <summary>y on the Calendar tab: answer the meeting straight from the calendar.</summary>
     public void AnswerSelectedMeeting()
     {
