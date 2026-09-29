@@ -1488,6 +1488,47 @@ public sealed partial class TriageViewModel : ObservableObject
         RefreshPalette();
     }
 
+    /// <summary>
+    /// Shift+V: pick any folder and show it in Outlook's own window. Needs no
+    /// message selected, so it works from an empty inbox too.
+    /// </summary>
+    public async Task OpenFolderInOutlookPaletteAsync()
+    {
+        Palette.Open(
+            PaletteMode.OpenFolder,
+            "Open folder in Outlook",
+            "Enter open in Outlook · Esc cancel",
+            "Type part of a folder's name or path");
+
+        if (!_folders.IsIndexed)
+        {
+            Palette.SetEntries(new[]
+            {
+                new PaletteEntry("Reading folder list...", "", new object(), Array.Empty<int>())
+            });
+        }
+
+        await _folders.EnsureIndexedAsync().ConfigureAwait(true);
+        RefreshPalette();
+    }
+
+    private async Task ConfirmOpenFolderAsync()
+    {
+        var picked = Palette.Selected?.Payload as FolderNode;
+        Palette.Close();
+        if (picked is null) return;
+
+        try
+        {
+            await _store.ShowFolderAsync(picked.Ref).ConfigureAwait(true);
+            Status = $"Opened {picked.Name} in Outlook";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not open {picked.Name} in Outlook: {ex.Message}";
+        }
+    }
+
     /// <summary>What a palette is about to act on: one subject, or a count.</summary>
     private string TargetsLabel()
     {
@@ -1502,6 +1543,7 @@ public sealed partial class TriageViewModel : ObservableObject
         switch (Palette.Mode)
         {
             case PaletteMode.Folder: RefreshFolderPalette(); break;
+            case PaletteMode.OpenFolder: RefreshFolderPalette(); break;
             case PaletteMode.Attachment: RefreshAttachmentPalette(); break;
             case PaletteMode.Rsvp: RefreshRsvpPalette(); break;
             case PaletteMode.Schedule: RefreshSchedulePalette(); break;
@@ -1511,24 +1553,47 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private void RefreshFolderPalette()
     {
-        var matches = _folders.Search(Palette.Query);
+        var matches = _folders.Search(Palette.Query).Select(m => m.Folder).ToList();
+        var typed = Palette.Query.Trim();
 
-        Palette.SetEntries(matches.Select(m => new PaletteEntry(
-            m.Folder.Name,
-            TrimPath(m.Folder.Path, m.Folder.Name),
-            m.Folder,
-            m.NameHighlights)));
+        // A name typed the way the user names folders ("Elara - Field
+        // Reports - Rimkus") finds the nested folder it stands for.
+        if (NestedLevels(typed) is { } levels && _folders.FindByLevels(levels) is { } nested)
+        {
+            matches.RemoveAll(f => f.Ref.EntryId == nested.Ref.EntryId);
+            matches.Insert(0, nested);
+        }
+
+        Palette.SetEntries(matches.Select(f => new PaletteEntry(
+            f.Name,
+            TrimPath(f.Path, f.Name),
+            f,
+            // Recomputed rather than carried: the nested hit has none.
+            typed.Length > 0 && FuzzyMatcher.Score(typed, f.Name, out var pos) is not null ? pos : Array.Empty<int>())));
 
         // When nothing matches, offer to create what was typed rather than
         // making the user leave and go build the folder in Outlook.
-        var typed = Palette.Query.Trim();
-        Palette.CreatePrompt = matches.Count == 0 && typed.Length > 0
+        Palette.CreatePrompt = Palette.Mode == PaletteMode.Folder && matches.Count == 0 && typed.Length > 0
             ? BuildCreatePrompt(typed)
             : null;
     }
 
+    /// <summary>
+    /// Where a typed name nests under the folder scheme on the Settings page,
+    /// from the top of the mailbox; null when it is not in the scheme or
+    /// nesting new folders is off.
+    /// </summary>
+    private IReadOnlyList<string>? NestedLevels(string typed)
+    {
+        if (!_settings.NestNewFolders || typed.IndexOfAny(new[] { '\\', '/' }) >= 0) return null;
+        return FolderOrganizer.NewFolderLevels(typed, _settings.GetFolderScheme(), _settings.FolderHome);
+    }
+
     private string BuildCreatePrompt(string typed)
     {
+        if (NestedLevels(typed) is { } levels)
+            return $"Create {string.Join(" › ", levels)} and move here";
+
         var (parent, name) = _folders.ResolveCreationTarget(typed);
         return parent is null
             ? $"Create \"{name}\" at the top level and move here"
@@ -1548,6 +1613,7 @@ public sealed partial class TriageViewModel : ObservableObject
         switch (Palette.Mode)
         {
             case PaletteMode.Folder: await ConfirmFolderAsync(forceCreate).ConfigureAwait(true); break;
+            case PaletteMode.OpenFolder: await ConfirmOpenFolderAsync().ConfigureAwait(true); break;
             case PaletteMode.Attachment:
                 var pick = Palette.Selected?.Payload as MailAttachment;
                 Palette.Close();
@@ -1686,11 +1752,18 @@ public sealed partial class TriageViewModel : ObservableObject
             {
                 if (typed.Length == 0) return;
 
-                var (parent, name) = _folders.ResolveCreationTarget(typed);
-                target = await _store
-                    .CreateFolderAsync(parent?.Ref ?? default, name).ConfigureAwait(true);
+                if (NestedLevels(typed) is { } levels)
+                {
+                    target = await CreateNestedAsync(levels).ConfigureAwait(true);
+                }
+                else
+                {
+                    var (parent, name) = _folders.ResolveCreationTarget(typed);
+                    target = await _store
+                        .CreateFolderAsync(parent?.Ref ?? default, name).ConfigureAwait(true);
+                    _folders.AddToIndex(target);
+                }
 
-                _folders.AddToIndex(target);
                 Status = $"Created {target.Path}";
             }
             else if (Palette.Selected?.Payload is FolderNode picked)
@@ -1710,6 +1783,21 @@ public sealed partial class TriageViewModel : ObservableObject
             Palette.Close();
             Status = $"Move failed: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Makes each level from the top of the mailbox down, reusing any that
+    /// already exist, and returns the innermost.
+    /// </summary>
+    private async Task<FolderNode> CreateNestedAsync(IReadOnlyList<string> levels)
+    {
+        FolderNode? node = null;
+        foreach (var level in levels)
+        {
+            node = await _store.CreateFolderAsync(node?.Ref ?? default, level).ConfigureAwait(true);
+            _folders.AddToIndex(node);
+        }
+        return node!;
     }
 
     private Task MoveSelectedAsync(FolderNode target) =>

@@ -114,6 +114,197 @@ public sealed partial class OutlookMailStore
             finally { ComUtil.ReleaseAll(created, folders, parentFolder); }
         }, ct);
 
+    /// <summary>olNormalWindow / olMinimized, as Explorer.WindowState reports them.</summary>
+    private const int OlNormalWindow = 2;
+    private const int OlMinimized = 1;
+
+    public Task ShowFolderAsync(FolderRef folder, CancellationToken ct = default) =>
+        RunAsync(() =>
+        {
+            EnsureConnected();
+
+            dynamic? target = null, explorer = null;
+            try
+            {
+                target = _session!.GetFolderFromID(folder.EntryId, folder.StoreId);
+
+                // Switch the window already open rather than stacking new ones.
+                explorer = ComUtil.Try<object?>(() => _app!.ActiveExplorer());
+                if (explorer is null)
+                {
+                    target!.Display();
+                    return;
+                }
+
+                explorer.CurrentFolder = target;
+                if (ComUtil.Int(() => explorer!.WindowState) == OlMinimized)
+                    explorer.WindowState = OlNormalWindow;
+                explorer.Activate();
+            }
+            finally { ComUtil.ReleaseAll(explorer, target); }
+        }, ct);
+
+    public Task<FolderNode> MoveFolderAsync(
+        FolderRef folder, string targetPath, CancellationToken ct = default) =>
+        RunAsync(() =>
+        {
+            EnsureConnected();
+
+            var segments = targetPath.Split(
+                new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (segments.Length == 0)
+                throw new ArgumentException("No folder to move to.", nameof(targetPath));
+            if (segments.Any(s => s.IndexOfAny(new[] { ':', '[', ']' }) >= 0))
+                throw new ArgumentException("A folder name cannot contain : [ or ]", nameof(targetPath));
+
+            dynamic? source = null, store = null, parent = null, existing = null;
+            try
+            {
+                source = _session!.GetFolderFromID(folder.EntryId, folder.StoreId);
+                var sourceId = ComUtil.Str(() => source!.EntryID);
+                store = source!.Store;
+                var storeName = ComUtil.Str(() => store!.DisplayName);
+
+                if (IsUnderDeletedItems((object)source!, (object)store!))
+                    throw new InvalidOperationException("It is in Deleted Items.");
+
+                // Walk down from the top of the folder's own mailbox, making
+                // whatever is missing, to the folder it will sit in.
+                parent = store!.GetRootFolder();
+                foreach (var segment in segments[..^1])
+                {
+                    ct.ThrowIfCancellationRequested();
+                    dynamic? folders = null, next = null;
+                    try
+                    {
+                        folders = parent!.Folders;
+                        next = ComUtil.Try<object?>(() => folders![segment]) ?? folders.Add(segment);
+
+                        if (ComUtil.Str(() => next!.EntryID) == sourceId)
+                            throw new InvalidOperationException("A folder cannot be moved inside itself.");
+
+                        ComUtil.Release(parent);
+                        parent = next;
+                        next = null;
+                    }
+                    finally { ComUtil.ReleaseAll(next, folders); }
+                }
+
+                var leaf = segments[^1];
+                existing = ComUtil.Try<object?>(() => parent!.Folders[leaf]);
+
+                if (existing is not null && ComUtil.Str(() => existing!.EntryID) != sourceId)
+                {
+                    MergeInto((object)source!, (object)existing!, ct);
+
+                    // Only an emptied original is thrown away; anything that
+                    // would not move stays put, where the user can see it.
+                    if (IsEmpty((object)source!)) source!.Delete();
+                    else throw new InvalidOperationException(
+                        $"Merged into {ComUtil.Str(() => existing!.FolderPath).TrimStart('\\')}, but some items would not move and were left in the original.");
+
+                    return ToNode((object)existing!, storeName);
+                }
+
+                var parentId = ComUtil.Str(() => parent!.EntryID);
+                var currentParentId = ComUtil.Str(() => source!.Parent.EntryID);
+                if (parentId != currentParentId) source!.MoveTo(parent);
+
+                // Re-read it: a moved folder keeps its EntryID within a mailbox,
+                // and the old reference may not follow the move.
+                ComUtil.Release(source);
+                source = _session!.GetFolderFromID(folder.EntryId, folder.StoreId);
+
+                if (!string.Equals(ComUtil.Str(() => source!.Name), leaf, StringComparison.Ordinal))
+                    source!.Name = leaf;
+
+                return ToNode((object)source!, storeName);
+            }
+            finally { ComUtil.ReleaseAll(existing, parent, store, source); }
+        }, ct);
+
+    /// <summary>
+    /// Moves every item and subfolder of <paramref name="fromObj"/> into
+    /// <paramref name="intoObj"/>, merging subfolders that share a name.
+    /// </summary>
+    private void MergeInto(object fromObj, object intoObj, CancellationToken ct)
+    {
+        dynamic from = fromObj, into = intoObj;
+
+        dynamic? items = null;
+        try
+        {
+            items = from.Items;
+
+            // Backwards: each move shortens the collection.
+            for (int i = ComUtil.Int(() => items!.Count); i >= 1; i--)
+            {
+                ct.ThrowIfCancellationRequested();
+                dynamic? item = null, moved = null;
+                try
+                {
+                    item = items![i];
+                    moved = item!.Move(into);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { /* left behind; the caller sees the folder is not empty */ }
+                finally { ComUtil.ReleaseAll(moved, item); }
+            }
+        }
+        finally { ComUtil.Release(items); }
+
+        dynamic? subs = null, targets = null;
+        try
+        {
+            subs = from.Folders;
+            targets = into.Folders;
+            for (int i = ComUtil.Int(() => subs!.Count); i >= 1; i--)
+            {
+                ct.ThrowIfCancellationRequested();
+                dynamic? sub = null, twin = null;
+                try
+                {
+                    sub = subs![i];
+                    var name = ComUtil.Str(() => sub!.Name);
+                    twin = ComUtil.Try<object?>(() => targets![name]);
+
+                    if (twin is null)
+                    {
+                        sub!.MoveTo(into);
+                    }
+                    else
+                    {
+                        MergeInto((object)sub!, (object)twin!, ct);
+                        if (IsEmpty((object)sub!)) sub!.Delete();
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { /* left behind */ }
+                finally { ComUtil.ReleaseAll(twin, sub); }
+            }
+        }
+        finally { ComUtil.ReleaseAll(targets, subs); }
+    }
+
+    private static bool IsEmpty(object folderObj)
+    {
+        dynamic folder = folderObj;
+        return ComUtil.Int(() => folder.Items.Count, 1) == 0
+            && ComUtil.Int(() => folder.Folders.Count, 1) == 0;
+    }
+
+    private static bool IsUnderDeletedItems(object folderObj, object storeObj)
+    {
+        dynamic store = storeObj;
+        var deleted = ComUtil.Str(() => store.GetDefaultFolder(FolderDeletedItems).FolderPath);
+        if (deleted.Length == 0) return false;
+
+        dynamic folder = folderObj;
+        var path = ComUtil.Str(() => folder.FolderPath);
+        return path.StartsWith(deleted + "\\", StringComparison.OrdinalIgnoreCase)
+            || path.Equals(deleted, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static FolderNode ToNode(object folderObj, string storeName)
     {
         dynamic folder = folderObj;

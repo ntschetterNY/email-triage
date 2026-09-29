@@ -45,6 +45,7 @@ public partial class MainWindow : Window
 
         viewModel.PropertyChanged += OnViewModelChanged;
         viewModel.SavePdfRequested += async (_, _) => await SavePdfAsync();
+        viewModel.SettingsRequested += (_, _) => ShowSettings();
         viewModel.Triage.PropertyChanged += OnTriageChanged;
         viewModel.Triage.Palette.PropertyChanged += OnPaletteChanged;
         viewModel.Triage.Composer.PropertyChanged += OnComposerChanged;
@@ -571,6 +572,13 @@ public partial class MainWindow : Window
     }
 
     private async void OnComposeClick(object sender, RoutedEventArgs e) => await ViewModel.ComposeAsync();
+
+    private void OnSettingsClick(object sender, RoutedEventArgs e) => ShowSettings();
+
+    private void ShowSettings()
+    {
+        new SettingsWindow(ViewModel.CreateSettings()) { Owner = this }.ShowDialog();
+    }
 
     // ---- calendar ------------------------------------------------------------
 

@@ -195,6 +195,22 @@ public sealed class FolderSearchService
     }
 
     /// <summary>
+    /// The folder at the end of <paramref name="levels"/> ("Elara", "Field
+    /// Reports", "Rimkus"), wherever that chain sits; the shallowest when
+    /// there are several. Null when no folder has that path.
+    /// </summary>
+    public FolderNode? FindByLevels(IReadOnlyList<string> levels)
+    {
+        if (levels.Count == 0) return null;
+        var suffix = string.Join('\\', levels);
+
+        return _index
+            .Where(f => IsPathSuffix(f.Path, suffix))
+            .OrderBy(f => f.Depth)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
     /// True when <paramref name="suffix"/> matches whole trailing segments of
     /// <paramref name="path"/>. Guards against "Clients\Acme" matching
     /// "Mailbox\OtherClients\Acme" on a plain string comparison.

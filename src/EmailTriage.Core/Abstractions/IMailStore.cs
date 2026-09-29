@@ -57,6 +57,18 @@ public interface IMailStore : IAsyncDisposable
     Task<FolderNode> CreateFolderAsync(
         FolderRef parent, string name, CancellationToken ct = default);
 
+    /// <summary>Shows a folder in Outlook's main window, opening one if none is.</summary>
+    Task ShowFolderAsync(FolderRef folder, CancellationToken ct = default);
+
+    /// <summary>
+    /// Moves a folder, with everything in it, to <paramref name="targetPath"/>
+    /// - measured from the top of the folder's own mailbox, leaf name last -
+    /// creating any folders on the way and renaming it to the leaf. When a
+    /// folder is already there, the contents are merged into it and the
+    /// emptied original goes to Deleted Items. Returns where it ended up.
+    /// </summary>
+    Task<FolderNode> MoveFolderAsync(FolderRef folder, string targetPath, CancellationToken ct = default);
+
     /// <summary>
     /// Moves an item and returns its new location: the EntryId changes, so the
     /// caller must replace any reference it was holding with this result.

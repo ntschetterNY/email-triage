@@ -87,6 +87,12 @@ public sealed class FakeMailStore : IMailStore
         return Task.FromResult(node);
     }
 
+    public Task ShowFolderAsync(FolderRef folder, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by these tests.");
+
+    public Task<FolderNode> MoveFolderAsync(FolderRef folder, string targetPath, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by these tests.");
+
     public Task<IReadOnlyList<MailSummary>> GetMailAsync(
         FolderRef folder, int max, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<MailSummary>>(Array.Empty<MailSummary>());

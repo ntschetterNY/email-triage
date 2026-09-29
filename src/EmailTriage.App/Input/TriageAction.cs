@@ -124,4 +124,12 @@ public enum TriageAction
 
     /// <summary>Ask the inbox a question in plain language; Claude picks the matches.</summary>
     AiSearch,
+
+    // Folders
+
+    /// <summary>Pick a folder and show it in Outlook's window. Bound to Shift+V.</summary>
+    OpenFolderInOutlook,
+
+    /// <summary>The Settings page: folder naming, nesting and organizing. Bound to Ctrl+,.</summary>
+    OpenSettings,
 }
