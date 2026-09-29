@@ -56,7 +56,7 @@ public enum TriageAction
     Cancel,
     Confirm,
 
-    /// <summary>Reverses the last move, snooze or archive.</summary>
+    /// <summary>Reverses the last move, snooze, archive, flag, read change or calendar block.</summary>
     Undo,
 
     // Action-list specific

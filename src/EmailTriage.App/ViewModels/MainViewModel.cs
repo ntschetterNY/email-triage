@@ -695,8 +695,10 @@ public sealed partial class MainViewModel : ObservableObject
                 await Triage.ArchiveAsync().ConfigureAwait(true);
                 return true;
 
+            // Undoing a flag changes the board too.
             case TriageAction.Undo:
                 await Triage.UndoAsync().ConfigureAwait(true);
+                await Actions.LoadAsync().ConfigureAwait(true);
                 return true;
 
             case TriageAction.Search:
@@ -1015,7 +1017,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.SavePdf), "Save the conversation as a PDF (also the PDF button)"),
         ("Triage",  Keys.Describe(TriageAction.ToggleRead), "Toggle read / unread"),
         ("Triage",  Keys.Describe(TriageAction.OpenAttachment), "Open an attachment (or click it in the header)"),
-        ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move or snooze"),
+        ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move, snooze, flag, read change or calendar block"),
 
         ("Reply",   Keys.Describe(TriageAction.Compose), "New message, from any tab (Ctrl+Shift+S jumps to its subject)"),
         ("Reply",   ReplyAllKey, "Reply to everyone"),

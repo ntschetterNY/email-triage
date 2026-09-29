@@ -8,8 +8,13 @@ using EmailTriage.Core.Services;
 
 namespace EmailTriage.App.ViewModels;
 
-/// <summary>Remembers one reversible triage action.</summary>
-internal sealed record UndoStep(string Description, Func<Task> Revert);
+/// <summary>
+/// Remembers one reversible triage action. A step is recorded the moment the
+/// key is pressed, before any background Outlook work finishes, so undo always
+/// meets the newest action first; <see cref="IsEmpty"/> reports that the work
+/// then came to nothing and there is nothing to revert.
+/// </summary>
+internal sealed record UndoStep(string Description, Func<Task> Revert, Func<bool>? IsEmpty = null);
 
 /// <summary>
 /// The inbox triage surface: the list, the reading pane, and the commands that
@@ -31,7 +36,7 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private FolderRef _inbox;
     private FolderRef? _sent;
-    private readonly Stack<UndoStep> _undo = new();
+    private readonly List<UndoStep> _undo = new();
     private CancellationTokenSource? _bodyLoad;
     private CancellationTokenSource? _prefetch;
 
@@ -1398,9 +1403,14 @@ public sealed partial class TriageViewModel : ObservableObject
         Status = required ? $"Flagged for action · {what}" : $"Marked as needing no action · {what}";
 
         string? error = null;
+        var changed = new List<(MailRowViewModel Row, ActionItem? Removed)>();
         foreach (var row in rows)
         {
-            try { await SetActionRequiredAsync(row.Summary, required, row, before[row]).ConfigureAwait(true); }
+            try
+            {
+                var removed = await SetActionRequiredAsync(row.Summary, required, row, before[row]).ConfigureAwait(true);
+                if (before[row] != required) changed.Add((row, removed));
+            }
             catch (Exception ex)
             {
                 row.IsActionRequired = before[row];
@@ -1408,12 +1418,36 @@ public sealed partial class TriageViewModel : ObservableObject
             }
         }
 
+        if (changed.Count > 0)
+        {
+            PushUndo(required ? "flag for action" : "no action", async () =>
+            {
+                foreach (var (row, removed) in changed)
+                {
+                    row.IsActionRequired = !required;
+                    if (removed is not null)
+                    {
+                        // Put the task back as it was, notes and priority included.
+                        await _actions.UpsertAsync(removed).ConfigureAwait(true);
+                        _ = SetCategoryInBackgroundAsync(row, row.Summary.Ref, true, false);
+                    }
+                    else
+                    {
+                        await SetActionRequiredAsync(row.Summary, !required, row, required).ConfigureAwait(true);
+                    }
+                }
+            });
+        }
+
         if (error is not null) Status = $"Could not update that message: {error}";
     }
 
-    private async Task SetActionRequiredAsync(
+    /// <summary>Returns the task that clearing the flag removed, if there was one, for undo.</summary>
+    private async Task<ActionItem?> SetActionRequiredAsync(
         MailSummary summary, bool required, MailRowViewModel? row = null, bool wasActionRequired = false)
     {
+        ActionItem? removed = null;
+
         // The local record is awaited (it is what the action board reads
         // the moment this returns); the Outlook category write is not.
         if (required)
@@ -1436,10 +1470,14 @@ public sealed partial class TriageViewModel : ObservableObject
                 .GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
 
             if (existing is not null)
+            {
                 await _actions.DeleteAsync(existing.Id).ConfigureAwait(true);
+                removed = existing;
+            }
         }
 
         _ = SetCategoryInBackgroundAsync(row, summary.Ref, required, wasActionRequired);
+        return removed;
     }
 
     /// <summary>
@@ -1466,19 +1504,33 @@ public sealed partial class TriageViewModel : ObservableObject
 
         try
         {
-            if (row.IsUnread)
+            var previous = row.Thread;
+            var read = row.IsUnread;
+            var changed = new List<MailRef>();
+
+            if (read)
             {
                 // Reading the conversation clears all of it...
                 foreach (var m in row.InboxMessages.Where(m => m.IsUnread))
+                {
                     await _store.SetReadAsync(m.Ref, true).ConfigureAwait(true);
+                    changed.Add(m.Ref);
+                }
                 row.Refresh(row.Thread.WithInboxUnread(false));
             }
             else
             {
                 // ...but "come back to this" only needs the newest message bold.
                 await _store.SetReadAsync(row.Summary.Ref, false).ConfigureAwait(true);
+                changed.Add(row.Summary.Ref);
                 row.Refresh(row.Thread.WithLatestInboxUnread());
             }
+
+            PushUndo(read ? "mark read" : "mark unread", async () =>
+            {
+                foreach (var m in changed) await _store.SetReadAsync(m, !read).ConfigureAwait(true);
+                row.Refresh(previous);
+            });
         }
         catch (Exception ex)
         {
@@ -1837,12 +1889,20 @@ public sealed partial class TriageViewModel : ObservableObject
         if (rows.Count == 0) return Task.CompletedTask;
 
         var origin = _inbox;
+        var moved = new List<MailRef>();
         TakeOut(rows);
         Status = rows.Count == 1 ? $"Moved to {targetName}" : $"Moved {rows.Count} conversations to {targetName}";
 
+        // Recorded now, not when Outlook finishes, so anything done in the
+        // meantime cannot slip underneath it in the undo order.
+        PushUndo($"move to {targetName}", async () =>
+        {
+            foreach (var m in moved) await _store.MoveAsync(m, origin).ConfigureAwait(true);
+            await LoadAsync().ConfigureAwait(true);
+        }, () => moved.Count == 0);
+
         return RunInBackground(async () =>
         {
-            var moved = new List<MailRef>();
             string? error = null;
             FolderNode? target = null;
 
@@ -1867,15 +1927,6 @@ public sealed partial class TriageViewModel : ObservableObject
             }
             catch (Exception ex) { error ??= ex.Message; }
             finally { Settle(rows); }
-
-            if (moved.Count > 0 && target is not null)
-            {
-                PushUndo($"move to {target.Name}", async () =>
-                {
-                    foreach (var m in moved) await _store.MoveAsync(m, origin).ConfigureAwait(true);
-                    await LoadAsync().ConfigureAwait(true);
-                });
-            }
 
             if (error is not null)
             {
@@ -1955,13 +2006,24 @@ public sealed partial class TriageViewModel : ObservableObject
         if (rows.Count == 0) return Task.CompletedTask;
 
         var origin = _inbox;
+        var moved = new List<(MailRef Ref, long SnoozeId)>();
         TakeOut(rows);
         Status = (rows.Count == 1 ? "" : $"{rows.Count} conversations · ")
                + $"Back in your inbox {Humanise(when - _clock.Now)} · {when:ddd d MMM HH:mm}";
 
+        // Recorded now, like a move, so it keeps its place in the undo order.
+        PushUndo("snooze", async () =>
+        {
+            foreach (var (m, id) in moved)
+            {
+                await _store.MoveAsync(m, origin).ConfigureAwait(true);
+                await _snoozes.CancelAsync(id).ConfigureAwait(true);
+            }
+            await LoadAsync().ConfigureAwait(true);
+        }, () => moved.Count == 0);
+
         return RunInBackground(async () =>
         {
-            var moved = new List<(MailRef Ref, long SnoozeId)>();
             string? error = null;
 
             try
@@ -1997,19 +2059,6 @@ public sealed partial class TriageViewModel : ObservableObject
             }
             catch (Exception ex) { error ??= ex.Message; }
             finally { Settle(rows); }
-
-            if (moved.Count > 0)
-            {
-                PushUndo("snooze", async () =>
-                {
-                    foreach (var (m, id) in moved)
-                    {
-                        await _store.MoveAsync(m, origin).ConfigureAwait(true);
-                        await _snoozes.CancelAsync(id).ConfigureAwait(true);
-                    }
-                    await LoadAsync().ConfigureAwait(true);
-                });
-            }
 
             if (error is not null)
             {
@@ -2159,20 +2208,26 @@ public sealed partial class TriageViewModel : ObservableObject
 
     public async Task UndoAsync()
     {
-        // A move still running has not pushed its undo step yet.
+        // A move still running has not filled in what its undo step reverts yet.
         if (!_writes.IsCompleted)
         {
             Status = "Finishing up...";
             try { await _writes.ConfigureAwait(true); } catch { }
         }
 
+        // A move or snooze that failed outright moved nothing: skip past it.
+        while (_undo.Count > 0 && _undo[^1].IsEmpty?.Invoke() == true)
+            _undo.RemoveAt(_undo.Count - 1);
+
         if (_undo.Count == 0)
         {
+            OnPropertyChanged(nameof(CanUndo));
             Status = "Nothing to undo";
             return;
         }
 
-        var step = _undo.Pop();
+        var step = _undo[^1];
+        _undo.RemoveAt(_undo.Count - 1);
         OnPropertyChanged(nameof(CanUndo));
 
         try
@@ -2186,13 +2241,13 @@ public sealed partial class TriageViewModel : ObservableObject
         }
     }
 
-    private void PushUndo(string description, Func<Task> revert)
+    private void PushUndo(string description, Func<Task> revert, Func<bool>? isEmpty = null)
     {
-        _undo.Push(new UndoStep(description, revert));
+        _undo.Add(new UndoStep(description, revert, isEmpty));
 
-        // One level of regret is enough; more would be misleading once the
-        // underlying items have shifted around.
-        while (_undo.Count > 10) _undo.Pop();
+        // Ten steps back is plenty; past that the underlying items have shifted
+        // around too much. The oldest is forgotten, never the one just made.
+        while (_undo.Count > 10) _undo.RemoveAt(0);
 
         OnPropertyChanged(nameof(CanUndo));
     }
