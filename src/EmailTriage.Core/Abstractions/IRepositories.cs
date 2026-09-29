@@ -34,6 +34,14 @@ public interface IActionItemRepository
     Task UpdateLocationAsync(
         string internetMessageId, string entryId, string storeId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Points an item at the mail it was waiting for: a message just sent has
+    /// no Message-ID until its copy lands in Sent Items, so it is filed under
+    /// a placeholder and repointed here once found.
+    /// </summary>
+    Task ReplaceMessageIdAsync(
+        long id, string internetMessageId, string entryId, string storeId, CancellationToken ct = default);
+
     /// <summary>People previously assigned work, most recent first, for autocomplete.</summary>
     Task<IReadOnlyList<(string Name, string Email)>> GetKnownAssigneesAsync(
         CancellationToken ct = default);

@@ -42,6 +42,17 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private int _pendingSnoozeCount;
     [ObservableProperty] private int _pendingScheduledCount;
 
+    /// <summary>
+    /// A follow-up reply being written from the board: the card, and the mail
+    /// the reply answers. It counts as chased once that reply is sent.
+    /// </summary>
+    private (ActionItem Item, MailRef Target)? _chase;
+
+    /// <summary>The tab's label, with how many follow-ups are due when any are.</summary>
+    public string ActionsTabTitle => Actions.ScheduledFollowUpCount > 0
+        ? $"Action items · {Actions.ScheduledFollowUpCount} to follow up"
+        : "Action items";
+
     /// <summary>Top-bar AI readout: today's calls, tokens and cost, and which account pays.</summary>
     [ObservableProperty] private string _aiUsageText = "";
     [ObservableProperty] private string _aiUsageDetail = "";
@@ -92,7 +103,11 @@ public sealed partial class MainViewModel : ObservableObject
             if (_calendarPalette && Section == Section.Calendar) Calendar.Status = Triage.Status;
             OnPropertyChanged(nameof(StatusText));
         };
-        Actions.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(ActionItemsViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
+        Actions.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ActionItemsViewModel.Status)) OnPropertyChanged(nameof(StatusText));
+            if (e.PropertyName == nameof(ActionItemsViewModel.ScheduledFollowUpCount)) OnPropertyChanged(nameof(ActionsTabTitle));
+        };
         Calendar.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(CalendarViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
 
         // Answering, blocking time or undoing a block: the agenda and strip reread.
@@ -119,7 +134,19 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 status = $"{status} · {await Triage.RecordFollowUpAsync(sent.InReplyTo, followUp).ConfigureAwait(true)}";
                 if (Section == Section.Actions) Actions.Status = status;
-                _ = Actions.LoadAsync();
+                await Actions.LoadAsync().ConfigureAwait(true);
+
+                // A new message: its card finds the email once Outlook files the sent copy.
+                if (sent.InReplyTo.IsEmpty) _ = Actions.ResolveSentCopiesSoonAsync();
+            }
+
+            // The follow-up written from the Follow up column went: the card goes back to Waiting.
+            if (_chase is { } chase && !sent.InReplyTo.IsEmpty && sent.InReplyTo == chase.Target)
+            {
+                _chase = null;
+                await Actions.MarkFollowedUpAsync(chase.Item).ConfigureAwait(true);
+                status = $"{status} · followed up, back in Waiting";
+                if (Section == Section.Actions) Actions.Status = status;
             }
 
             if (sent.MarkDone)
@@ -253,6 +280,7 @@ public sealed partial class MainViewModel : ObservableObject
             await Triage.LoadAsync().ConfigureAwait(true);
             ConnectionStatus = "Connected";
             await Actions.LoadAsync().ConfigureAwait(true);
+            Actions.StartDayWatch();
 
             // The strip in the top bar needs the calendar whichever tab is showing.
             await Calendar.RefreshQuietlyAsync().ConfigureAwait(true);
@@ -868,13 +896,28 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (Actions.Selected is not { } item) return;
 
-        if (Actions.SelectedChasesAssignee)
+        // A follow-up whose day has come is chased first: one set while
+        // sending gets a reply in that same thread, a dated hand-off its own mail.
+        var scheduled = FollowUpPlanner.Scheduled(item, _clock.Now);
+        if (scheduled?.Handoff is { InThread: true } asked && !item.IsAwaitingSentCopy)
+        {
+            await ChaseInThreadAsync(item, scheduled, asked).ConfigureAwait(true);
+            return;
+        }
+
+        if (scheduled?.Handoff is { PersonEmail.Length: > 0 } dated)
+        {
+            await Actions.ChaseAsync(dated).ConfigureAwait(true);
+            return;
+        }
+
+        if (scheduled is null && Actions.SelectedChasesAssignee)
         {
             await Actions.ChaseAsync().ConfigureAwait(true);
             return;
         }
 
-        if (FollowUpPlanner.Describe(item, _clock.UtcNow) is not { } due)
+        if ((scheduled ?? FollowUpPlanner.Describe(item, _clock.UtcNow)) is not { } due)
         {
             Actions.Status = "Nothing open to chase - add a blocker (b) or hand-off (Shift+A) first";
             return;
@@ -900,6 +943,41 @@ public sealed partial class MainViewModel : ObservableObject
             .ConfigureAwait(true);
 
         if (drafted) await Actions.MarkFollowedUpAsync(item).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Replies all in the conversation the follow-up was asked in, with
+    /// Claude drafting the nudge, and makes sure the person is on it. Nothing
+    /// sends itself; the card counts as chased once the user sends the reply.
+    /// </summary>
+    private async Task ChaseInThreadAsync(ActionItem item, FollowUpDue due, Assignment asked)
+    {
+        Actions.Status = "Opening the conversation...";
+        var target = await Actions.ReplyTargetAsync().ConfigureAwait(true);
+        if (target is null)
+        {
+            // The email has gone; a fresh mail still gets the nudge out.
+            if (asked.PersonEmail.Length > 0) await Actions.ChaseAsync(asked).ConfigureAwait(true);
+            else Actions.Status = "Could not find this task's email - it may have been deleted";
+            return;
+        }
+
+        if (await Triage.StartReplyToAsync(target.Value, ReplyScope.All).ConfigureAwait(true) is { } problem)
+        {
+            Actions.Status = problem;
+            return;
+        }
+
+        Triage.Composer.EnsureRecipient(asked.PersonName, asked.PersonEmail);
+        _chase = (item, target.Value);
+
+        Actions.Status = "";
+        await Triage
+            .AiDraftAsync(FollowUpPlanner.BuildInstructions(due), _settings.ResolveFollowUpModel())
+            .ConfigureAwait(true);
+
+        Actions.Status = $"Follow-up to {asked.PersonName} drafted - review it and send (Ctrl+Enter); " +
+                         "the card goes back to Waiting once it's sent";
     }
 
     private async Task ReplyFromBoardAsync(ReplyScope scope)
@@ -1027,7 +1105,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Reply",   "Ctrl+Enter", "Send"),
         ("Reply",   "Ctrl+Shift+Enter", "Send & mark done - archives the conversation"),
         ("Reply",   "Ctrl+Shift+L", "Send later - optionally held for review if they reply first"),
-        ("Reply",   "Ctrl+Shift+F", "Follow-up - who owes what by when; files it on the board for a chase"),
+        ("Reply",   "Ctrl+Shift+F", "Follow up - pick a day and who it's waiting on (the first To by default); on that day it lands in the board's Follow up column"),
         ("Reply",   "Ctrl+Shift+T", "Follow-up: toggle tracking it as a task"),
         ("Reply",   "Ctrl+Shift+O / C / B / M", "Jump to To / Cc / Bcc / the message"),
         ("Reply",   "Ctrl+Shift+,", "Discard the draft (Esc too)"),
@@ -1039,7 +1117,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Board",   "Mouse", "Drag a card to another column to move it"),
         ("Board",   Keys.Describe(TriageAction.ToggleBoardView), "Board / By person report (sort, export to Excel, email it)"),
         ("Board",   Keys.Describe(TriageAction.ClearWait), "Clear the next blocker or hand-off (back to Doing when none are left)"),
-        ("Board",   Keys.Describe(TriageAction.Chase), "Chase whoever has it - Claude drafts the follow-up"
+        ("Board",   Keys.Describe(TriageAction.Chase), "Chase whoever has it - Claude drafts the follow-up (in the same thread for one set when sending)"
             + (_settings.FollowUpAfterDays > 0 ? $"; waits are flagged after {_settings.FollowUpAfterDays} days" : "")),
         ("Actions", Keys.Describe(TriageAction.AddNote), "Edit notes"),
         ("Actions", Keys.Describe(TriageAction.AddBlocker), "Blocked by - who or what it is waiting on"),

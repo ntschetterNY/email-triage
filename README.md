@@ -15,7 +15,7 @@ fast filing, a real action list, and snooze.
 | **Move** | `v` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. |
 | **Folders** | Name folders your way (`Elara - Field Reports - Rimkus`) and they're kept nested (`Elara › Field Reports › Rimkus`). Settings (`Ctrl+,`) sets the scheme and tidies existing folders to match. `Shift+V` opens any folder in Outlook. |
 | **Snooze** | `h` parks a mail and puts it back in your inbox at a time you pick. |
-| **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. |
+| **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. Set a follow-up day as you send, and on that day the mail turns up in the board's Follow up column, ready for Claude to draft the nudge. |
 | **Write** | `Enter` reply-all, `r` reply-to-sender, `c` a new message, all sent from inside the app. |
 | **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. The Calendar tab shows your day, work week, week or month (keys `1`-`5`), and the top bar counts down to your next meeting. |
 | **AI** (optional) | `Ctrl+G` has Claude draft the reply from the conversation - or from notes you type first - offering times you're free when it's about meeting. `Ctrl+/` asks your inbox a question in plain language. Runs through your own Claude Code sign-in; see below for what leaves the machine. |
@@ -243,19 +243,28 @@ you want to actually tell them, the app opens a pre-filled draft in Outlook for 
 review and send yourself.
 
 ### Follow-ups from the reply box (`Ctrl+Shift+F`)
-`Ctrl+Shift+F` opens a row under the message: **Follow up** (a date: `fri`, `3d`,
-`14 oct`), **Who** and **What**. `Tab` moves through them. Leave the date empty, or
-press `Esc`, and nothing happens.
+`Ctrl+Shift+F` (or the **+ Follow up** button) opens a row under the message:
+**Follow up** (a date: `fri`, `3d`, `14 oct`), **Who** and **What**. `Tab` moves
+through them. Leave the date empty, or press `Esc`, and nothing happens.
 
-- **Who** starts as the first person on the To line. A first name is enough: it
+- **Who** is whoever the message goes to first, and follows the To line as you
+  edit it until you type a name of your own. A first name is enough: it
   matches people on the message first, then your contacts.
 - **What** is optional ("send the revised drawings").
 - *Add a follow-up line to the email* (on by default) puts
   `Follow-up: Sam Lee - send the revised drawings by Friday 3 Oct` under your text.
-- *Track as a task* (on by default, `Ctrl+Shift+T`) puts the answered mail on the
-  board with a hand-off to that person and the due date. It goes overdue on that
-  date, and `c` drafts the chase mail when you need it. A brand-new message
-  answers nothing, so it can carry the line but not the task.
+- *Track it on the board* (on by default, `Ctrl+Shift+T`) puts the mail on the
+  board in **Waiting**, with a hand-off to that person dated that day. For a
+  reply it is the mail you answered; for a brand-new message it is your sent
+  copy, which the card picks up once Outlook has filed it in Sent Items.
+
+On the day, the card moves to the board's **Follow up** column (the tab reads
+`Action items · 2 to follow up`). Go through them there: `Shift+C` opens a reply
+in the same conversation with the person on it and Claude's nudge drafted - edit
+it and send, and the card goes back to Waiting. If they've already come back to
+you, `w` clears the wait instead. Nothing sends by itself, and a draft you
+discard leaves the card where it is. A blocker or `Shift+A` hand-off given a
+date lands in Follow up on that day too, and chases the usual way.
 
 ### Calendar
 Meeting invitations, cancellations and responses now show in the triage list, tagged

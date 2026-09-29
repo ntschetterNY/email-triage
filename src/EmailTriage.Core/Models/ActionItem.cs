@@ -44,6 +44,22 @@ public sealed class ActionItem
 
     public string FollowUpLabel => $"follow up · waiting {FollowUpDays}d";
 
+    /// <summary>
+    /// Set when a dated wait's follow-up day has come, e.g. "follow up with
+    /// Sam today"; empty otherwise. Not persisted - the board sets it from
+    /// <c>FollowUpPlanner.FindScheduled</c> on load, and such items sit in its
+    /// Follow up column until chased or cleared.
+    /// </summary>
+    public string ScheduledFollowUp { get; set; } = "";
+
+    public bool IsInFollowUp => ScheduledFollowUp.Length > 0;
+
+    /// <summary>
+    /// A message the user sent, filed before its copy reached Sent Items and
+    /// so still under a placeholder Message-ID.
+    /// </summary>
+    public bool IsAwaitingSentCopy => Services.SentMailMatcher.IsPlaceholder(InternetMessageId);
+
     public List<BlockingTask> Blockers { get; set; } = new();
     public List<Assignment> Assignments { get; set; } = new();
 

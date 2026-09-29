@@ -735,7 +735,8 @@ public partial class MainWindow : Window
         e.Effects = ok ? DragDropEffects.Move : DragDropEffects.None;
         if (ok && (sender as FrameworkElement)?.Tag is BoardColumn column)
         {
-            foreach (var c in ViewModel.Actions.Columns) c.IsDropTarget = c == column;
+            if (column.IsFollowUps) e.Effects = DragDropEffects.None;
+            foreach (var c in ViewModel.Actions.Columns) c.IsDropTarget = c == column && !column.IsFollowUps;
         }
         e.Handled = true;
     }
@@ -752,7 +753,7 @@ public partial class MainWindow : Window
         if ((sender as FrameworkElement)?.Tag is BoardColumn column &&
             e.Data.GetData(typeof(EmailTriage.Core.Models.ActionItem)) is EmailTriage.Core.Models.ActionItem item)
         {
-            await ViewModel.Actions.MoveToStageAsync(item, column.Stage);
+            await ViewModel.Actions.MoveToColumnAsync(item, column);
         }
         Focus();
     }
@@ -933,6 +934,13 @@ public partial class MainWindow : Window
 
         e.Handled = true;
         ViewModel.Triage.Composer.AddAttachments(files);
+    }
+
+    private void OnFollowUpButtonClick(object sender, RoutedEventArgs e)
+    {
+        var composer = ViewModel.Triage.Composer;
+        if (!composer.IsFollowingUp) composer.ToggleFollowUp();
+        composer.RequestFocus(RecipientField.FollowUp);
     }
 
     private void OnComposeAttachmentRemoveClick(object sender, RoutedEventArgs e)
