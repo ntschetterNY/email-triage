@@ -22,8 +22,11 @@ public sealed partial class FolderPlanRow : ObservableObject
     public bool Merges => Plan.MergesIntoExisting;
 }
 
+/// <summary>A model on offer in a picker; an empty value means "use AiModel".</summary>
+public sealed record ModelChoice(string Label, string Value);
+
 /// <summary>
-/// The Settings page: how folders are named, how those names nest, and
+/// The Settings page: which model follow-up chases run on, how folders are named, how those names nest, and
 /// reorganizing the folders already in Outlook to match. Edits apply to the
 /// shared <see cref="AppSettings"/> only on Save.
 /// </summary>
@@ -37,6 +40,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _layout;
     [ObservableProperty] private string _home;
     [ObservableProperty] private bool _nestNewFolders;
+    [ObservableProperty] private ModelChoice _followUpModel;
 
     /// <summary>A name to try the scheme on, shown nested underneath.</summary>
     [ObservableProperty] private string _example = "Elara - Field Reports - Rimkus";
@@ -53,6 +57,9 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public ObservableCollection<FolderPlanRow> Plan { get; } = new();
 
+    /// <summary>The models a follow-up chase can be drafted with.</summary>
+    public IReadOnlyList<ModelChoice> FollowUpModels { get; }
+
     public SettingsViewModel(AppSettings settings, IMailStore store, FolderSearchService folders)
     {
         _settings = settings;
@@ -63,6 +70,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _layout = settings.FolderLayout;
         _home = settings.FolderHome;
         _nestNewFolders = settings.NestNewFolders;
+
+        (FollowUpModels, _followUpModel) = ModelChoices(settings.AiFollowUpModel, settings.AiModel);
 
         UpdatePreview();
     }
@@ -84,6 +93,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnLayoutChanged(string value) => Changed();
     partial void OnHomeChanged(string value) => Changed();
     partial void OnNestNewFoldersChanged(bool value) => IsDirty = true;
+    partial void OnFollowUpModelChanged(ModelChoice value) => IsDirty = true;
     partial void OnExampleChanged(string value) => UpdatePreview();
 
     private void Changed()
@@ -120,6 +130,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.FolderLayout = FolderOrganizer.NormalisePath(Layout);
         _settings.FolderHome = FolderOrganizer.NormalisePath(Home);
         _settings.NestNewFolders = NestNewFolders;
+        _settings.AiFollowUpModel = FollowUpModel.Value;
 
         try
         {
@@ -141,6 +152,32 @@ public sealed partial class SettingsViewModel : ObservableObject
         Layout = FolderScheme.DefaultLayout;
         Home = "";
         NestNewFolders = true;
+    }
+
+    /// <summary>
+    /// The usual models plus "same as AiModel", and whatever settings.json
+    /// already names if it is none of those, so opening Settings never
+    /// quietly changes it.
+    /// </summary>
+    private static (IReadOnlyList<ModelChoice> Choices, ModelChoice Current) ModelChoices(string current, string fallback)
+    {
+        var choices = new List<ModelChoice>
+        {
+            new("Sonnet - quick, and plenty for a chase", "sonnet"),
+            new("Opus - most capable, slower", "opus"),
+            new("Haiku - fastest", "haiku"),
+            new($"Same as other AI commands ({fallback})", ""),
+        };
+
+        var value = current.Trim();
+        var match = choices.FirstOrDefault(c => string.Equals(c.Value, value, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+        {
+            match = new ModelChoice(value, value);
+            choices.Add(match);
+        }
+
+        return (choices, match);
     }
 
     /// <summary>Reads every folder afresh and lists the ones not yet nested by the scheme.</summary>

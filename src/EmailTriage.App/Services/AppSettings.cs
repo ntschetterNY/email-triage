@@ -111,10 +111,12 @@ public sealed class AppSettings
 
     /// <summary>
     /// Per-command overrides, so e.g. drafts can run on "sonnet" while
-    /// follow-up chases stay on "claude-opus-5". Empty means use AiModel.
+    /// replies stay on "claude-opus-5". Empty means use AiModel. Follow-up
+    /// chases are short and formulaic, so they start on "sonnet"; the
+    /// Settings page (Ctrl+,) picks another.
     /// </summary>
     public string AiDraftModel { get; set; } = "";
-    public string AiFollowUpModel { get; set; } = "";
+    public string AiFollowUpModel { get; set; } = "sonnet";
     public string AiSearchModel { get; set; } = "";
     public string AiStyleModel { get; set; } = "";
 

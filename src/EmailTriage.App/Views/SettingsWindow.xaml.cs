@@ -63,7 +63,7 @@ public partial class SettingsWindow : Window
 
         if (ViewModel.IsDirty)
         {
-            var answer = MessageBox.Show(this, "Save your changes to the folder structure?", "Settings",
+            var answer = MessageBox.Show(this, "Save your changes to settings?", "Settings",
                 MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
 
             if (answer == MessageBoxResult.Cancel || (answer == MessageBoxResult.Yes && !ViewModel.Save()))
