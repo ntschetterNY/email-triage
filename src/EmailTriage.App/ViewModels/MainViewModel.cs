@@ -148,6 +148,20 @@ public sealed partial class MainViewModel : ObservableObject
         if (await Triage.StartNewMailAsync().ConfigureAwait(true) is { } problem) SetStatus(problem);
     }
 
+    /// <summary>The Join button on a meeting's card.</summary>
+    public void JoinFromCard(MeetingCardViewModel card) => SetStatus(CalendarViewModel.JoinFromCard(card));
+
+    /// <summary>Open in Outlook on a meeting's card.</summary>
+    public async Task OpenCardInOutlookAsync(MeetingCardViewModel card) =>
+        SetStatus(await Calendar.OpenInOutlookAsync(card.Row.Event).ConfigureAwait(true));
+
+    /// <summary>Show in Calendar on a meeting's card.</summary>
+    public void ShowCardInCalendar(MeetingCardViewModel card)
+    {
+        Section = Section.Calendar;
+        Calendar.Select(card.Row.Event);
+    }
+
     /// <summary>Reports on the status line of whichever tab is showing.</summary>
     private void SetStatus(string message)
     {

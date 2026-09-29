@@ -327,68 +327,59 @@
                     </Button>
                 </StackPanel>
 
-                <!-- today strip: what is on now or next; click opens it in the Calendar tab and joins it if on -->
-                <Border Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Margin="16,0" Padding="10,3" CornerRadius="11" BorderThickness="1" Cursor="Hand"
-                        MouseLeftButtonUp="OnStripClick"
-                        Visibility="{Binding Calendar.StripText, Converter={StaticResource NullVis}}">
-                    <Border.ToolTip>
-                        <TextBlock>
-                            <Run Text="Click to open it in the Calendar tab, and join if it is on ·" />
-                            <Run Text="{Binding JoinKey, Mode=OneWay}" />
-                            <Run Text="joins" />
-                        </TextBlock>
-                    </Border.ToolTip>
-                    <Border.Style>
-                        <Style TargetType="Border">
-                            <Setter Property="Background" Value="{StaticResource Raised}" />
-                            <Setter Property="BorderBrush" Value="{StaticResource Border}" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Calendar.StripState}" Value="Clear">
-                                    <Setter Property="Background" Value="Transparent" />
-                                    <Setter Property="BorderBrush" Value="Transparent" />
+                <!-- today strip: one pill per meeting on now or coming up shortly; a click opens its card -->
+                <ItemsControl Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="16,0"
+                              ItemsSource="{Binding Calendar.Pills}" Focusable="False">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border x:Name="Pill" Margin="3,0" Padding="10,3" CornerRadius="11" BorderThickness="1"
+                                    MouseLeftButtonUp="OnPillClick">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="{StaticResource Raised}" />
+                                        <Setter Property="BorderBrush" Value="{StaticResource Border}" />
+                                        <Setter Property="Cursor" Value="Hand" />
+                                        <Setter Property="ToolTip" Value="{Binding Hint}" />
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse x:Name="Dot" Width="6" Height="6" Margin="0,1,7,0" VerticalAlignment="Center">
+                                        <Ellipse.Style>
+                                            <Style TargetType="Ellipse">
+                                                <Setter Property="Fill" Value="{StaticResource Accent}" />
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock x:Name="Label" Text="{Binding Text}" FontSize="11.5"
+                                               MaxWidth="{Binding DataContext.Calendar.PillMaxWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Border>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding State}" Value="Clear">
+                                    <Setter TargetName="Pill" Property="Background" Value="Transparent" />
+                                    <Setter TargetName="Pill" Property="BorderBrush" Value="Transparent" />
+                                    <Setter TargetName="Pill" Property="Cursor" Value="Arrow" />
+                                    <Setter TargetName="Pill" Property="ToolTip" Value="{x:Null}" />
+                                    <Setter TargetName="Dot" Property="Fill" Value="{StaticResource Ok}" />
+                                    <Setter TargetName="Label" Property="Foreground" Value="{StaticResource Muted}" />
                                 </DataTrigger>
-                                <DataTrigger Binding="{Binding Calendar.StripState}" Value="Now">
-                                    <Setter Property="Background" Value="#1F7AA2F7" />
-                                    <Setter Property="BorderBrush" Value="#667AA2F7" />
+                                <DataTrigger Binding="{Binding State}" Value="Now">
+                                    <Setter TargetName="Pill" Property="Background" Value="#1F7AA2F7" />
+                                    <Setter TargetName="Pill" Property="BorderBrush" Value="#667AA2F7" />
                                 </DataTrigger>
-                                <DataTrigger Binding="{Binding Calendar.StripState}" Value="Soon">
-                                    <Setter Property="Background" Value="#2EE0AF68" />
-                                    <Setter Property="BorderBrush" Value="{StaticResource Warn}" />
+                                <DataTrigger Binding="{Binding State}" Value="Soon">
+                                    <Setter TargetName="Pill" Property="Background" Value="#2EE0AF68" />
+                                    <Setter TargetName="Pill" Property="BorderBrush" Value="{StaticResource Warn}" />
+                                    <Setter TargetName="Dot" Property="Fill" Value="{StaticResource Warn}" />
                                 </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Border.Style>
-                    <StackPanel Orientation="Horizontal">
-                        <Ellipse Width="6" Height="6" Margin="0,1,7,0" VerticalAlignment="Center">
-                            <Ellipse.Style>
-                                <Style TargetType="Ellipse">
-                                    <Setter Property="Fill" Value="{StaticResource Accent}" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Calendar.StripState}" Value="Clear">
-                                            <Setter Property="Fill" Value="{StaticResource Ok}" />
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding Calendar.StripState}" Value="Soon">
-                                            <Setter Property="Fill" Value="{StaticResource Warn}" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Ellipse.Style>
-                        </Ellipse>
-                        <TextBlock Text="{Binding Calendar.StripText}" FontSize="11.5" MaxWidth="560"
-                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Calendar.StripState}" Value="Clear">
-                                            <Setter Property="Foreground" Value="{StaticResource Muted}" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                    </StackPanel>
-                </Border>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <!-- AI usage: green dot on your Claude login, amber on an API key; hover for the breakdown -->

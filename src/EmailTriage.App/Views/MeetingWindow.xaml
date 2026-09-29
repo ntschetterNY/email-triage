@@ -1,0 +1,117 @@
+<Window x:Class="EmailTriage.App.Views.MeetingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{Binding Row.Subject}"
+        Width="440" SizeToContent="Height" MaxHeight="640"
+        WindowStyle="None" ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="{StaticResource Panel}"
+        BorderBrush="{StaticResource Border}" BorderThickness="1"
+        UseLayoutRounding="True"
+        TextOptions.TextRenderingMode="ClearType">
+
+    <Window.Resources>
+        <!-- The one big button: join. Enter presses it. -->
+        <Style x:Key="JoinButton" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="B" Background="{StaticResource Accent}" CornerRadius="6" Padding="16,11">
+                            <TextBlock x:Name="T" Text="{TemplateBinding Content}" FontSize="15" FontWeight="SemiBold"
+                                       Foreground="{StaticResource Bg}" HorizontalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="#9BBBFA" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="#9BBBFA" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource Raised}" />
+                                <Setter TargetName="T" Property="Foreground" Value="{StaticResource Muted}" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="18,16,18,18">
+            <Button x:Name="JoinButton" Content="{Binding JoinText}" Click="OnJoinClick" IsDefault="True"
+                    IsEnabled="{Binding CanJoin}" Style="{StaticResource JoinButton}" />
+            <TextBlock Text="No Teams, Zoom, Meet or Webex link in this meeting - open it in Outlook for the details."
+                       FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                       Visibility="{Binding HasNoLink, Converter={StaticResource BoolVis}}" />
+
+            <TextBlock Text="{Binding Row.Subject}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,16,0,0" />
+            <TextBlock Text="{Binding Timing}" FontSize="12.5" Foreground="{StaticResource Accent}" Margin="0,4,0,0" />
+            <TextBlock Text="{Binding Row.When}" FontSize="12.5" Margin="0,6,0,0" />
+            <TextBlock Text="{Binding Row.Location}" FontSize="12.5" Margin="0,4,0,0" TextWrapping="Wrap"
+                       Foreground="{StaticResource Muted}"
+                       Visibility="{Binding Row.HasLocation, Converter={StaticResource BoolVis}}" />
+            <TextBlock Text="{Binding Row.About}" FontSize="12.5" Margin="0,4,0,0" TextWrapping="Wrap"
+                       Foreground="{StaticResource Muted}"
+                       Visibility="{Binding Row.About, Converter={StaticResource NullVis}}" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                <Button Content="Open in Outlook" Click="OnOutlookClick" Margin="0,0,8,0" Style="{StaticResource ReportButton}" />
+                <Button Content="Show in Calendar" Click="OnCalendarClick" Margin="0,0,8,0" Style="{StaticResource ReportButton}" />
+                <Button Content="Close" Click="OnCloseClick" Style="{StaticResource ReportButton}" ToolTip="Esc" />
+            </StackPanel>
+
+            <!-- who is coming -->
+            <TextBlock Text="ATTENDEES" FontSize="10" FontWeight="Bold" Margin="0,18,0,8"
+                       Foreground="{StaticResource Muted}"
+                       Visibility="{Binding Detail.Attendees.Count, Converter={StaticResource CountVis}, FallbackValue=Collapsed}" />
+            <ItemsControl ItemsSource="{Binding Detail.Attendees}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{StaticResource Raised}" CornerRadius="10" Padding="9,2" Margin="0,0,6,6"
+                                ToolTip="{Binding Address}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="Mark" Text="·" FontSize="11.5" Margin="0,0,5,0" Foreground="{StaticResource Muted}" />
+                                <TextBlock Text="{Binding Display}" FontSize="11.5" />
+                                <TextBlock Text=" (optional)" FontSize="11" Foreground="{StaticResource Muted}"
+                                           Visibility="{Binding IsOptional, Converter={StaticResource BoolVis}}" />
+                            </StackPanel>
+                        </Border>
+                        <DataTemplate.Triggers>
+                            <DataTrigger Binding="{Binding Response}" Value="Accepted">
+                                <Setter TargetName="Mark" Property="Text" Value="✓" />
+                                <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource Ok}" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Response}" Value="Organized">
+                                <Setter TargetName="Mark" Property="Text" Value="★" />
+                                <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource Accent}" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Response}" Value="Tentative">
+                                <Setter TargetName="Mark" Property="Text" Value="?" />
+                                <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource Warn}" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Response}" Value="Declined">
+                                <Setter TargetName="Mark" Property="Text" Value="✗" />
+                                <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource Danger}" />
+                            </DataTrigger>
+                        </DataTemplate.Triggers>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- the invitation text -->
+            <Border Background="{StaticResource Bg}" CornerRadius="6" Padding="12,10" Margin="0,12,0,0" MaxHeight="220"
+                    Visibility="{Binding Detail.Body, Converter={StaticResource NullVis}}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <TextBlock Text="{Binding Detail.Body}" FontSize="12" TextWrapping="Wrap" LineHeight="18" />
+                </ScrollViewer>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Window>

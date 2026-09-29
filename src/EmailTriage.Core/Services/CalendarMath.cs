@@ -81,6 +81,23 @@ public static class CalendarMath
         return Current(list, now).OrderByDescending(e => e.Start).FirstOrDefault();
     }
 
+    /// <summary>
+    /// The meetings the top bar shows, one pill each: every one under way,
+    /// then every one starting within <paramref name="soon"/>, in time order.
+    /// When nothing is that close, the next one alone. At most <paramref name="max"/>.
+    /// </summary>
+    public static IReadOnlyList<CalendarEvent> Upcoming(
+        IEnumerable<CalendarEvent> events, DateTimeOffset now, TimeSpan soon, int max)
+    {
+        var list = events as IReadOnlyCollection<CalendarEvent> ?? events.ToList();
+        var current = list.Where(IsTimed).Where(e => e.Start <= now && e.End > now).OrderBy(e => e.Start);
+        var coming = list.Where(IsTimed).Where(e => e.Start > now && e.Start - now <= soon).OrderBy(e => e.Start);
+
+        var pills = current.Concat(coming).Take(Math.Max(1, max)).ToList();
+        if (pills.Count == 0 && Next(list, now) is { } next) pills.Add(next);
+        return pills;
+    }
+
     /// <summary>"now", "in 1 min", "in 25 min", "in 2 h", "in 1 h 5 min".</summary>
     public static string Countdown(TimeSpan span)
     {
