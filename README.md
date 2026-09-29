@@ -387,7 +387,8 @@ other feature is unaffected.
 Settings: `AiModel` (default `claude-opus-5`; `sonnet` answers faster) sets the
 model for everything, and each job can override it - `AiDraftModel`,
 `AiFollowUpModel`, `AiSearchModel`, `AiStyleModel` - so "Sonnet for replies,
-Opus for follow-ups" is two lines in settings.json. Also `FollowUpAfterDays`,
+Opus for search" is two lines in settings.json. Follow-up chases start on
+`sonnet`; pick another model for them on the Settings page (`Ctrl+,`). Also `FollowUpAfterDays`,
 `ClaudeCliPath` (set it if `claude` isn't on PATH), and `AiTimeoutSeconds`.
 
 **Your login, not API credits.** Claude Code prefers an `ANTHROPIC_API_KEY` (or

@@ -38,6 +38,19 @@
         <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
             <StackPanel Margin="28,22,28,24">
 
+                <!-- ============ which model drafts follow-up chases ============ -->
+                <TextBlock Text="Follow-ups" Style="{StaticResource Heading}" />
+                <TextBlock Style="{StaticResource Hint}" Margin="0">
+                    The model Claude drafts follow-up chases with (c on the board, and hand-off mails).
+                </TextBlock>
+
+                <TextBlock Text="Model" Style="{StaticResource Label}" />
+                <ComboBox Width="320" HorizontalAlignment="Left" FontSize="12.5"
+                          ItemsSource="{Binding FollowUpModels}" DisplayMemberPath="Label"
+                          SelectedItem="{Binding FollowUpModel}" />
+
+                <Border Height="1" Background="{StaticResource Border}" Margin="0,26,0,22" />
+
                 <!-- ============ how folders are named and nested ============ -->
                 <TextBlock Text="Folder structure" Style="{StaticResource Heading}" />
                 <TextBlock Style="{StaticResource Hint}" Margin="0">
