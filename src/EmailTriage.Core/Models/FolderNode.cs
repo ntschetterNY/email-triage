@@ -20,17 +20,16 @@ public sealed record FolderNode
     public required string StoreName { get; init; }
 
     /// <summary>
-    /// The folders above this one, nearest first, each after a "-^" pointing
-    /// up a level: "Clients\Acme\Invoices" gives "-^ Acme -^ Clients". Nearest
-    /// first so a long trail loses the mailbox root to the ellipsis, not the
-    /// parent that tells two same-named folders apart. Empty at the top.
+    /// The path from the top folder down to this one, without the mailbox
+    /// root: "Mailbox\Clients\Acme\Invoices" reads "Clients -> Acme -> Invoices".
+    /// Just the name for a folder at the top.
     /// </summary>
-    public string ParentTrail
+    public string Breadcrumb
     {
         get
         {
-            var parents = Path.Split('\\', StringSplitOptions.RemoveEmptyEntries)[..^1];
-            return string.Join(" ", Enumerable.Reverse(parents).Select(p => $"-^ {p}"));
+            var levels = Path.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+            return levels.Length > 1 ? string.Join(" -> ", levels[1..]) : Name;
         }
     }
 }
