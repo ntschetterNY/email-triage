@@ -450,10 +450,40 @@
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0" Padding="10,8"
+                        <!-- list filter: every conversation, or only the unread ones -->
+                        <Border Grid.Row="0" Padding="10,8,10,6"
+                                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="All" Click="OnShowAllMail" ToolTip="Show every conversation">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource ReportButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Triage.ShowUnreadOnly}" Value="False">
+                                                    <Setter Property="Tag" Value="on" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Content="Unread" Margin="4,0,0,0" Click="OnShowUnreadMail" ToolTip="Show only unread conversations">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource ReportButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Triage.ShowUnreadOnly}" Value="True">
+                                                    <Setter Property="Tag" Value="on" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="1" Padding="10,8"
                                 Visibility="{Binding Triage.IsSearching, Converter={StaticResource BoolVis}}">
                             <DockPanel>
                                 <!-- ask mode: the box holds a question for Claude, not a filter -->
@@ -478,7 +508,7 @@
                             </DockPanel>
                         </Border>
 
-                        <ListBox Grid.Row="1"
+                        <ListBox Grid.Row="2"
                                  x:Name="MailList"
                                  ItemsSource="{Binding Triage.Rows}"
                                  SelectedItem="{Binding Triage.Selected, Mode=TwoWay}"
@@ -491,12 +521,12 @@
                                  VirtualizingPanel.VirtualizationMode="Recycling" />
 
                         <!-- a load in progress: a stalled Outlook must not pass for an empty inbox -->
-                        <ProgressBar Grid.Row="1" IsIndeterminate="True" Height="2" VerticalAlignment="Top"
+                        <ProgressBar Grid.Row="2" IsIndeterminate="True" Height="2" VerticalAlignment="Top"
                                      Background="Transparent" BorderThickness="0"
                                      Foreground="{StaticResource Accent}"
                                      Visibility="{Binding Triage.IsLoading, Converter={StaticResource BoolVis}}" />
 
-                        <TextBlock Grid.Row="1" Text="{Binding Triage.EmptyListText}" FontSize="13"
+                        <TextBlock Grid.Row="2" Text="{Binding Triage.EmptyListText}" FontSize="13"
                                    Foreground="{StaticResource Muted}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Visibility="{Binding Triage.Rows.Count, Converter={StaticResource CountVisInv}}" />

@@ -98,6 +98,9 @@ public sealed partial class TriageViewModel : ObservableObject
     /// <summary>The last AI answer's conversations, best first; null when no AI filter is on.</summary>
     private IReadOnlyList<string>? _aiFilterKeys;
 
+    /// <summary>The list shows only unread conversations, on top of any search.</summary>
+    [ObservableProperty] private bool _showUnreadOnly;
+
     private List<MailRowViewModel> _allRows = new();
 
     // Conversations a field search found in Outlook beyond the loaded Inbox
@@ -388,11 +391,10 @@ public sealed partial class TriageViewModel : ObservableObject
             var byKey = new Dictionary<string, MailRowViewModel>(StringComparer.OrdinalIgnoreCase);
             foreach (var row in _allRows) byKey.TryAdd(row.Key, row);
 
-            SyncRows(keys
+            ShowRows(keys
                 .Select(k => byKey.GetValueOrDefault(k))
                 .Where(r => r is not null)
-                .Select(r => r!)
-                .ToList());
+                .Select(r => r!));
             return;
         }
 
@@ -402,10 +404,30 @@ public sealed partial class TriageViewModel : ObservableObject
         if (query.OutlookFilter != _outlookFilter) StartOutlookSearch(query.OutlookFilter);
         if (query.NeedsAddresses) _ = LoadRecipientsAsync();
 
-        if (query.IsEmpty) { SyncRows(_allRows); return; }
+        if (query.IsEmpty) { ShowRows(_allRows); return; }
 
         var matches = SearchableRows().Where(r => query.Matches(field => SearchValues(r, field)));
-        SyncRows((_searchRows.Count == 0 ? matches : matches.OrderByDescending(r => r.Thread.LastActivityUtc)).ToList());
+        ShowRows(_searchRows.Count == 0 ? matches : matches.OrderByDescending(r => r.Thread.LastActivityUtc));
+    }
+
+    /// <summary>
+    /// Shows these rows, less the read ones when the unread filter is on. The
+    /// selected row stays even once read, so opening a mail does not pull it
+    /// out from under the caret; it drops out on the next refresh after the
+    /// caret moves on.
+    /// </summary>
+    private void ShowRows(IEnumerable<MailRowViewModel> rows)
+    {
+        var selected = Selected;
+        SyncRows((ShowUnreadOnly ? rows.Where(r => r.IsUnread || r == selected) : rows).ToList());
+    }
+
+    partial void OnShowUnreadOnlyChanged(bool value)
+    {
+        RefilterForSearch();
+        Status = value
+            ? $"{Rows.Count} unread conversation{(Rows.Count == 1 ? "" : "s")}"
+            : $"{Rows.Count} conversation{(Rows.Count == 1 ? "" : "s")}";
     }
 
     /// <summary>The loaded Inbox, plus whatever a field search found beyond it.</summary>
