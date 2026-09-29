@@ -559,6 +559,8 @@ public partial class MainWindow : Window
         FocusLater(target);
     }
 
+    private void OnShowAllMail(object sender, RoutedEventArgs e) { ViewModel.Triage.ShowUnreadOnly = false; Focus(); }
+    private void OnShowUnreadMail(object sender, RoutedEventArgs e) { ViewModel.Triage.ShowUnreadOnly = true; Focus(); }
     private void OnShowBoard(object sender, RoutedEventArgs e) { ViewModel.Actions.IsByPerson = false; Focus(); }
     private void OnShowByPerson(object sender, RoutedEventArgs e) { ViewModel.Actions.IsByPerson = true; Focus(); }
     private void OnReportExport(object sender, RoutedEventArgs e) { ViewModel.Actions.ExportReport(); Focus(); }
