@@ -1640,7 +1640,7 @@ public sealed partial class TriageViewModel : ObservableObject
 
         Palette.SetEntries(matches.Select(f => new PaletteEntry(
             f.Name,
-            TrimPath(f.Path, f.Name),
+            f.ParentTrail,
             f,
             // Recomputed rather than carried: the nested hit has none.
             typed.Length > 0 && FuzzyMatcher.Score(typed, f.Name, out var pos) is not null ? pos : Array.Empty<int>())));
@@ -1672,12 +1672,6 @@ public sealed partial class TriageViewModel : ObservableObject
         return parent is null
             ? $"Create \"{name}\" at the top level and move here"
             : $"Create \"{name}\" under {parent.Path} and move here";
-    }
-
-    private static string TrimPath(string path, string leaf)
-    {
-        var idx = path.LastIndexOf('\\');
-        return idx <= 0 ? "" : path[..idx];
     }
 
     public async Task ConfirmPaletteAsync(bool forceCreate)
