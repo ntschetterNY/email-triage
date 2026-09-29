@@ -13,6 +13,7 @@ fast filing, a real action list, and snooze.
 |---|---|
 | **Triage** | Walk the inbox, decide action / no action, file it, move on - without the mouse. |
 | **Move** | `v` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. |
+| **Folders** | Name folders your way (`Elara - Field Reports - Rimkus`) and they're kept nested (`Elara › Field Reports › Rimkus`). Settings (`Ctrl+,`) sets the scheme and tidies existing folders to match. `Shift+V` opens any folder in Outlook. |
 | **Snooze** | `h` parks a mail and puts it back in your inbox at a time you pick. |
 | **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. |
 | **Write** | `Enter` reply-all, `r` reply-to-sender, `c` a new message, all sent from inside the app. |
@@ -112,6 +113,7 @@ their own letters.
 | `/` | Filter the list |
 | `Ctrl+/` | **Ask your inbox** - AI search in plain language, `Esc` shows everything again |
 | `F5` | Refresh |
+| `Ctrl+,` | Settings (also the **⚙ Settings** button in the top bar) |
 
 ### Triage
 | Key | |
@@ -119,6 +121,7 @@ their own letters.
 | `a` | Needs action - flags it and adds it to the action list |
 | `n` | No action needed |
 | `v` | **Move to folder** - type to search, `Ctrl+Enter` creates and moves |
+| `Shift+V` | **Open a folder in Outlook** - type to search, `Enter` shows it in Outlook's window (any tab) |
 | `h` | **Remind me** (snooze) - presets, or type `tomorrow 9am` / `fri` / `3d` |
 | `e` | Archive |
 | `u` | Toggle read / unread |
@@ -183,6 +186,36 @@ file into often rise to the top, with the weighting halving every 60 days so old
 habits fade. When nothing matches, `Ctrl+Enter` creates the folder you typed
 (`Clients\Acme\Q3` creates `Q3` under an existing `Clients\Acme`) and moves the mail
 there in the same keystroke.
+
+### Folder structure (Settings, `Ctrl+,`)
+Many people name folders with the whole hierarchy in the name -
+`Elara - Field Reports - Rimkus`. The Settings page takes that naming scheme and keeps
+the folders nested instead, as `Elara\Field Reports\Rimkus`:
+
+- **How your folders are named** - each part in braces, e.g.
+  `{Project} - {Type} - {Company}`. Whatever sits between the parts (` - `) is what splits
+  a name. A name may stop early (`Elara - Field Reports`); a name with one part is an
+  ordinary folder and is left alone.
+- **How they nest** - one level per `\`, e.g. `{Project}\{Type}\{Company}`. Reorder the
+  parts, drop one, or add a fixed folder: `Projects\{Project}\{Type}`.
+- **Build the tree under** - a folder from the top of the mailbox, such as `Inbox`. Empty
+  nests each folder where it already is, and puts new ones beside the Inbox.
+
+A **Try a name** box shows where any name would go before anything is saved.
+
+With the scheme set, typing `Elara - Field Reports - Rimkus` in the move palette finds
+`Elara\Field Reports\Rimkus`, and `Ctrl+Enter` creates the missing levels and files the
+mail there. (Untick the option in Settings to create flat folders instead.)
+
+**Organize existing folders** lists every folder named in the scheme that isn't nested
+yet and where it would go. Untick any you want left alone, then **Organize**. Each folder
+moves with its mail and subfolders. Where the nested folder already exists, the contents
+are merged into it and the emptied original goes to Deleted Items. Anything that won't
+move stays in the original, and the list says so. Folders under Deleted Items, Sent Items,
+Drafts, Outbox and Junk are never touched.
+
+The scheme is saved in `settings.json` as `FolderNamePattern`, `FolderLayout`,
+`FolderHome` and `NestNewFolders`.
 
 ### Snooze (`h`)
 Outlook has no snooze for received mail, so the app implements it: the message moves

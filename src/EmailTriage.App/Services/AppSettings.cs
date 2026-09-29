@@ -13,6 +13,28 @@ public sealed class AppSettings
     /// <summary>Folder, relative to the mailbox root, that holds snoozed mail.</summary>
     public string SnoozeFolder { get; set; } = "Snoozed";
 
+    /// <summary>
+    /// How folders are named, with each part in {braces}. Edited on the
+    /// Settings page (Ctrl+,); see <see cref="FolderScheme"/>.
+    /// </summary>
+    public string FolderNamePattern { get; set; } = FolderScheme.DefaultNamePattern;
+
+    /// <summary>How those parts nest, one folder level per backslash.</summary>
+    public string FolderLayout { get; set; } = FolderScheme.DefaultLayout;
+
+    /// <summary>
+    /// Folder, from the top of the mailbox, the nested tree is built under
+    /// ("Inbox", "Projects"). Empty keeps each folder where it already is,
+    /// and puts new ones at the top of the mailbox.
+    /// </summary>
+    public string FolderHome { get; set; } = "";
+
+    /// <summary>A folder created from the move palette with a name in the scheme is made nested.</summary>
+    public bool NestNewFolders { get; set; } = true;
+
+    /// <summary>A method, not a property, so it stays out of settings.json.</summary>
+    public FolderScheme GetFolderScheme() => new(FolderNamePattern, FolderLayout);
+
     /// <summary>How many messages to pull into the triage list.</summary>
     public int InboxPageSize { get; set; } = 250;
 

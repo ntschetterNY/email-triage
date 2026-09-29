@@ -26,6 +26,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IClock _clock;
     private readonly AiUsageLog _aiUsage;
     private readonly ClaudeCodeCli _claude;
+    private readonly FolderSearchService _folders;
     private AiAuthInfo? _aiAuth;
 
     public KeyMap Keys { get; }
@@ -62,8 +63,10 @@ public sealed partial class MainViewModel : ObservableObject
         AppSettings settings,
         IClock clock,
         AiUsageLog aiUsage,
-        ClaudeCodeCli claude)
+        ClaudeCodeCli claude,
+        FolderSearchService folders)
     {
+        _folders = folders;
         _aiUsage = aiUsage;
         _claude = claude;
         _settings = settings;
@@ -581,6 +584,14 @@ public sealed partial class MainViewModel : ObservableObject
                 await ComposeAsync().ConfigureAwait(true);
                 return true;
 
+            case TriageAction.OpenFolderInOutlook:
+                await Triage.OpenFolderInOutlookPaletteAsync().ConfigureAwait(true);
+                return true;
+
+            case TriageAction.OpenSettings:
+                SettingsRequested?.Invoke(this, EventArgs.Empty);
+                return true;
+
             case TriageAction.Refresh:
                 switch (Section)
                 {
@@ -759,6 +770,14 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>Ctrl+P in triage: the window prints the conversation, since that takes its browser.</summary>
     public event EventHandler? SavePdfRequested;
+
+    /// <summary>Ctrl+, or the Settings button: the view opens the Settings window.</summary>
+    public event EventHandler? SettingsRequested;
+
+    /// <summary>A fresh Settings page over the live settings, for the view to show.</summary>
+    public SettingsViewModel CreateSettings() => new(_settings, _store, _folders);
+
+    public string SettingsKey => Keys.Describe(TriageAction.OpenSettings);
 
     /// <summary>Set while the answer or schedule palette was opened from the Calendar tab.</summary>
     private bool _calendarPalette;
@@ -976,6 +995,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - send to the action list"),
         ("Triage",  Keys.Describe(TriageAction.MarkNoAction), "No action needed"),
         ("Triage",  Keys.Describe(TriageAction.MoveToFolder), "Move to folder (type to search, Ctrl+Enter creates)"),
+        ("Triage",  Keys.Describe(TriageAction.OpenFolderInOutlook), "Open a folder in Outlook, from any tab"),
         ("Triage",  Keys.Describe(TriageAction.Snooze), "Come back to this later"),
         ("Triage",  Keys.Describe(TriageAction.Archive), "Archive"),
         ("Triage",  Keys.Describe(TriageAction.SavePdf), "Save the conversation as a PDF (also the PDF button)"),
@@ -1024,6 +1044,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         ("General", Keys.Describe(TriageAction.Refresh), "Refresh"),
         ("General", Keys.Describe(TriageAction.ShowHelp), "This help"),
+        ("General", Keys.Describe(TriageAction.OpenSettings), "Settings - how your folders are named and nested, and organizing them"),
         ("General", Keys.Describe(TriageAction.Cancel), "Close / cancel"),
     };
 }
