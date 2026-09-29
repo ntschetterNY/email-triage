@@ -57,6 +57,12 @@ public sealed partial class TriageViewModel : ObservableObject
     public ComposerViewModel Composer { get; }
 
     [ObservableProperty] private MailRowViewModel? _selected;
+
+    // Where the caret last sat in the list. The list box clears its selection
+    // when rows shift under it (a live refresh, a move), and j or a refresh
+    // must carry on from here rather than jump back to the top.
+    private int _caret = -1;
+
     [ObservableProperty] private MailBody? _openBody;
 
     /// <summary>
@@ -257,11 +263,11 @@ public sealed partial class TriageViewModel : ObservableObject
             }).ToList();
 
             var selected = Selected;
-            var selectedIndex = selected is null ? -1 : Rows.IndexOf(selected);
+            var selectedIndex = selected is not null && Rows.IndexOf(selected) is var at and >= 0 ? at : _caret;
 
             ApplySearchFilter();
 
-            if (selected is null || !Rows.Contains(selected))
+            if (selected is null || !Rows.Contains(selected) || Selected != selected)
             {
                 // A conversation that came back (an undone move) is still the
                 // same one; otherwise land on its neighbour.
@@ -573,6 +579,7 @@ public sealed partial class TriageViewModel : ObservableObject
     /// </summary>
     private void SyncRows(IReadOnlyList<MailRowViewModel> target)
     {
+        var selected = Selected;
         var keep = new HashSet<MailRowViewModel>(target);
         for (var i = Rows.Count - 1; i >= 0; i--)
         {
@@ -587,7 +594,14 @@ public sealed partial class TriageViewModel : ObservableObject
             if (at >= 0) Rows.Move(at, i);
             else Rows.Insert(i, target[i]);
         }
+
+        // Moving the selected row can make the list box drop its selection.
+        if (selected is not null && Selected != selected && Rows.Contains(selected)) Selected = selected;
     }
+
+    /// <summary>The row where the caret last sat, for when the selection has gone missing.</summary>
+    private MailRowViewModel? RowAtCaret() =>
+        Rows.Count == 0 ? null : Rows[Math.Clamp(_caret, 0, Rows.Count - 1)];
 
     partial void OnSearchQueryChanged(string value) => RefilterForSearch();
 
@@ -913,6 +927,7 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         // As in Outlook, a conversation folds back up once you move off it.
         if (oldValue is not null && oldValue != newValue) CollapseRow(oldValue);
+        if (newValue is not null && Rows.IndexOf(newValue) is var at and >= 0) _caret = at;
         SetFocusedMessage(null);
 
         ClosePreview();
@@ -1295,7 +1310,14 @@ public sealed partial class TriageViewModel : ObservableObject
             }
         }
 
-        var index = Selected is null ? 0 : Rows.IndexOf(Selected) + delta;
+        // A selection lost to a refresh resumes where the caret was, not at the top.
+        if (Selected is null || !Rows.Contains(Selected))
+        {
+            Selected = RowAtCaret();
+            return;
+        }
+
+        var index = Rows.IndexOf(Selected) + delta;
         Selected = Rows[Math.Clamp(index, 0, Rows.Count - 1)];
     }
 
@@ -2196,6 +2218,8 @@ public sealed partial class TriageViewModel : ObservableObject
             _searchRows.Remove(row);
             Rows.Remove(row);
         }
+
+        if (next is not null) _caret = Rows.IndexOf(next);
     }
 
     public void CancelOverlays()
