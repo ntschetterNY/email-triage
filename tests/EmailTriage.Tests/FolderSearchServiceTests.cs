@@ -35,11 +35,11 @@ public class FolderSearchServiceTests
     }
 
     [Fact]
-    public void Parent_trail_climbs_from_the_nearest_parent()
+    public void Breadcrumb_runs_from_the_top_folder_down_without_the_mailbox()
     {
-        Assert.Equal("-^ Acme -^ Clients -^ Mailbox", Node(@"Mailbox\Clients\Acme\Invoices", 3).ParentTrail);
-        Assert.Equal("-^ Mailbox", Node(@"Mailbox\Archive").ParentTrail);
-        Assert.Equal("", Node("Mailbox", 0).ParentTrail);
+        Assert.Equal("Clients -> Acme -> Invoices", Node(@"Mailbox\Clients\Acme\Invoices", 3).Breadcrumb);
+        Assert.Equal("Archive", Node(@"Mailbox\Archive").Breadcrumb);
+        Assert.Equal("Mailbox", Node("Mailbox", 0).Breadcrumb);
     }
 
     [Fact]

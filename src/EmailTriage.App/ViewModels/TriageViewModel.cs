@@ -1638,9 +1638,13 @@ public sealed partial class TriageViewModel : ObservableObject
             matches.Insert(0, nested);
         }
 
+        // The breadcrumb leaves out the mailbox, so name it only when the
+        // results span more than one.
+        var manyStores = matches.Select(f => f.Ref.StoreId).Distinct().Count() > 1;
+
         Palette.SetEntries(matches.Select(f => new PaletteEntry(
-            f.Name,
-            f.ParentTrail,
+            f.Breadcrumb,
+            manyStores ? f.StoreName : "",
             f,
             // Recomputed rather than carried: the nested hit has none.
             typed.Length > 0 && FuzzyMatcher.Score(typed, f.Name, out var pos) is not null ? pos : Array.Empty<int>())));

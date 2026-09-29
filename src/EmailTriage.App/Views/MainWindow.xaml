@@ -1759,7 +1759,7 @@
                                 <StackPanel Margin="10,7">
                                     <TextBlock x:Name="PrimaryText" Text="{Binding Primary}" FontSize="13.5"
                                                Foreground="{StaticResource Text}"
-                                               TextTrimming="CharacterEllipsis" />
+                                               TextWrapping="Wrap" />
                                     <TextBlock x:Name="SecondaryText" Text="{Binding Secondary}" FontSize="11"
                                                Foreground="{StaticResource Muted}" Margin="0,2,0,0"
                                                TextTrimming="CharacterEllipsis"
