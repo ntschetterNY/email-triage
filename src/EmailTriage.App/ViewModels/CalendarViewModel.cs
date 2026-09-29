@@ -13,6 +13,35 @@ namespace EmailTriage.App.ViewModels;
 /// <summary>How close the next meeting is, for colouring the strip in the top bar.</summary>
 public enum StripState { Clear, Upcoming, Soon, Now }
 
+/// <summary>One meeting in the top bar.</summary>
+public sealed partial class MeetingPill : ObservableObject
+{
+    public MeetingPill(CalendarEvent? ev, string text, StripState state)
+    {
+        Event = ev;
+        _text = text;
+        _state = state;
+    }
+
+    /// <summary>Null for the "No more meetings today" pill.</summary>
+    public CalendarEvent? Event { get; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Hint))]
+    private string _text;
+
+    [ObservableProperty] private StripState _state;
+
+    /// <summary>The tooltip: the whole line, in case it was cut short, and what a click does.</summary>
+    public string Hint => $"{Text}\nClick for the details and a Join button";
+
+    public void Update(string text, StripState state)
+    {
+        Text = text;
+        State = state;
+    }
+}
+
 /// <summary>One meeting in the agenda list.</summary>
 public sealed class AgendaRow
 {
@@ -243,11 +272,11 @@ public sealed partial class CalendarViewModel : ObservableObject
     [ObservableProperty] private string _status = "";
     [ObservableProperty] private bool _isLoading;
 
-    [ObservableProperty] private string _stripText = "";
-    [ObservableProperty] private StripState _stripState;
+    /// <summary>The top bar's meetings, one pill each; clicking one opens its card.</summary>
+    public ObservableCollection<MeetingPill> Pills { get; } = new();
 
-    /// <summary>The meeting the strip is talking about; clicking the strip opens it.</summary>
-    public CalendarEvent? StripEvent { get; private set; }
+    /// <summary>Room for a pill's text: a lone pill can say more.</summary>
+    [ObservableProperty] private double _pillMaxWidth = 560;
 
     public CalendarViewModel(ICalendarStore store, IClock clock, AppSettings settings)
     {
@@ -621,45 +650,49 @@ public sealed partial class CalendarViewModel : ObservableObject
 
     // ---- the strip ----------------------------------------------------------
 
+    /// <summary>A meeting starting within this long gets a pill of its own beside the one on now.</summary>
+    private static readonly TimeSpan PillWindow = TimeSpan.FromMinutes(60);
+
+    private const int MaxPills = 4;
+
     /// <summary>
-    /// "Now · Standup · ends in 12 min", "Next · Design review in 25 min · 14:00",
-    /// or quiet when the rest of the day is free.
+    /// One pill per meeting on now or coming up shortly: "Now · Standup · ends
+    /// in 12 min", "Design review in 25 min · 14:00". The next meeting alone
+    /// when none is that close, or a quiet "No more meetings today".
     /// </summary>
     private void UpdateStrip()
     {
         var now = _clock.Now;
-        var today = _events.Where(e => e.Start.Date == now.Date || e.Overlaps(now, now.AddMinutes(1))).ToList();
+        var today = _events.Where(e => e.Start.Date == now.Date || e.Overlaps(now, now.AddMinutes(1)));
+        var upcoming = CalendarMath.Upcoming(today, now, PillWindow, MaxPills);
 
-        var current = CalendarMath.Current(today, now).FirstOrDefault();
-        var next = CalendarMath.Next(today.Where(e => e.Start.Date == now.Date), now);
+        var pills = upcoming.Select((e, i) => PillFor(e, now, first: i == 0)).ToList();
+        if (pills.Count == 0 && _loadedAt != DateTimeOffset.MinValue)
+            pills.Add(new MeetingPill(null, "No more meetings today", StripState.Clear));
 
-        if (next is not null && next.Start - now <= TimeSpan.FromMinutes(5))
+        // Update in place when the same meetings are showing, so the tick
+        // does not rebuild the pills (and drop a hover) every 20 seconds.
+        if (pills.Select(p => p.Event?.Key).SequenceEqual(Pills.Select(p => p.Event?.Key)))
         {
-            StripEvent = next;
-            StripState = StripState.Soon;
-            StripText = $"{Title(next)} {CalendarMath.Countdown(next.Start - now)} · {next.Start:HH:mm}{Where(next)}";
-        }
-        else if (current is not null)
-        {
-            StripEvent = current;
-            StripState = StripState.Now;
-            StripText = $"Now · {Title(current)} · ends {CalendarMath.Countdown(current.End - now)}"
-                      + (next is null ? "" : $" · then {Title(next)} at {next.Start:HH:mm}");
-        }
-        else if (next is not null)
-        {
-            StripEvent = next;
-            StripState = StripState.Upcoming;
-            StripText = $"Next · {Title(next)} {CalendarMath.Countdown(next.Start - now)} · {next.Start:HH:mm}{Where(next)}";
+            for (var i = 0; i < pills.Count; i++) Pills[i].Update(pills[i].Text, pills[i].State);
         }
         else
         {
-            StripEvent = null;
-            StripState = StripState.Clear;
-            StripText = _loadedAt == DateTimeOffset.MinValue ? "" : "No more meetings today";
+            Pills.Clear();
+            foreach (var pill in pills) Pills.Add(pill);
         }
 
-        OnPropertyChanged(nameof(StripEvent));
+        PillMaxWidth = Pills.Count <= 1 ? 560 : 260;
+    }
+
+    private static MeetingPill PillFor(CalendarEvent e, DateTimeOffset now, bool first)
+    {
+        if (e.Start <= now)
+            return new MeetingPill(e, $"Now · {Title(e)} · ends {CalendarMath.Countdown(e.End - now)}", StripState.Now);
+
+        var soon = e.Start - now <= TimeSpan.FromMinutes(5);
+        var text = $"{Title(e)} {CalendarMath.Countdown(e.Start - now)} · {e.Start:HH:mm}{Where(e)}";
+        return new MeetingPill(e, soon || !first ? text : $"Next · {text}", soon ? StripState.Soon : StripState.Upcoming);
     }
 
     private static string Title(CalendarEvent e) =>
@@ -763,14 +796,20 @@ public sealed partial class CalendarViewModel : ObservableObject
     public async Task OpenInOutlookAsync()
     {
         if (Selected is not { } row) return;
+        Status = await OpenInOutlookAsync(row.Event).ConfigureAwait(true);
+    }
+
+    /// <summary>Opens a meeting in Outlook; returns what happened, for the status line.</summary>
+    public async Task<string> OpenInOutlookAsync(CalendarEvent ev)
+    {
         try
         {
-            await _store.ShowEventAsync(row.Event).ConfigureAwait(true);
-            Status = $"Opened in Outlook: {row.Subject}";
+            await _store.ShowEventAsync(ev).ConfigureAwait(true);
+            return $"Opened in Outlook: {Title(ev)}";
         }
         catch (Exception ex)
         {
-            Status = $"Could not open it in Outlook: {ex.Message}";
+            return $"Could not open it in Outlook: {ex.Message}";
         }
     }
 
@@ -785,7 +824,7 @@ public sealed partial class CalendarViewModel : ObservableObject
     }
 
     /// <summary>
-    /// A click on a meeting, in the strip or the agenda: shows it here and,
+    /// A click on a meeting, in the agenda or the grid: shows it here and,
     /// when it is on now or about to start, joins it in the same click.
     /// Meetings further out only open, so browsing the agenda never dials in.
     /// </summary>
@@ -804,6 +843,27 @@ public sealed partial class CalendarViewModel : ObservableObject
         var lead = TimeSpan.FromMinutes(Math.Max(0, _settings.JoinLeadMinutes));
         return !ev.IsAllDay && !ev.IsDeclined && ev.End > now && ev.Start - now <= lead;
     }
+
+    /// <summary>
+    /// The card a pill opens: the meeting's details, read in the background,
+    /// with its join link. Nothing is joined until the card's Join is pressed.
+    /// </summary>
+    public MeetingCardViewModel OpenCard(CalendarEvent ev)
+    {
+        var card = new MeetingCardViewModel(new AgendaRow(ev, _clock.Now), _clock.Now);
+        _ = LoadCardAsync(card);
+        return card;
+    }
+
+    private async Task LoadCardAsync(MeetingCardViewModel card)
+    {
+        card.Detail = await ReadDetailAsync(card.Row.Event).ConfigureAwait(true);
+        card.IsLoading = false;
+    }
+
+    /// <summary>Join from a meeting's card; returns what happened, for the status line.</summary>
+    public static string JoinFromCard(MeetingCardViewModel card) =>
+        card.Detail?.JoinUrl is { } url ? Join(card.Row.Event, url) : "That meeting has no link to join";
 
     /// <summary>
     /// Joins the meeting under way or about to start, wherever you are in the

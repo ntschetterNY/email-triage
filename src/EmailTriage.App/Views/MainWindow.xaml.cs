@@ -582,13 +582,16 @@ public partial class MainWindow : Window
 
     // ---- calendar ------------------------------------------------------------
 
-    /// <summary>The strip in the top bar: show that meeting in the Calendar tab, joining it if it is on.</summary>
-    private async void OnStripClick(object sender, MouseButtonEventArgs e)
+    /// <summary>
+    /// A meeting pill in the top bar: opens the meeting's card under it. It
+    /// never joins by itself - that is the card's Join button, a second click.
+    /// </summary>
+    private void OnPillClick(object sender, MouseButtonEventArgs e)
     {
-        var ev = ViewModel.Calendar.StripEvent;
-        ViewModel.Section = Section.Calendar;
-        Focus();
-        if (ev is not null) await ViewModel.Calendar.ClickAsync(ev);
+        if (sender is not FrameworkElement { DataContext: MeetingPill { Event: { } ev } } pill) return;
+
+        var card = ViewModel.Calendar.OpenCard(ev);
+        new MeetingWindow(ViewModel, card) { Owner = this }.ShowUnder(pill);
     }
 
     // Keep the keyboard on the window, where the calendar keys live.
