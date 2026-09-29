@@ -276,7 +276,7 @@
                         </TextBlock.Style>
                     </TextBlock>
 
-                    <TextBlock Text="Action items" FontSize="12" Padding="12,6">
+                    <TextBlock Text="{Binding ActionsTabTitle}" FontSize="12" Padding="12,6">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SectionTab}">
                                 <Style.Triggers>
@@ -915,6 +915,12 @@
                                                                         <Run Text="due" /><Run Text=" " /><Run Text="{Binding DueDisplay, Mode=OneWay}" />
                                                                     </TextBlock>
                                                                 </Border>
+                                                                <!-- its follow-up day has come: Shift+C drafts the follow-up -->
+                                                                <Border x:Name="FollowUpChip" CornerRadius="3" Padding="5,0" Margin="6,0,0,0" Background="#337AA2F7"
+                                                                        Visibility="{Binding IsInFollowUp, Converter={StaticResource BoolVis}}">
+                                                                    <TextBlock x:Name="FollowUpText" FontSize="10" Foreground="{StaticResource Accent}"
+                                                                               Text="{Binding ScheduledFollowUp}" />
+                                                                </Border>
                                                                 <!-- the wait has gone stale: c drafts the chase -->
                                                                 <Border CornerRadius="3" Padding="5,0" Margin="6,0,0,0" Background="#33E5C07B"
                                                                         Visibility="{Binding IsFollowUpDue, Converter={StaticResource BoolVis}}">
@@ -941,6 +947,7 @@
                                                         <Setter TargetName="CardWaiting" Property="Foreground" Value="#8A5A00" />
                                                         <Setter TargetName="DueText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
                                                         <Setter TargetName="NotesMark" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                                        <Setter TargetName="FollowUpText" Property="Foreground" Value="{StaticResource SelectedText}" />
                                                     </DataTrigger>
                                                 </DataTemplate.Triggers>
                                             </DataTemplate>
@@ -953,6 +960,14 @@
                                     <Setter TargetName="ColumnFrame" Property="BorderBrush" Value="{StaticResource Accent}" />
                                     <Setter TargetName="ColumnTitle" Property="Foreground" Value="{StaticResource Accent}" />
                                 </DataTrigger>
+                                <!-- Follow up takes no drops: it fills itself on each follow-up day -->
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsFollowUps}" Value="True" />
+                                        <Condition Binding="{Binding IsActive}" Value="False" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter TargetName="ColumnTitle" Property="Foreground" Value="{StaticResource Accent}" />
+                                </MultiDataTrigger>
                                 <DataTrigger Binding="{Binding IsDropTarget}" Value="True">
                                     <Setter TargetName="ColumnFrame" Property="BorderBrush" Value="{StaticResource Warn}" />
                                     <Setter TargetName="ColumnFrame" Property="BorderThickness" Value="2" />
@@ -1969,9 +1984,9 @@
 
                                 <StackPanel Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
                                     <CheckBox IsChecked="{Binding Triage.Composer.TrackAsTask}" VerticalAlignment="Center"
-                                              IsEnabled="{Binding Triage.Composer.CanTrackAsTask}"
-                                              Foreground="{StaticResource Text}" FontSize="12">
-                                        Track as a task on the board (Ctrl+Shift+T)
+                                              Foreground="{StaticResource Text}" FontSize="12"
+                                              ToolTip="On the day, it moves to the board's Follow up column for a chase">
+                                        Track it on the board (Ctrl+Shift+T)
                                     </CheckBox>
                                     <CheckBox IsChecked="{Binding Triage.Composer.MentionInEmail}" VerticalAlignment="Center"
                                               Margin="18,0,0,0" Foreground="{StaticResource Text}" FontSize="12">
@@ -1979,6 +1994,12 @@
                                     </CheckBox>
                                 </StackPanel>
                             </Grid>
+
+                            <!-- the way in for the mouse; Ctrl+Shift+F from the keyboard -->
+                            <Button Content="+ Follow up" HorizontalAlignment="Left" Margin="0,0,0,8"
+                                    Style="{StaticResource ReportButton}" Click="OnFollowUpButtonClick"
+                                    ToolTip="Pick a day to follow up and who it's waiting on (Ctrl+Shift+F)"
+                                    Visibility="{Binding Triage.Composer.IsFollowingUp, Converter={StaticResource BoolVisInv}}" />
 
                             <!-- send later (Ctrl+Shift+L) -->
                             <DockPanel Margin="0,0,0,10"

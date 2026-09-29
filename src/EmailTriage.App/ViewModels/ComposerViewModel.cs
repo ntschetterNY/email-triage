@@ -54,6 +54,10 @@ public sealed partial class ComposerViewModel : ObservableObject
     [ObservableProperty] private bool _trackAsTask = true;
     [ObservableProperty] private bool _mentionInEmail = true;
 
+    // Who follows the first To recipient until the user types in it.
+    private bool _followUpWhoEdited;
+    private bool _settingWho;
+
     [ObservableProperty] private RecipientField _suggestingFor;
     [ObservableProperty] private ContactEntry? _selectedSuggestion;
 
@@ -118,9 +122,6 @@ public sealed partial class ComposerViewModel : ObservableObject
         if (IsFollowingUp) TrackAsTask = !TrackAsTask;
     }
 
-    /// <summary>A new message answers nothing, so there is no mail to hang a task on.</summary>
-    public bool CanTrackAsTask => Draft is { } d && !d.InReplyTo.IsEmpty;
-
     public DateTimeOffset? FollowUpDue =>
         NaturalDateParser.TryParse(FollowUpWhen, _clock.Now, out var when, _dayShape) ? when : null;
 
@@ -169,12 +170,49 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     partial void OnFollowUpWhoChanged(string value)
     {
+        if (!_settingWho) _followUpWhoEdited = true;
         OnPropertyChanged(nameof(FollowUpPerson));
         OnPropertyChanged(nameof(FollowUpWhoPreview));
     }
 
+    private void SetFollowUpWho(string value)
+    {
+        _settingWho = true;
+        try { FollowUpWho = value; }
+        finally { _settingWho = false; }
+    }
+
+    /// <summary>
+    /// Until the user types a name of their own, the follow-up is on whoever
+    /// the message goes to first.
+    /// </summary>
+    private void SyncFollowUpWho()
+    {
+        if (_followUpWhoEdited) return;
+
+        var first = ToLine.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault() ?? "";
+        SetFollowUpWho(first);
+    }
+
+    /// <summary>Adds someone to the To line unless they are on the message already.</summary>
+    public void EnsureRecipient(string name, string address)
+    {
+        if (address.Length == 0 || IsOnMessage(new Recipient(name, address))) return;
+
+        _settingLines = true;
+        try { ToLine = RecipientLine.Append(ToLine, new ContactEntry(name, address, 0)); }
+        finally { _settingLines = false; }
+    }
+
+    /// <summary>True when the person is on the To or Cc line, so the ask reaches them in this thread.</summary>
+    private bool IsOnMessage(Recipient person) =>
+        person.Address.Length > 0 &&
+        RecipientLine.Parse(ToLine).Concat(RecipientLine.Parse(CcLine))
+            .Any(a => string.Equals(a, person.Address, StringComparison.OrdinalIgnoreCase));
+
     private string FollowUpTask =>
-        FollowUpWhat.Trim() is { Length: > 0 } what ? what : $"Get back to me on: {Subject}";
+        FollowUpWhat.Trim() is { Length: > 0 } what ? what : $"Reply about \"{Subject.Trim()}\"";
 
     /// <summary>The line put under the message so the recipient sees the ask.</summary>
     private string FollowUpLine(Recipient person, DateTimeOffset due)
@@ -187,7 +225,9 @@ public sealed partial class ComposerViewModel : ObservableObject
     private void ResetFollowUp()
     {
         IsFollowingUp = false;
-        FollowUpWhen = FollowUpWho = FollowUpWhat = "";
+        FollowUpWhen = FollowUpWhat = "";
+        SetFollowUpWho("");
+        _followUpWhoEdited = false;
         TrackAsTask = true;
         MentionInEmail = true;
     }
@@ -282,7 +322,6 @@ public sealed partial class ComposerViewModel : ObservableObject
         ScheduleText = "";
         HoldIfReplied = true;
         ResetFollowUp();
-        FollowUpWho = draft.To.FirstOrDefault().Display ?? "";
 
         _settingLines = true;
         ToLine = _initialTo = RecipientLine.Format(draft.To);
@@ -290,6 +329,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         SubjectLine = draft.Subject;
         BccLine = _initialBcc = "";
         _settingLines = false;
+        SyncFollowUpWho();
         _mentions.Clear();
         Attachments.Clear();
         foreach (var carried in draft.Attachments) Attachments.Add(ComposeAttachment.Carried(carried));
@@ -300,7 +340,6 @@ public sealed partial class ComposerViewModel : ObservableObject
         OnPropertyChanged(nameof(IsNew));
         OnPropertyChanged(nameof(StartsWithRecipients));
         OnPropertyChanged(nameof(Subject));
-        OnPropertyChanged(nameof(CanTrackAsTask));
 
         // Last, so the view sees the right IsForward when it picks what to focus.
         IsOpen = true;
@@ -308,7 +347,12 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     // ---- autocomplete -------------------------------------------------------
 
-    partial void OnToLineChanged(string value) => Suggest(RecipientField.To, value);
+    partial void OnToLineChanged(string value)
+    {
+        SyncFollowUpWho();
+        Suggest(RecipientField.To, value);
+    }
+
     partial void OnCcLineChanged(string value) => Suggest(RecipientField.Cc, value);
     partial void OnBccLineChanged(string value) => Suggest(RecipientField.Bcc, value);
 
@@ -482,7 +526,7 @@ public sealed partial class ComposerViewModel : ObservableObject
             }
 
             if (MentionInEmail) followUpLine = FollowUpLine(person, due);
-            if (TrackAsTask && CanTrackAsTask)
+            if (TrackAsTask)
             {
                 followUp = new FollowUpRequest
                 {
@@ -490,6 +534,8 @@ public sealed partial class ComposerViewModel : ObservableObject
                     Task = FollowUpTask,
                     DueUtc = due.ToUniversalTime(),
                     ToldUtc = (sendAt ?? _clock.Now).ToUniversalTime(),
+                    Subject = IsNew ? SubjectLine.Trim() : Subject,
+                    InThread = IsOnMessage(person),
                 };
             }
         }

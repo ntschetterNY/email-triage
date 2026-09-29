@@ -2089,27 +2089,44 @@ public sealed partial class TriageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Files a follow-up set in the composer: the answered mail goes on the
-    /// action list (as if flagged with `a`, unless it is there already) and
-    /// the person gets a hand-off with the due date, which the board's chase
-    /// picks up. Returns a line for the status bar.
+    /// Files a follow-up set in the composer. A reply or forward puts the
+    /// answered mail on the action list (as if flagged with `a`, unless it is
+    /// there already); a new message answers nothing, so it is filed under a
+    /// placeholder until its copy reaches Sent Items. Either way the person
+    /// gets a dated hand-off and the card waits on them; on the day it moves
+    /// to the board's Follow up column. Returns a line for the status bar.
     /// </summary>
     public async Task<string> RecordFollowUpAsync(MailRef answered, FollowUpRequest followUp)
     {
         try
         {
-            var summary = _allRows.SelectMany(r => r.InboxMessages).FirstOrDefault(m => m.Ref == answered)
-                ?? (await _store.GetConversationAsync(answered, 50).ConfigureAwait(true))
-                    .FirstOrDefault(m => m.Ref == answered);
-
-            if (summary is null) return "the follow-up could not be saved: that mail was not found";
-
-            var item = await _actions.GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
-            if (item is null || item.IsComplete)
+            ActionItem? item;
+            if (answered.IsEmpty)
             {
-                await SetActionRequiredAsync(summary, true).ConfigureAwait(true);
+                item = await _actions.UpsertAsync(new ActionItem
+                {
+                    InternetMessageId = SentMailMatcher.NewPlaceholder(),
+                    Subject = followUp.Subject,
+                    SenderName = "You",
+                    SenderAddress = "",
+                    ReceivedUtc = followUp.ToldUtc,
+                }).ConfigureAwait(true);
+            }
+            else
+            {
+                var summary = _allRows.SelectMany(r => r.InboxMessages).FirstOrDefault(m => m.Ref == answered)
+                    ?? (await _store.GetConversationAsync(answered, 50).ConfigureAwait(true))
+                        .FirstOrDefault(m => m.Ref == answered);
+
+                if (summary is null) return "the follow-up could not be saved: that mail was not found";
+
                 item = await _actions.GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
-                if (item is null) return "the follow-up could not be saved";
+                if (item is null || item.IsComplete)
+                {
+                    await SetActionRequiredAsync(summary, true).ConfigureAwait(true);
+                    item = await _actions.GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
+                    if (item is null) return "the follow-up could not be saved";
+                }
             }
 
             var assignment = await _actions.AddAssignmentAsync(new Assignment
@@ -2120,13 +2137,17 @@ public sealed partial class TriageViewModel : ObservableObject
                 Task = followUp.Task,
                 DueUtc = followUp.DueUtc,
                 CreatedUtc = _clock.UtcNow,
+                InThread = followUp.InThread,
             }).ConfigureAwait(true);
 
             // They were told in the message itself, so the wait starts now and
             // the board does not offer to "tell" them all over again.
             await _actions.MarkAssignmentDraftedAsync(assignment.Id).ConfigureAwait(true);
 
-            return $"follow-up with {followUp.Person.Display} {followUp.DueUtc.ToLocalTime():ddd d MMM} is on the action board";
+            if (ActionWorkflow.AfterWaitAdded(item) is { } stage)
+                await _actions.UpdateStageAsync(item.Id, stage).ConfigureAwait(true);
+
+            return $"follow up with {followUp.Person.Display} on {followUp.DueUtc.ToLocalTime():ddd d MMM} - it joins the board's Follow up column that day";
         }
         catch (Exception ex)
         {

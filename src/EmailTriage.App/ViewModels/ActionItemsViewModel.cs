@@ -14,14 +14,21 @@ public enum EditorMode { None, Note, Blocker, Assignment, Due }
 /// <summary>One column of the board.</summary>
 public sealed partial class BoardColumn : ObservableObject
 {
-    public BoardColumn(ActionStage stage, string title)
+    public BoardColumn(ActionStage stage, string title, bool isFollowUps = false)
     {
         Stage = stage;
         Title = title;
+        IsFollowUps = isFollowUps;
     }
 
     public ActionStage Stage { get; }
     public string Title { get; }
+
+    /// <summary>
+    /// The Follow up column: not a stage of its own but waiting cards whose
+    /// follow-up day has come, so nothing can be dropped into it.
+    /// </summary>
+    public bool IsFollowUps { get; }
     public ObservableCollection<ActionItem> Items { get; } = new();
 
     [ObservableProperty] private bool _isActive;
@@ -52,8 +59,8 @@ public sealed record WaitingChip(string Person, int Count, bool AnyOverdue)
 }
 
 /// <summary>
-/// The action board: every mail that needs work, in To do, Doing, Waiting and
-/// Done columns, with the blockers and hand-offs that hold it up and the
+/// The action board: every mail that needs work, in To do, Doing, Waiting,
+/// Follow up and Done columns, with the blockers and hand-offs that hold it up and the
 /// original email underneath. Built for moving fast from the keyboard;
 /// assignments stay local until the user explicitly drafts a chase email.
 /// </summary>
@@ -82,8 +89,18 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         new BoardColumn(ActionStage.ToDo, "TO DO"),
         new BoardColumn(ActionStage.Doing, "DOING"),
         new BoardColumn(ActionStage.Waiting, "WAITING"),
+        new BoardColumn(ActionStage.Waiting, "FOLLOW UP", isFollowUps: true),
         new BoardColumn(ActionStage.Done, "DONE"),
     };
+
+    private BoardColumn FollowUps => Columns.First(c => c.IsFollowUps);
+
+    /// <summary>Checks now and then whether the day has turned, so that day's follow-ups appear.</summary>
+    private readonly System.Windows.Threading.DispatcherTimer _dayWatch = new() { Interval = TimeSpan.FromMinutes(10) };
+    private DateTime _loadedDay;
+
+    // One pass at a time looking in Sent Items for new messages' copies.
+    private bool _resolvingSent;
 
     public ObservableCollection<WaitingChip> WaitingOnPeople { get; } = new();
 
@@ -99,6 +116,9 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
     /// <summary>Waits that have sat past the follow-up threshold, for the status line.</summary>
     [ObservableProperty] private int _followUpDueCount;
+
+    /// <summary>Cards in the Follow up column: waits whose follow-up day has come.</summary>
+    [ObservableProperty] private int _scheduledFollowUpCount;
 
     // Inline editor state. One editor at a time keeps the key handling simple.
     [ObservableProperty] private EditorMode _editor = EditorMode.None;
@@ -192,12 +212,20 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
             var all = open.Concat(recentDone).ToList();
             _all = all;
+            _loadedDay = _clock.Now.Date;
 
-            // Flag waits that have gone stale, so the cards say so and `c` has
-            // a queue to work through. Timestamp arithmetic only - no AI runs
-            // until the user asks for the chase draft itself.
+            // Waits whose follow-up day has come go to the Follow up column.
+            var now = _clock.Now;
+            foreach (var item in all) item.ScheduledFollowUp = "";
+            var scheduled = FollowUpPlanner.FindScheduled(open, now);
+            foreach (var due in scheduled) due.Item.ScheduledFollowUp = FollowUpPlanner.Label(due, now);
+            ScheduledFollowUpCount = scheduled.Count;
+
+            // Flag the other waits that have gone stale, so the cards say so
+            // and `c` has a queue to work through. Timestamp arithmetic only -
+            // no AI runs until the user asks for the chase draft itself.
             foreach (var item in all) item.FollowUpDays = 0;
-            var followUps = FollowUpPlanner.FindDue(open, _settings.FollowUpAfterDays, _clock.UtcNow);
+            var followUps = FollowUpPlanner.FindDue(open.Where(i => !i.IsInFollowUp), _settings.FollowUpAfterDays, _clock.UtcNow);
             foreach (var due in followUps) due.Item.FollowUpDays = due.DaysWaiting;
             FollowUpDueCount = followUps.Count;
 
@@ -207,10 +235,13 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
             var shown = HasFilter ? all.Where(i => ActionWorkflow.Involves(i, PersonFilter)).ToList() : all;
 
-            foreach (var column in Columns)
+            FollowUps.Fill(scheduled.Select(d => d.Item).Where(shown.Contains));
+
+            foreach (var column in Columns.Where(c => !c.IsFollowUps))
             {
                 var stage = column.Stage;
                 column.Fill(shown
+                    .Where(i => !i.IsInFollowUp)
                     .Where(i => (i.IsComplete ? ActionStage.Done : i.Stage == ActionStage.Done ? ActionStage.Doing : i.Stage) == stage)
                     .OrderByDescending(i => stage == ActionStage.Done ? i.CompletedUtc : null)
                     .ThenByDescending(i => i.IsOverdue)
@@ -240,14 +271,99 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
             Status = $"{OpenCount} open  ·  {WaitingCount} waiting"
                    + (OverdueCount > 0 ? $"  ·  {OverdueCount} overdue" : "")
+                   + (ScheduledFollowUpCount > 0
+                       ? $"  ·  {ScheduledFollowUpCount} to follow up ({ChaseKey} drafts each one)"
+                       : "")
                    + (FollowUpDueCount > 0
                        ? $"  ·  {FollowUpDueCount} follow-up{(FollowUpDueCount == 1 ? "" : "s")} due ({ChaseKey} drafts a chase)"
                        : "")
                    + (HasFilter ? $"  ·  showing {PersonFilter}" : "");
+
+            if (open.Any(i => i.IsAwaitingSentCopy)) _ = ResolveSentCopiesAsync();
         }
         catch (Exception ex)
         {
             Status = $"Could not load action items: {ex.Message}";
+        }
+    }
+
+    /// <summary>Starts reloading the board when the day turns, so that day's follow-ups appear unasked.</summary>
+    public void StartDayWatch()
+    {
+        _dayWatch.Tick += async (_, _) =>
+        {
+            if (_clock.Now.Date != _loadedDay) await LoadAsync().ConfigureAwait(true);
+        };
+        _dayWatch.Start();
+    }
+
+    // ---- new messages: find the sent copy a follow-up was filed against ----
+
+    /// <summary>
+    /// Repoints cards filed for a new message at its copy in Sent Items, once
+    /// Outlook has put it there, so the card shows the email and a chase can
+    /// reply in its thread. Returns true when any card was repointed.
+    /// </summary>
+    private async Task<bool> ResolveSentCopiesAsync()
+    {
+        if (_resolvingSent) return false;
+        _resolvingSent = true;
+
+        try
+        {
+            var pending = _all.Where(i => i.IsAwaitingSentCopy && !i.IsComplete).ToList();
+            if (pending.Count == 0) return false;
+
+            var sentFolder = await _store.GetSentItemsAsync().ConfigureAwait(true);
+            var sent = await _store.GetMailAsync(sentFolder, 100).ConfigureAwait(true);
+
+            var repointed = false;
+            foreach (var item in pending)
+            {
+                var person = item.Assignments.FirstOrDefault();
+                var copy = SentMailMatcher.Find(
+                    sent, item.Subject, person?.PersonName ?? "", person?.PersonEmail ?? "", item.ReceivedUtc);
+                if (copy is null) continue;
+
+                try
+                {
+                    await _repo.ReplaceMessageIdAsync(
+                        item.Id, copy.InternetMessageId, copy.Ref.EntryId, copy.Ref.StoreId).ConfigureAwait(true);
+                    repointed = true;
+                }
+                catch { continue; /* that mail is already on the board under its own card */ }
+
+                // Visible in Outlook too, as a flagged mail would be.
+                try { await _store.SetCategoryAsync(copy.Ref, _settings.ActionCategory, true).ConfigureAwait(true); }
+                catch { }
+            }
+
+            // Still guarded, so this reload does not set off another pass for
+            // the ones not sent yet; the next load looks for those.
+            if (repointed) await LoadAsync().ConfigureAwait(true);
+            return repointed;
+        }
+        catch
+        {
+            return false; // Outlook busy or closed: the next load tries again
+        }
+        finally
+        {
+            _resolvingSent = false;
+        }
+    }
+
+    /// <summary>
+    /// Just after a new message goes, its copy can take a moment to reach Sent
+    /// Items; look a few times rather than leave the card without its email.
+    /// </summary>
+    public async Task ResolveSentCopiesSoonAsync()
+    {
+        foreach (var wait in new[] { 5, 20, 60, 180 })
+        {
+            await Task.Delay(TimeSpan.FromSeconds(wait)).ConfigureAwait(true);
+            if (!_all.Any(i => i.IsAwaitingSentCopy && !i.IsComplete)) return;
+            if (await ResolveSentCopiesAsync().ConfigureAwait(true)) return;
         }
     }
 
@@ -448,6 +564,10 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     /// </summary>
     private async Task<string> RenderBodyAsync(ActionItem item)
     {
+        if (item.IsAwaitingSentCopy)
+            return HtmlPresenter.Render(Placeholder(
+                "Your message has not reached Sent Items yet - it shows here once it has been sent."), true);
+
         var mail = await ResolveAsync(item).ConfigureAwait(true);
         if (mail is null)
             return HtmlPresenter.Render(Placeholder("The email could not be found - it may have been deleted."), true);
@@ -473,6 +593,8 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     /// <summary>Where the flagged mail is now, updating the stored location if it moved.</summary>
     private async Task<MailRef?> ResolveAsync(ActionItem item)
     {
+        if (item.IsAwaitingSentCopy) return null;
+
         var known = new MailRef(item.EntryId, item.StoreId);
         if (!known.IsEmpty && await _store.GetSavedDraftStateAsync(new DraftRef(item.EntryId, item.StoreId)).ConfigureAwait(true)
                 is not SavedDraftState.Missing)
@@ -515,7 +637,30 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         _ = LoadBodyAsync(item);
     }
 
-    /// <summary>Moves a card straight to a stage - where a drag-and-drop lands it.</summary>
+    /// <summary>Where a drag-and-drop lands a card.</summary>
+    public async Task MoveToColumnAsync(ActionItem item, BoardColumn column)
+    {
+        if (column.IsFollowUps)
+        {
+            Select(item);
+            Status = "Cards come here on their follow-up day - give a hand-off a date (Shift+A), or set one when you send";
+            return;
+        }
+
+        await MoveToStageAsync(item, column.Stage).ConfigureAwait(true);
+        NoteIfStillInFollowUp(item);
+    }
+
+    /// <summary>A follow-up card keeps its place until it is chased or its wait is cleared; say so.</summary>
+    private void NoteIfStillInFollowUp(ActionItem item)
+    {
+        if (FollowUps.Items.Any(i => i.Id == item.Id))
+            Status += $"  ·  it stays in Follow up until chased ({ChaseKey}) or cleared ({ClearKey})";
+    }
+
+    private string ClearKey => _keys.Describe(TriageAction.ClearWait) is { Length: > 0 } key ? key : "w";
+
+    /// <summary>Moves a card straight to a stage.</summary>
     public async Task MoveToStageAsync(ActionItem item, ActionStage to)
     {
         Select(item);
@@ -710,6 +855,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
                 ? "Moved to Waiting · add who it is on with b (blocked by) or Shift+A (assign)"
                 : $"Moved to {Title(to)}";
             await LoadAsync().ConfigureAwait(true);
+            NoteIfStillInFollowUp(item);
         }
         catch (Exception ex)
         {
@@ -826,12 +972,16 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     public bool SelectedChasesAssignee =>
         Selected?.Assignments.Any(a => !a.IsDone && a.PersonEmail.Length > 0) == true;
 
-    /// <summary>Drafts a chase email to the first person with an open hand-off.</summary>
-    public async Task ChaseAsync()
+    /// <summary>
+    /// Drafts a chase email to <paramref name="which"/> hand-off, or else the
+    /// first person with an open one.
+    /// </summary>
+    public async Task ChaseAsync(Assignment? which = null)
     {
         if (Selected is not { } item) return;
 
-        var assignment = item.Assignments.FirstOrDefault(a => !a.IsDone && a.PersonEmail.Length > 0)
+        var assignment = which
+                         ?? item.Assignments.FirstOrDefault(a => !a.IsDone && a.PersonEmail.Length > 0)
                          ?? item.Assignments.FirstOrDefault(a => !a.IsDone);
 
         if (assignment is null)
@@ -843,13 +993,23 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         await DraftAssignmentMailAsync(assignment).ConfigureAwait(true);
     }
 
-    /// <summary>Restarts the staleness clock once a chase draft exists.</summary>
+    /// <summary>
+    /// Restarts the staleness clock once a chase exists. A card in Follow up
+    /// has been dealt with, so the board reloads to put it back in Waiting.
+    /// </summary>
     public async Task MarkFollowedUpAsync(ActionItem item)
     {
         await _repo.MarkFollowedUpAsync(item.Id).ConfigureAwait(true);
         item.LastFollowUpUtc = _clock.UtcNow;
         item.FollowUpDays = 0;
         if (FollowUpDueCount > 0) FollowUpDueCount--;
+
+        if (FollowUps.Items.Any(i => i.Id == item.Id))
+        {
+            var status = Status;
+            await LoadAsync().ConfigureAwait(true);
+            Status = status;
+        }
     }
 
     /// <summary>

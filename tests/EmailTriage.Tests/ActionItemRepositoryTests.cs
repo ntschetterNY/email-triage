@@ -153,6 +153,36 @@ public class ActionItemRepositoryTests : IDisposable
     }
 
     [Fact]
+    public async Task A_follow_up_asked_in_the_thread_keeps_that_flag()
+    {
+        var item = await _repo.UpsertAsync(NewItem());
+        await _repo.AddAssignmentAsync(new Assignment
+        {
+            ActionItemId = item.Id, PersonName = "Sam", Task = "revised SOV", InThread = true,
+        });
+        await _repo.AddAssignmentAsync(new Assignment { ActionItemId = item.Id, PersonName = "Bo", Task = "site photos" });
+
+        var loaded = await _repo.GetByMessageIdAsync("mid-1");
+        Assert.True(loaded!.Assignments.Single(a => a.PersonName == "Sam").InThread);
+        Assert.False(loaded.Assignments.Single(a => a.PersonName == "Bo").InThread);
+    }
+
+    [Fact]
+    public async Task A_placeholder_item_is_repointed_at_the_sent_copy()
+    {
+        var item = await _repo.UpsertAsync(NewItem("<pending-sent:abc>"));
+        Assert.True(item.IsAwaitingSentCopy);
+
+        await _repo.ReplaceMessageIdAsync(item.Id, "<real@corp.com>", "entry-9", "store-9");
+
+        Assert.Null(await _repo.GetByMessageIdAsync("<pending-sent:abc>"));
+        var loaded = await _repo.GetByMessageIdAsync("<real@corp.com>");
+        Assert.Equal(item.Id, loaded!.Id);
+        Assert.Equal("entry-9", loaded.EntryId);
+        Assert.False(loaded.IsAwaitingSentCopy);
+    }
+
+    [Fact]
     public async Task Location_can_be_refreshed_after_the_mail_moves()
     {
         await _repo.UpsertAsync(NewItem());

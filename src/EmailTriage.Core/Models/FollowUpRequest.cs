@@ -13,4 +13,10 @@ public sealed record FollowUpRequest
 
     /// <summary>When the person hears about it: now, or the scheduled send time.</summary>
     public required DateTimeOffset ToldUtc { get; init; }
+
+    /// <summary>The subject as sent, for finding a new message's copy in Sent Items.</summary>
+    public string Subject { get; init; } = "";
+
+    /// <summary>The person is on the message, so a chase can reply in the thread.</summary>
+    public bool InThread { get; init; }
 }
