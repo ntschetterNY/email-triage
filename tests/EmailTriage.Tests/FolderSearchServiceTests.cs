@@ -35,6 +35,14 @@ public class FolderSearchServiceTests
     }
 
     [Fact]
+    public void Parent_trail_climbs_from_the_nearest_parent()
+    {
+        Assert.Equal("-^ Acme -^ Clients -^ Mailbox", Node(@"Mailbox\Clients\Acme\Invoices", 3).ParentTrail);
+        Assert.Equal("-^ Mailbox", Node(@"Mailbox\Archive").ParentTrail);
+        Assert.Equal("", Node("Mailbox", 0).ParentTrail);
+    }
+
+    [Fact]
     public async Task Empty_query_lists_folders_without_filtering()
     {
         var (service, _, _) = Build();
