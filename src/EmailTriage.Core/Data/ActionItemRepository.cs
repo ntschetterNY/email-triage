@@ -22,6 +22,7 @@ public sealed class ActionItemRepository : IActionItemRepository
                entry_id            AS EntryId,
                store_id            AS StoreId,
                subject             AS Subject,
+               title               AS Title,
                sender_name         AS SenderName,
                sender_address      AS SenderAddress,
                received_utc        AS ReceivedUtc,
@@ -108,28 +109,119 @@ public sealed class ActionItemRepository : IActionItemRepository
 
         if (item.CreatedUtc == default) item.CreatedUtc = _clock.UtcNow;
 
-        // Re-flagging a mail that is already tracked must not wipe the notes the
-        // user has built up, so the update list is deliberately narrow.
-        var id = await conn.ExecuteScalarAsync<long>(new CommandDefinition("""
-            INSERT INTO action_items
-                (internet_message_id, entry_id, store_id, subject, sender_name,
-                 sender_address, received_utc, created_utc, completed_utc, priority, notes)
-            VALUES
-                (@InternetMessageId, @EntryId, @StoreId, @Subject, @SenderName,
-                 @SenderAddress, @ReceivedUtc, @CreatedUtc, @CompletedUtc, @Priority, @Notes)
-            ON CONFLICT(internet_message_id) DO UPDATE SET
-                entry_id      = excluded.entry_id,
-                store_id      = excluded.store_id,
-                subject       = excluded.subject,
-                sender_name   = excluded.sender_name,
-                sender_address= excluded.sender_address,
-                completed_utc = NULL,
-                stage         = CASE WHEN stage = 3 THEN 0 ELSE stage END
-            RETURNING id;
-            """, item, cancellationToken: ct)).ConfigureAwait(false);
+        var id = await conn.ExecuteScalarAsync<long>(new CommandDefinition(
+            UpsertSql, item, cancellationToken: ct)).ConfigureAwait(false);
 
         item.Id = id;
         return item;
+    }
+
+    // Re-flagging a mail that is already tracked must not wipe the notes the
+    // user has built up, so the update list is deliberately narrow.
+    private const string UpsertSql = """
+        INSERT INTO action_items
+            (internet_message_id, entry_id, store_id, subject, title, sender_name,
+             sender_address, received_utc, created_utc, completed_utc, priority, notes)
+        VALUES
+            (@InternetMessageId, @EntryId, @StoreId, @Subject, @Title, @SenderName,
+             @SenderAddress, @ReceivedUtc, @CreatedUtc, @CompletedUtc, @Priority, @Notes)
+        ON CONFLICT(internet_message_id) DO UPDATE SET
+            entry_id      = excluded.entry_id,
+            store_id      = excluded.store_id,
+            subject       = excluded.subject,
+            sender_name   = excluded.sender_name,
+            sender_address= excluded.sender_address,
+            completed_utc = NULL,
+            stage         = CASE WHEN stage = 3 THEN 0 ELSE stage END
+        RETURNING id;
+        """;
+
+    public async Task<ActionItem> CaptureAsync(
+        ActionItem item, CaptureRequest request, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        var now = _clock.UtcNow;
+        if (item.CreatedUtc == default) item.CreatedUtc = now;
+
+        var id = await conn.ExecuteScalarAsync<long>(new CommandDefinition(
+            UpsertSql, item, tx, cancellationToken: ct)).ConfigureAwait(false);
+
+        // Empty answers leave what is there: the popup adds, the board's form edits.
+        await conn.ExecuteAsync(new CommandDefinition("""
+            UPDATE action_items
+            SET title    = CASE WHEN @title <> '' THEN @title ELSE title END,
+                notes    = CASE WHEN @notes <> '' THEN @notes ELSE notes END,
+                priority = @priority,
+                due_utc  = COALESCE(@due, due_utc),
+                stage    = CASE WHEN @wait = 1 THEN 2 ELSE stage END
+            WHERE id = @id
+            """, new
+            {
+                id,
+                title = request.Title.Trim(),
+                notes = request.Notes.Trim(),
+                priority = (int)request.Priority,
+                due = request.DueUtc,
+                wait = request.HasWait ? 1 : 0,
+            }, tx, cancellationToken: ct)).ConfigureAwait(false);
+
+        if (request.HasWait)
+        {
+            var who = request.Who!.Value;
+            var what = request.Title.Trim().Length > 0 ? request.Title.Trim() : item.Subject;
+
+            if (request.IsBlocker)
+            {
+                await conn.ExecuteAsync(new CommandDefinition("""
+                    INSERT INTO blocking_tasks
+                        (action_item_id, description, waiting_on, due_utc, created_utc, resolved_utc)
+                    VALUES (@id, @what, @who, @due, @now, NULL)
+                    """, new { id, what, who = who.Display, due = request.FollowUpUtc, now },
+                    tx, cancellationToken: ct)).ConfigureAwait(false);
+            }
+            else
+            {
+                await conn.ExecuteAsync(new CommandDefinition("""
+                    INSERT INTO assignments
+                        (action_item_id, person_name, person_email, task, due_utc,
+                         created_utc, done_utc, notified_utc, in_thread)
+                    VALUES (@id, @name, @email, @what, @due, @now, NULL, NULL, 0)
+                    """, new { id, name = who.Display, email = who.Address, what, due = request.FollowUpUtc, now },
+                    tx, cancellationToken: ct)).ConfigureAwait(false);
+            }
+        }
+
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+
+        item.Id = id;
+        return (await GetByMessageIdAsync(item.InternetMessageId, ct).ConfigureAwait(false)) ?? item;
+    }
+
+    public async Task RestoreAsync(ActionItem snapshot, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        await conn.ExecuteAsync(new CommandDefinition("""
+            UPDATE action_items
+            SET title = @Title, notes = @Notes, priority = @Priority, due_utc = @DueUtc,
+                stage = @Stage, completed_utc = @CompletedUtc, last_follow_up_utc = @LastFollowUpUtc
+            WHERE id = @Id
+            """, snapshot, tx, cancellationToken: ct)).ConfigureAwait(false);
+
+        // Waits added since the snapshot go; the ones it held stay as they are.
+        await conn.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM blocking_tasks WHERE action_item_id = @id AND id NOT IN @keep",
+            new { id = snapshot.Id, keep = snapshot.Blockers.Select(b => b.Id).ToArray() },
+            tx, cancellationToken: ct)).ConfigureAwait(false);
+        await conn.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM assignments WHERE action_item_id = @id AND id NOT IN @keep",
+            new { id = snapshot.Id, keep = snapshot.Assignments.Select(a => a.Id).ToArray() },
+            tx, cancellationToken: ct)).ConfigureAwait(false);
+
+        await tx.CommitAsync(ct).ConfigureAwait(false);
     }
 
     public async Task DeleteAsync(long id, CancellationToken ct = default)

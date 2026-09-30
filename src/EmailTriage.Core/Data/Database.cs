@@ -204,5 +204,11 @@ public sealed class Database
             -- the composer), whose chase replies in that same conversation.
             ALTER TABLE assignments ADD COLUMN in_thread INTEGER NOT NULL DEFAULT 0;
             """),
+
+        (6, """
+            -- What has to happen, in the user's words, typed as the mail is
+            -- flagged. Empty falls back to the subject.
+            ALTER TABLE action_items ADD COLUMN title TEXT NOT NULL DEFAULT '';
+            """),
     };
 }

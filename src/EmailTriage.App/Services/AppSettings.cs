@@ -143,6 +143,18 @@ public sealed class AppSettings
     public int FollowUpAfterDays { get; set; } = 5;
 
     /// <summary>
+    /// Flagging a mail (a) asks what has to happen, who has the ball and
+    /// when, in one popup. Off, `a` flags at once as it always did.
+    /// </summary>
+    public bool AskDetailsOnFlag { get; set; } = true;
+
+    /// <summary>
+    /// When a hand-off has a due date but no follow-up day, chase this many
+    /// days before it is due. 0 chases on the due day itself.
+    /// </summary>
+    public int FollowUpBeforeDueDays { get; set; } = 2;
+
+    /// <summary>
     /// On launch, install the latest GitHub release if it is newer. Only
     /// release builds update themselves; a local build never does.
     /// </summary>

@@ -48,6 +48,7 @@ public partial class MainWindow : Window
         viewModel.SettingsRequested += (_, _) => ShowSettings();
         viewModel.Triage.PropertyChanged += OnTriageChanged;
         viewModel.Triage.Palette.PropertyChanged += OnPaletteChanged;
+        viewModel.Triage.Capture.PropertyChanged += OnCaptureChanged;
         viewModel.Triage.Composer.PropertyChanged += OnComposerChanged;
         viewModel.Triage.Composer.SuggestionAccepted += OnSuggestionAccepted;
         viewModel.Triage.Composer.FocusRequested += (_, field) => FocusLater(field switch
@@ -884,6 +885,33 @@ public partial class MainWindow : Window
                 break;
         }
     }
+
+    private void OnCaptureChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        var capture = ViewModel.Triage.Capture;
+
+        // Ctrl+N opens the notes box: put the cursor in it.
+        if (e.PropertyName == nameof(CaptureViewModel.ShowNotes))
+        {
+            if (capture.IsOpen && capture.ShowNotes) FocusLater(CaptureNotes);
+            return;
+        }
+
+        if (e.PropertyName != nameof(CaptureViewModel.IsOpen)) return;
+
+        _ = UpdateAirspaceAsync();
+        if (capture.IsOpen)
+        {
+            // The title starts as the subject, selected, so typing replaces it.
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Input,
+                () => { CaptureTitle.Focus(); CaptureTitle.SelectAll(); });
+        }
+        else Dispatcher.BeginInvoke(Focus);
+    }
+
+    private void OnCaptureWhoFocus(object sender, RoutedEventArgs e) => ViewModel.Triage.Capture.IsWhoFocused = true;
+    private void OnCaptureWhoBlur(object sender, RoutedEventArgs e) => ViewModel.Triage.Capture.IsWhoFocused = false;
 
     private void OnPaletteChanged(object? sender, PropertyChangedEventArgs e)
     {

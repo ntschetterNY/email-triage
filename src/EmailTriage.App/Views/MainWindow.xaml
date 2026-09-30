@@ -927,7 +927,7 @@
                                                         <Border Grid.Column="0" CornerRadius="2"
                                                                 Background="{Binding Priority, Converter={StaticResource PriorityBrush}}" />
                                                         <StackPanel Grid.Column="1" Margin="9,0,0,0">
-                                                            <TextBlock x:Name="CardSubject" Text="{Binding Subject}" FontSize="12.5"
+                                                            <TextBlock x:Name="CardSubject" Text="{Binding DisplayTitle}" FontSize="12.5"
                                                                        TextWrapping="Wrap" MaxHeight="36" TextTrimming="CharacterEllipsis"
                                                                        Foreground="{StaticResource Text}" />
                                                             <TextBlock x:Name="CardSender" Text="{Binding SenderName}" FontSize="11" Margin="0,3,0,0"
@@ -1065,7 +1065,7 @@
                         </ScrollViewer.Resources>
 
                         <StackPanel>
-                            <TextBlock Text="{Binding Selected.Subject}" FontSize="15"
+                            <TextBlock Text="{Binding Selected.DisplayTitle}" FontSize="15"
                                        FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBlock Margin="0,5,0,0" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap">
                                 <Run Text="{Binding Selected.SenderName, Mode=OneWay}" />
@@ -2057,6 +2057,147 @@
                                        Background="{StaticResource Raised}" />
                         </Grid>
                         </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- needs action (a): what, who, when and how to chase, asked once -->
+        <Grid Grid.RowSpan="3" Background="#B0000000"
+              Visibility="{Binding Triage.Capture.IsOpen, Converter={StaticResource BoolVis}}">
+            <Border Width="620" VerticalAlignment="Top" Margin="0,80,0,0"
+                    Background="{StaticResource Panel}" CornerRadius="9"
+                    BorderBrush="{StaticResource Border}" BorderThickness="1"
+                    KeyboardNavigation.TabNavigation="Cycle">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="32" ShadowDepth="6" Opacity="0.55" Color="Black" />
+                </Border.Effect>
+                <Border.Resources>
+                    <Style x:Key="CaptureLabel" TargetType="TextBlock">
+                        <Setter Property="FontSize" Value="10.5" />
+                        <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                        <Setter Property="Margin" Value="0,10,0,4" />
+                    </Style>
+                    <Style x:Key="CapturePreview" TargetType="TextBlock">
+                        <Setter Property="FontSize" Value="11" />
+                        <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                        <Setter Property="Margin" Value="0,3,0,0" />
+                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                    </Style>
+                </Border.Resources>
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Margin="16,14,16,0">
+                        <TextBlock Text="NEEDS ACTION" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Muted}" />
+                        <TextBlock Text="{Binding Triage.Capture.ContextLine}" FontSize="12.5" Margin="0,4,0,0"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="1" Margin="16,2,16,12">
+                        <!-- what -->
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="type to replace" Style="{StaticResource CaptureLabel}" />
+                            <TextBlock Text="What needs to happen" Style="{StaticResource CaptureLabel}" />
+                        </DockPanel>
+                        <TextBox x:Name="CaptureTitle" Style="{StaticResource FlatInput}" FontSize="15"
+                                 Text="{Binding Triage.Capture.Title, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <!-- who -->
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding Triage.Capture.WhoKindLabel}" Style="{StaticResource CaptureLabel}" />
+                            <TextBlock Text="Who has the ball" Style="{StaticResource CaptureLabel}" />
+                        </DockPanel>
+                        <TextBox x:Name="CaptureWho" Style="{StaticResource FlatInput}"
+                                 GotKeyboardFocus="OnCaptureWhoFocus" LostKeyboardFocus="OnCaptureWhoBlur"
+                                 Text="{Binding Triage.Capture.Who, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Text="{Binding Triage.Capture.WhoPreview}" Style="{StaticResource CapturePreview}" />
+                        <Border Background="{StaticResource Raised}" CornerRadius="5" Margin="0,4,0,0"
+                                BorderBrush="{StaticResource Border}" BorderThickness="1"
+                                Visibility="{Binding Triage.Capture.HasSuggestions, Converter={StaticResource BoolVis}}">
+                            <ListBox ItemsSource="{Binding Triage.Capture.Suggestions}"
+                                     SelectedIndex="{Binding Triage.Capture.SuggestionIndex, Mode=TwoWay}"
+                                     ItemContainerStyle="{StaticResource MailRowContainer}"
+                                     Background="Transparent" BorderThickness="0" Focusable="False" MaxHeight="150"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Margin="10,5">
+                                            <TextBlock x:Name="NameText" Text="{Binding Display}" FontSize="12.5"
+                                                       Foreground="{StaticResource Text}" />
+                                            <TextBlock x:Name="AddressText" Text="{Binding Address}" FontSize="11" Margin="10,1,0,0"
+                                                       Foreground="{StaticResource Muted}" />
+                                        </StackPanel>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                                <Setter TargetName="NameText" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                                <Setter TargetName="AddressText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Border>
+
+                        <!-- when: due, and the day to chase -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Due" Style="{StaticResource CaptureLabel}" />
+                                <TextBox x:Name="CaptureDue" Style="{StaticResource FlatInput}"
+                                         Text="{Binding Triage.Capture.DueText, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="{Binding Triage.Capture.DuePreview}" Style="{StaticResource CapturePreview}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2"
+                                        Visibility="{Binding Triage.Capture.HasWho, Converter={StaticResource BoolVis}}">
+                                <TextBlock Text="Follow up" Style="{StaticResource CaptureLabel}" />
+                                <TextBox x:Name="CaptureFollowUp" Style="{StaticResource FlatInput}"
+                                         Text="{Binding Triage.Capture.FollowUpText, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="{Binding Triage.Capture.FollowUpPreview}" Style="{StaticResource CapturePreview}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- priority, notes, tell them -->
+                        <DockPanel Margin="0,12,0,0">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <TextBlock Text="{Binding Triage.Capture.TellLabel}" FontSize="11" Margin="0,0,14,0"
+                                           Foreground="{StaticResource Muted}"
+                                           Visibility="{Binding Triage.Capture.CanTell, Converter={StaticResource BoolVis}}" />
+                                <TextBlock Text="{Binding Triage.Capture.NotesLabel}" FontSize="11" Foreground="{StaticResource Muted}" />
+                            </StackPanel>
+                            <TextBlock FontSize="11" Foreground="{StaticResource Muted}">
+                                <Run Text="{Binding Triage.Capture.PriorityLabel, Mode=OneWay}" /><Run Text="   Ctrl+P" />
+                            </TextBlock>
+                        </DockPanel>
+                        <TextBox x:Name="CaptureNotes" Style="{StaticResource FlatInput}" Margin="0,6,0,0"
+                                 AcceptsReturn="False" TextWrapping="Wrap" MinHeight="56" VerticalContentAlignment="Top"
+                                 Visibility="{Binding Triage.Capture.ShowNotes, Converter={StaticResource BoolVis}}"
+                                 Text="{Binding Triage.Capture.Notes, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <!-- where it lands -->
+                        <Border Background="#1A7AA2F7" CornerRadius="5" Padding="12,8" Margin="0,12,0,0">
+                            <TextBlock Text="{Binding Triage.Capture.ResultLine}" FontSize="12"
+                                       Foreground="{StaticResource Accent}" TextWrapping="Wrap" />
+                        </Border>
+                        <Border Background="#22E0AF68" CornerRadius="5" Padding="12,8" Margin="0,6,0,0"
+                                Visibility="{Binding Triage.Capture.Problem, Converter={StaticResource NullVis}}">
+                            <TextBlock Text="{Binding Triage.Capture.Problem}" FontSize="12"
+                                       Foreground="{StaticResource Warn}" TextWrapping="Wrap" />
+                        </Border>
+                    </StackPanel>
+
+                    <Border Grid.Row="2" Background="{StaticResource Raised}" CornerRadius="0,0,9,9" Padding="16,9">
+                        <TextBlock Text="{Binding Triage.Capture.Hint}" FontSize="11"
+                                   Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
                     </Border>
                 </Grid>
             </Border>

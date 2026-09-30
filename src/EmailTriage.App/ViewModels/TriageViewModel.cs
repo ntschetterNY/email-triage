@@ -61,6 +61,9 @@ public sealed partial class TriageViewModel : ObservableObject
     public PaletteViewModel Palette { get; } = new();
     public ComposerViewModel Composer { get; }
 
+    /// <summary>The popup behind `a`: what, who, when, before the flag is filed.</summary>
+    public CaptureViewModel Capture { get; }
+
     [ObservableProperty] private MailRowViewModel? _selected;
 
     // Where the caret last sat in the list. The list box clears its selection
@@ -157,6 +160,7 @@ public sealed partial class TriageViewModel : ObservableObject
         _aiSearch = aiSearch;
 
         Composer = new ComposerViewModel(store, contacts, scheduled, clock, settings.DayShape);
+        Capture = new CaptureViewModel(contacts, clock, settings);
         Palette.QueryChanged += (_, _) => RefreshPalette();
     }
 
@@ -1406,13 +1410,100 @@ public sealed partial class TriageViewModel : ObservableObject
     // ---- triage actions ---------------------------------------------------
 
     /// <summary>
+    /// `a`: opens the capture popup over the selection, or flags at once when
+    /// the popup is switched off in settings. Returns true when the flag was
+    /// applied here and now, so the board can reload.
+    /// </summary>
+    public async Task<bool> OpenCaptureAsync()
+    {
+        var rows = Targets();
+        if (rows.Count == 0) return false;
+
+        if (!_settings.AskDetailsOnFlag)
+        {
+            await ToggleActionRequiredAsync(true).ConfigureAwait(true);
+            return true;
+        }
+
+        // Flagging again edits the card, so the popup starts from what it holds.
+        ActionItem? existing = null;
+        if (rows.Count == 1)
+        {
+            try { existing = await _actions.GetByMessageIdAsync(rows[0].Summary.InternetMessageId).ConfigureAwait(true); }
+            catch { /* the popup works without it */ }
+        }
+
+        IReadOnlyList<(string Name, string Email)> known;
+        try { known = await _actions.GetKnownAssigneesAsync().ConfigureAwait(true); }
+        catch { known = Array.Empty<(string, string)>(); }
+
+        // People on the thread come first in Who, so a first name is enough.
+        var onThread = rows.SelectMany(r => r.InboxMessages)
+            .Select(m => new Recipient(m.SenderName, m.SenderAddress))
+            .Concat(rows.Count == 1 && OpenBody is { } body ? body.To.Concat(body.Cc) : Enumerable.Empty<Recipient>())
+            .Where(r => r.Display.Length > 0)
+            .Distinct()
+            .ToList();
+
+        var single = rows.Count == 1 ? rows[0] : null;
+        Capture.Open(
+            contextLine: single is not null
+                ? $"{single.Subject} · {single.Summary.SenderName} · {single.Summary.ReceivedUtc.ToLocalTime():ddd d MMM}"
+                : $"{rows.Count} conversations · leave What empty to keep each subject",
+            title: single is not null ? ActionCapture.CleanSubject(single.Subject) : "",
+            multiple: rows.Count > 1,
+            existing,
+            onThread,
+            known.Select(k => new Recipient(k.Name, k.Email)).ToList());
+        return false;
+    }
+
+    public void CloseCapture() => Capture.Close();
+
+    /// <summary>Shift+Enter in the popup: the plain flag, no questions asked.</summary>
+    public async Task FlagWithoutDetailsAsync()
+    {
+        Capture.Close();
+        await ToggleActionRequiredAsync(true).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Enter in the popup. Files the answers on every targeted mail. Returns
+    /// the hand-offs to tell by email when that was asked for; the popup stays
+    /// open, and nothing is filed, when a date could not be read.
+    /// </summary>
+    public async Task<IReadOnlyList<(ActionItem Item, Assignment Handoff)>> CommitCaptureAsync()
+    {
+        if (Capture.Build() is not { } request) return Array.Empty<(ActionItem, Assignment)>();
+
+        var tell = Capture.TellThem && request.HasWait && !request.IsBlocker;
+        Capture.Close();
+
+        var items = await FlagAsync(true, request).ConfigureAwait(true);
+        if (!tell) return Array.Empty<(ActionItem, Assignment)>();
+
+        var who = request.Who!.Value.Display;
+        return items
+            .Select(i => (Item: i, Handoff: i.Assignments.LastOrDefault(a => !a.IsDone && a.PersonName == who)))
+            .Where(t => t.Handoff is not null)
+            .Select(t => (t.Item, t.Handoff!))
+            .ToList();
+    }
+
+    /// <summary>
     /// Flags or clears the selection and moves on at once. The returned task is
     /// the Outlook and database work, which finishes in the background.
     /// </summary>
-    public async Task ToggleActionRequiredAsync(bool required)
+    public Task ToggleActionRequiredAsync(bool required) => FlagAsync(required, null);
+
+    /// <summary>
+    /// The flag itself, with the popup's answers when there were any. Returns
+    /// the cards as they now stand.
+    /// </summary>
+    private async Task<IReadOnlyList<ActionItem>> FlagAsync(bool required, CaptureRequest? capture)
     {
         var rows = Targets();
-        if (rows.Count == 0) return;
+        if (rows.Count == 0) return Array.Empty<ActionItem>();
 
         var before = rows.ToDictionary(r => r, r => r.IsActionRequired);
         foreach (var row in rows) row.IsActionRequired = required;
@@ -1422,16 +1513,25 @@ public sealed partial class TriageViewModel : ObservableObject
         else { ClearMarks(); if (next is not null) Selected = next; }
 
         var what = rows.Count == 1 ? rows[0].Subject : $"{rows.Count} conversations";
-        Status = required ? $"Flagged for action · {what}" : $"Marked as needing no action · {what}";
+        Status = !required ? $"Marked as needing no action · {what}"
+            : capture is null ? $"Flagged for action · {what}"
+            : $"Flagged · {what}"
+              + (capture.HasWait ? $" · waiting on {capture.Who!.Value.Display}" : "")
+              + (ActionCapture.Details(capture, _clock.Now) is { Length: > 0 } details ? $" · {details}" : "");
 
         string? error = null;
-        var changed = new List<(MailRowViewModel Row, ActionItem? Removed)>();
+        var results = new List<ActionItem>();
+        var changed = new List<(MailRowViewModel Row, ActionItem? Removed, ActionItem? Previous)>();
         foreach (var row in rows)
         {
             try
             {
-                var removed = await SetActionRequiredAsync(row.Summary, required, row, before[row]).ConfigureAwait(true);
-                if (before[row] != required) changed.Add((row, removed));
+                var outcome = await SetActionRequiredAsync(row.Summary, required, row, before[row], capture).ConfigureAwait(true);
+                if (outcome.Result is not null) results.Add(outcome.Result);
+
+                if (before[row] != required) changed.Add((row, outcome.Removed, null));
+                // Already flagged: the popup edited the card, so undo puts it back as it was.
+                else if (outcome.Previous is not null) changed.Add((row, null, outcome.Previous));
             }
             catch (Exception ex)
             {
@@ -1444,8 +1544,14 @@ public sealed partial class TriageViewModel : ObservableObject
         {
             PushUndo(required ? "flag for action" : "no action", async () =>
             {
-                foreach (var (row, removed) in changed)
+                foreach (var (row, removed, previous) in changed)
                 {
+                    if (previous is not null)
+                    {
+                        await _actions.RestoreAsync(previous).ConfigureAwait(true);
+                        continue;
+                    }
+
                     row.IsActionRequired = !required;
                     if (removed is not null)
                     {
@@ -1462,19 +1568,28 @@ public sealed partial class TriageViewModel : ObservableObject
         }
 
         if (error is not null) Status = $"Could not update that message: {error}";
+        return results;
     }
 
-    /// <summary>Returns the task that clearing the flag removed, if there was one, for undo.</summary>
-    private async Task<ActionItem?> SetActionRequiredAsync(
-        MailSummary summary, bool required, MailRowViewModel? row = null, bool wasActionRequired = false)
+    /// <summary>
+    /// What flagging changed: the task that clearing the flag removed, the
+    /// card as it stood before the popup edited it, and the card as it is now.
+    /// </summary>
+    private sealed record FlagOutcome(ActionItem? Removed, ActionItem? Previous, ActionItem? Result);
+
+    private async Task<FlagOutcome> SetActionRequiredAsync(
+        MailSummary summary, bool required, MailRowViewModel? row = null, bool wasActionRequired = false,
+        CaptureRequest? capture = null)
     {
         ActionItem? removed = null;
+        ActionItem? previous = null;
+        ActionItem? result = null;
 
         // The local record is awaited (it is what the action board reads
         // the moment this returns); the Outlook category write is not.
         if (required)
         {
-            await _actions.UpsertAsync(new ActionItem
+            var item = new ActionItem
             {
                 InternetMessageId = summary.InternetMessageId,
                 EntryId = summary.Ref.EntryId,
@@ -1484,7 +1599,17 @@ public sealed partial class TriageViewModel : ObservableObject
                 SenderAddress = summary.SenderAddress,
                 ReceivedUtc = summary.ReceivedUtc,
                 CreatedUtc = _clock.UtcNow,
-            }).ConfigureAwait(true);
+            };
+
+            if (capture is null)
+            {
+                result = await _actions.UpsertAsync(item).ConfigureAwait(true);
+            }
+            else
+            {
+                previous = await _actions.GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
+                result = await _actions.CaptureAsync(item, capture).ConfigureAwait(true);
+            }
         }
         else
         {
@@ -1499,7 +1624,7 @@ public sealed partial class TriageViewModel : ObservableObject
         }
 
         _ = SetCategoryInBackgroundAsync(row, summary.Ref, required, wasActionRequired);
-        return removed;
+        return new FlagOutcome(removed, previous, result);
     }
 
     /// <summary>
@@ -2325,6 +2450,7 @@ public sealed partial class TriageViewModel : ObservableObject
     public void CancelOverlays()
     {
         if (Composer.IsOpen) { _ = Composer.DiscardAsync(); return; }
+        if (Capture.IsOpen) { Capture.Close(); return; }
         if (Palette.IsOpen) { Palette.Close(); return; }
         if (IsPreviewing) { ClosePreview(); Status = ""; return; }
         if (HasMarks) { ClearMarks(); Status = ""; return; }

@@ -8,6 +8,21 @@ public interface IActionItemRepository
     Task<IReadOnlyList<ActionItem>> GetCompletedAsync(int limit, CancellationToken ct = default);
     Task<ActionItem?> GetByMessageIdAsync(string internetMessageId, CancellationToken ct = default);
     Task<ActionItem> UpsertAsync(ActionItem item, CancellationToken ct = default);
+
+    /// <summary>
+    /// Flags a mail with everything the capture popup asked, in one
+    /// transaction: the item (kept if already tracked), its title, notes,
+    /// priority and due date, and a blocker or hand-off when someone was
+    /// named. Returns the item as it now stands, waits included.
+    /// </summary>
+    Task<ActionItem> CaptureAsync(ActionItem item, CaptureRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// Puts an item back exactly as a snapshot had it - fields, stage, and
+    /// only the waits it held then - for undoing an edit.
+    /// </summary>
+    Task RestoreAsync(ActionItem snapshot, CancellationToken ct = default);
+
     Task DeleteAsync(long id, CancellationToken ct = default);
     Task SetCompletedAsync(long id, bool complete, CancellationToken ct = default);
     Task UpdateNotesAsync(long id, string notes, CancellationToken ct = default);
