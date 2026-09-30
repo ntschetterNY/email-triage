@@ -1,0 +1,44 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          ".lavish/action-capture-plan.html"
+        ],
+        "createdAt": "2026-09-30T00:59:00.960Z",
+        "reason": "agent: mockup reproduces the product's own SelectedRow #FFF1A8 / SelectedMuted #5C5540 tokens from src/EmailTriage.App/Theme.xaml:30-32"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          ".lavish/action-capture-plan.html"
+        ],
+        "createdAt": "2026-09-30T01:29:45.860Z",
+        "reason": "agent: review mockup reproduces the product's own card template (3px priority bar, FontSize 10 chips, Padding 5,0) from src/EmailTriage.App/Views/MainWindow.xaml:920-985 so the plan shows the real UI"
+      },
+      {
+        "rule": "undersized-ui-text",
+        "value": "*",
+        "files": [
+          ".lavish/action-capture-plan.html"
+        ],
+        "createdAt": "2026-09-30T01:29:45.864Z",
+        "reason": "agent: review mockup reproduces the product's own card template (3px priority bar, FontSize 10 chips, Padding 5,0) from src/EmailTriage.App/Views/MainWindow.xaml:920-985 so the plan shows the real UI"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".lavish/action-capture-plan.html"
+        ],
+        "createdAt": "2026-09-30T01:29:45.867Z",
+        "reason": "agent: review mockup reproduces the product's own card template (3px priority bar, FontSize 10 chips, Padding 5,0) from src/EmailTriage.App/Views/MainWindow.xaml:920-985 so the plan shows the real UI"
+      }
+    ]
+  }
+}
