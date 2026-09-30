@@ -183,7 +183,11 @@ is saved beside it as `keybindings.v1.json`.
 The palette searches every mail folder across every open store, scoring matches the
 way `fzf` does - so `acinv` finds `Clients\Acme\Invoices`. It also learns: folders you
 file into often rise to the top, with the weighting halving every 60 days so old
-habits fade. When nothing matches, `Ctrl+Enter` creates the folder you typed
+habits fade. When the text names a folder outright - its letters and digits appear in
+that folder's own name, so `1940 Jer` matches `1940 Jerome` but a fuzzy `acmeinv` does
+not - the palette lists that folder's subfolders indented beneath it, so you can see
+what is already there before filing or creating another. When nothing matches,
+`Ctrl+Enter` creates the folder you typed
 (`Clients\Acme\Q3` creates `Q3` under an existing `Clients\Acme`) and moves the mail
 there in the same keystroke.
 
