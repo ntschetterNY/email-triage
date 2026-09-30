@@ -244,4 +244,85 @@ public class FolderOrganizerTests
         Assert.Equal(@"me@x.com\Elara\Field Reports\Rimkus", found?.Path);
         Assert.Null(service.FindByLevels(new[] { "Nope", "Rimkus" }));
     }
+
+    [Fact]
+    public void A_name_typed_up_to_a_separator_names_its_parent_folders()
+    {
+        var typed = FolderScheme.Default.ToTypingLevels("Elara - Procurement - ");
+
+        Assert.Equal(new[] { "Elara", "Procurement" }, typed?.Parent);
+        Assert.Equal("", typed?.Partial);
+
+        var single = FolderScheme.Default.ToTypingLevels("Elara -");
+        Assert.Equal(new[] { "Elara" }, single?.Parent);
+    }
+
+    [Fact]
+    public void A_name_typed_into_its_next_part_splits_off_what_is_typed()
+    {
+        var typed = FolderScheme.Default.ToTypingLevels("Elara - Procurement - Ri");
+
+        Assert.Equal(new[] { "Elara", "Procurement" }, typed?.Parent);
+        Assert.Equal("Ri", typed?.Partial);
+    }
+
+    [Fact]
+    public void Text_outside_the_scheme_is_not_read_while_typing()
+    {
+        Assert.Null(FolderScheme.Default.ToTypingLevels("Elara"));
+        Assert.Null(FolderScheme.Default.ToTypingLevels("Smith-"));
+        Assert.Null(FolderScheme.Default.ToTypingLevels("Elara -  - "));
+    }
+
+    [Fact]
+    public void A_dangling_separator_is_dropped_only_when_spaced_as_the_scheme_spaces_it()
+    {
+        Assert.Equal("Elara - Procurement", FolderScheme.Default.WithoutTrailingSeparator("Elara - Procurement - "));
+        Assert.Equal("Elara - Procurement", FolderScheme.Default.WithoutTrailingSeparator("Elara - Procurement -"));
+        Assert.Equal("Smith-", FolderScheme.Default.WithoutTrailingSeparator("Smith-"));
+    }
+
+    [Fact]
+    public async Task Search_within_a_typed_parent_lists_everything_beneath_it()
+    {
+        var service = await ProcurementService();
+        var parent = service.FindByLevels(new[] { "Elara", "Procurement" })!;
+
+        var results = service.SearchWithin(parent, "");
+
+        Assert.Equal(
+            new[] { (@"me@x.com\Elara\Procurement", 0), (@"me@x.com\Elara\Procurement\Acme", 1),
+                    (@"me@x.com\Elara\Procurement\Acme\Quotes", 2), (@"me@x.com\Elara\Procurement\Rimkus", 1) },
+            results.Select(m => (m.Folder.Path, m.Indent)));
+    }
+
+    [Fact]
+    public async Task Search_within_a_typed_parent_narrows_to_the_part_being_typed()
+    {
+        var service = await ProcurementService();
+        var parent = service.FindByLevels(new[] { "Elara", "Procurement" })!;
+
+        var results = service.SearchWithin(parent, "ri");
+
+        Assert.Equal(@"me@x.com\Elara\Procurement\Rimkus", results[0].Folder.Path);
+        Assert.DoesNotContain(results, m => m.Folder.Path.Contains("Field Reports"));
+        Assert.Empty(service.SearchWithin(parent, "zzz"));
+    }
+
+    private static async Task<FolderSearchService> ProcurementService()
+    {
+        var store = new FakeMailStore();
+        store.Folders.AddRange(new[]
+        {
+            Node(@"me@x.com\Elara"),
+            Node(@"me@x.com\Elara\Procurement"),
+            Node(@"me@x.com\Elara\Procurement\Rimkus"),
+            Node(@"me@x.com\Elara\Procurement\Acme"),
+            Node(@"me@x.com\Elara\Procurement\Acme\Quotes"),
+            Node(@"me@x.com\Elara\Field Reports\Rimkus"),
+        });
+        var service = new FolderSearchService(store, new FakeFolderUsage());
+        await service.EnsureIndexedAsync();
+        return service;
+    }
 }

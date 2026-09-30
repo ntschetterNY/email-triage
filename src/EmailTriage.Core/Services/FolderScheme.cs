@@ -103,13 +103,15 @@ public sealed class FolderScheme
     /// least two parts to count; one on its own is just an ordinary folder.
     /// Extra separators end up in the last part.
     /// </summary>
-    public IReadOnlyDictionary<string, string>? Parse(string? name)
+    public IReadOnlyDictionary<string, string>? Parse(string? name) => Parse(name, minParts: 2);
+
+    private IReadOnlyDictionary<string, string>? Parse(string? name, int minParts)
     {
         if (!IsValid || string.IsNullOrWhiteSpace(name)) return null;
         name = name.Trim();
 
         // The longest form first: every part, then one fewer, and so on.
-        for (int count = Fields.Count; count >= 2; count--)
+        for (int count = Fields.Count; count >= minParts; count--)
         {
             var pattern = new StringBuilder("^");
             pattern.Append(Regex.Escape(_prefix));
@@ -129,11 +131,19 @@ public sealed class FolderScheme
 
             // "Elara -  - Rimkus" has an empty part, which would otherwise
             // surface as a part called "- Rimkus"; it is not this scheme.
-            if (values.Values.All(v => v.Length > 0 && !EdgedBySeparator(v))) return values;
+            if (values.Values.All(v => v.Length > 0 && !EdgedBySeparator(v))
+                // A lone part holding a separator is a name that did not split.
+                && (count > 1 || !HoldsSeparator(values.Values.Single())))
+                return values;
         }
 
         return null;
     }
+
+    /// <summary>Spaced as the scheme spaces it, so "Smith-Jones" is still one part under " - ".</summary>
+    private bool HoldsSeparator(string value) =>
+        _separators.Where(s => s.Trim().Length > 0).Any(s =>
+            value.Contains(s, StringComparison.OrdinalIgnoreCase));
 
     private bool EdgedBySeparator(string value) =>
         _separators.Select(s => s.Trim()).Where(s => s.Length > 0).Any(s =>
@@ -145,9 +155,11 @@ public sealed class FolderScheme
     /// name does not follow the scheme. Levels whose parts the name lacks are
     /// left out, so "Elara - Field Reports" nests as Elara\Field Reports.
     /// </summary>
-    public IReadOnlyList<string>? ToLevels(string? name)
+    public IReadOnlyList<string>? ToLevels(string? name) => ToLevels(name, minParts: 2);
+
+    private IReadOnlyList<string>? ToLevels(string? name, int minParts)
     {
-        var values = Parse(name);
+        var values = Parse(name, minParts);
         if (values is null) return null;
 
         var levels = new List<string>();
@@ -165,7 +177,44 @@ public sealed class FolderScheme
             levels.Add(text);
         }
 
-        return levels.Count >= 2 ? levels : null;
+        return levels.Count >= minParts ? levels : null;
+    }
+
+    /// <summary>
+    /// Reads a name still being typed: the folders it already names, and the
+    /// start of the one after. "Elara - Procurement - " gives Elara\Procurement
+    /// and nothing yet; "Elara - Procurement - Ri" gives Elara\Procurement and
+    /// "Ri". Null when the text does not follow the scheme.
+    /// </summary>
+    public (IReadOnlyList<string> Parent, string Partial)? ToTypingLevels(string? typed)
+    {
+        if (!IsValid || string.IsNullOrWhiteSpace(typed)) return null;
+
+        var complete = WithoutTrailingSeparator(typed);
+        if (complete.Length < typed.Trim().Length)
+            return ToLevels(complete, minParts: 1) is { } parent ? (parent, "") : null;
+
+        return ToLevels(typed) is { Count: >= 2 } levels ? (levels.Take(levels.Count - 1).ToList(), levels[^1]) : null;
+    }
+
+    /// <summary>
+    /// The text without a separator left dangling at its end, so "Elara -
+    /// Procurement - " reads as "Elara - Procurement". The separator must be
+    /// typed as the scheme spaces it: "Smith-" is left alone under " - ".
+    /// </summary>
+    public string WithoutTrailingSeparator(string typed)
+    {
+        var text = typed.TrimStart();
+        foreach (var separator in _separators.OrderByDescending(s => s.Length))
+        {
+            var core = separator.TrimEnd();
+            if (core.Length == 0) continue;
+
+            var end = text.TrimEnd();
+            if (end.EndsWith(core, StringComparison.OrdinalIgnoreCase))
+                return end[..^core.Length].Trim();
+        }
+        return text.Trim();
     }
 
     /// <summary>A name's nesting written as a path, e.g. Elara\Field Reports\Rimkus.</summary>
