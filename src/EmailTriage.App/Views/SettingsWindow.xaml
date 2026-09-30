@@ -8,6 +8,7 @@
         ShowInTaskbar="False"
         Background="{StaticResource Bg}"
         UseLayoutRounding="True"
+        xmlns:views="clr-namespace:EmailTriage.App.Views"
         TextOptions.TextRenderingMode="ClearType">
 
     <Window.Resources>
@@ -29,7 +30,7 @@
         </Style>
     </Window.Resources>
 
-    <Grid>
+    <Grid x:Name="WindowRoot">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
@@ -174,6 +175,12 @@
                 BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="28,10">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="LavishButton" Style="{StaticResource LavishButton}" Margin="0,0,14,0"
+                            Click="OnLavishButtonClick"
+                            ToolTip="Lavish - click any part of Settings and say what should change; it is filed as a GitHub issue. (Ctrl+Shift+L)">
+                        <TextBlock Text="Lavish" Style="{StaticResource LavishMark}" FontSize="15"
+                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
                     <Button Content="Save" Click="OnSaveClick" Tag="on" Style="{StaticResource ReportButton}" />
                     <Button Content="Close" Click="OnCloseClick" Margin="8,0,0,0" Style="{StaticResource ReportButton}" />
                 </StackPanel>
@@ -181,5 +188,8 @@
                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,16,0" />
             </DockPanel>
         </Border>
+
+        <!-- Lavish comment mode over Settings (the notes panel lives in the main window) -->
+        <views:LavishOverlay x:Name="LavishLayer" Grid.RowSpan="2" />
     </Grid>
 </Window>

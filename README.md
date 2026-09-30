@@ -458,6 +458,12 @@ opens a note card under it, and `Ctrl+Enter` sends. `Esc` drops the note, a seco
 (or the button again) leaves comment mode. Nothing in the app reacts to keys or clicks
 while it is on, so a stray `e` cannot archive the mail you are writing about.
 
+It works over whatever is open. The button stays on top of the in-window pop-ups
+(a reply, the move or snooze palette, the flag popup, help), so you can comment on
+them mid-task. Settings and a meeting card each have a **Lavish** button of their own,
+and `Ctrl+Shift+L` works in them too. Leaving comment mode puts the cursor back where it was,
+in the reply you were typing, for example.
+
 Each note is filed as an issue on the app's GitHub repo, labelled `lavish`, with the
 element, where it sits, the tab, the app version and a tracking checklist. Issues there
 are public, so **mail never goes into one**: text the app itself shows ("⚙ Settings") is

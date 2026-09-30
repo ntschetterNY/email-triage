@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
+using EmailTriage.App.Input;
 using EmailTriage.App.ViewModels;
 
 namespace EmailTriage.App.Views;
@@ -10,17 +11,23 @@ public partial class SettingsWindow : Window
 {
     public SettingsViewModel ViewModel { get; }
 
-    public SettingsWindow(SettingsViewModel viewModel)
+    public SettingsWindow(SettingsViewModel viewModel, LavishViewModel lavish, KeyMap keys)
     {
         ViewModel = viewModel;
         DataContext = viewModel;
         InitializeComponent();
 
+        LavishLayer.Attach(lavish, keys, WindowRoot, LavishButton, area: () => "Settings", panel: false);
+
         PreviewKeyDown += (_, e) =>
         {
+            // Lavish first, so Esc leaves comment mode rather than closing Settings.
+            if (LavishLayer.HandleKey(e)) return;
             if (e.Key == Key.Escape) { e.Handled = true; Close(); }
         };
     }
+
+    private void OnLavishButtonClick(object sender, RoutedEventArgs e) => LavishLayer.Toggle();
 
     private void OnSaveClick(object sender, RoutedEventArgs e) => ViewModel.Save();
 

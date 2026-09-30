@@ -5,161 +5,278 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
-using Run = System.Windows.Documents.Run;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using EmailTriage.App.Input;
 using EmailTriage.App.ViewModels;
 using EmailTriage.Core.Services;
+using Run = System.Windows.Documents.Run;
 
 namespace EmailTriage.App.Views;
 
 /// <summary>
-/// Lavish comment mode: finding the element under the mouse, saying what it
-/// is in words a stranger reading the issue would follow, and pinning sent
-/// notes to it. The view model decides what happens to a note.
+/// Lavish comment mode for one window: finding the element under the mouse,
+/// saying what it is in words a stranger reading the issue would follow, and
+/// pinning sent notes to it. Every window that can be on top - the main
+/// window, Settings, a meeting card - hosts one as its last child, so comment
+/// mode works over whatever is open. They share one <see cref="LavishViewModel"/>,
+/// and only the one it is running in (its Host) shows.
 /// </summary>
-public partial class MainWindow
+public partial class LavishOverlay : UserControl
 {
-    private const double LavishCardGap = 8;
-    private const double LavishEdge = 12;
+    private const double CardGap = 8;
+    private const double Edge = 12;
+
+    private LavishViewModel? _lavish;
+    private KeyMap? _keys;
+    private FrameworkElement _root = null!;
+    private FrameworkElement? _button;
+    private Func<string> _area = () => "";
+    private Func<FrameworkElement, string?> _privateKind = _ => null;
+    private bool _hasPanel = true;
 
     /// <summary>The element under the outline: hovered, or picked while the card is open.</summary>
-    private FrameworkElement? _lavishElement;
+    private FrameworkElement? _element;
 
-    /// <summary>Notes sent this session, each pinned to the element it was about.</summary>
-    private readonly List<(FrameworkElement Element, object? Data, Border Pin)> _lavishPins = new();
+    /// <summary>Where the keyboard was when comment mode began, to hand it back afterwards.</summary>
+    private IInputElement? _returnFocus;
 
-    private LavishViewModel Lavish => ViewModel.Lavish;
+    /// <summary>A size-to-content window's own minimum height, while the card stretches it.</summary>
+    private double? _savedMinHeight;
 
-    private void WireLavish()
+    /// <summary>Notes sent from this window this session, each pinned to the element it was about.</summary>
+    private readonly List<(FrameworkElement Element, object? Data, Border Pin)> _pins = new();
+
+    public LavishOverlay()
     {
-        Lavish.PropertyChanged += OnLavishChanged;
-        Lavish.NoteSent += (_, note) => PinLavishNote(note);
-        LayoutUpdated += (_, _) => { if (Lavish.IsAnnotating) PlaceLavishPins(); };
+        InitializeComponent();
+        Unloaded += (_, _) => Detach();
     }
 
-    private void OnLavishButtonClick(object sender, RoutedEventArgs e) => Lavish.Toggle();
+    /// <summary>Comment mode is on, and in this window.</summary>
+    public bool IsActive => _lavish is { IsAnnotating: true } lavish && ReferenceEquals(lavish.Host, this);
+
+    /// <summary>
+    /// Hooks the overlay to its window. <paramref name="root"/> is what it
+    /// comments on; <paramref name="button"/> is the window's Lavish button,
+    /// if it has one; <paramref name="area"/> names where the user is;
+    /// <paramref name="privateKind"/> names elements that picture mail, whose
+    /// contents are never described; <paramref name="panel"/> shows the notes
+    /// list, which only the main window has room for.
+    /// </summary>
+    public void Attach(
+        LavishViewModel lavish, KeyMap keys, FrameworkElement root,
+        FrameworkElement? button = null,
+        Func<string>? area = null,
+        Func<FrameworkElement, string?>? privateKind = null,
+        bool panel = true)
+    {
+        _lavish = lavish;
+        _keys = keys;
+        _root = root;
+        _button = button;
+        _area = area ?? (() => "");
+        _privateKind = privateKind ?? (_ => null);
+        _hasPanel = panel;
+        DataContext = lavish;
+
+        if (!panel)
+        {
+            var grid = (Grid)Content;
+            grid.Children.Remove(LavishPanel);
+            grid.Children.Remove(LavishFoldTab);
+        }
+
+        lavish.PropertyChanged += OnLavishChanged;
+        lavish.NoteSent += OnNoteSent;
+        LayoutUpdated += OnLayoutUpdated;
+        Sync();
+    }
+
+    private void Detach()
+    {
+        if (_lavish is not { } lavish) return;
+
+        // A window closing with comment mode on in it takes comment mode with it.
+        if (IsActive) lavish.Stop();
+        lavish.PropertyChanged -= OnLavishChanged;
+        lavish.NoteSent -= OnNoteSent;
+        LayoutUpdated -= OnLayoutUpdated;
+        _lavish = null;
+    }
+
+    /// <summary>The Lavish button in this window.</summary>
+    public void Toggle() => _lavish?.Toggle(this);
+
+    private void OnCloseClick(object sender, RoutedEventArgs e) => _lavish?.Stop();
 
     private void OnLavishChanged(object? sender, PropertyChangedEventArgs e)
     {
         switch (e.PropertyName)
         {
             case nameof(LavishViewModel.IsAnnotating):
-                LavishButton.Tag = Lavish.IsAnnotating ? "on" : null;
-                ShowLavishOutline(null);
-                _ = UpdateAirspaceAsync();
-                if (!Lavish.IsAnnotating) Dispatcher.BeginInvoke(() => Focus());
+            case nameof(LavishViewModel.Host):
+                Sync();
                 break;
 
-            case nameof(LavishViewModel.IsComposing):
-                if (Lavish.IsComposing)
+            case nameof(LavishViewModel.IsComposing) when IsActive:
+                if (_lavish!.IsComposing)
                 {
-                    Dispatcher.BeginInvoke(PlaceLavishCard, System.Windows.Threading.DispatcherPriority.Loaded);
-                    FocusLater(LavishCommentBox);
+                    Dispatcher.BeginInvoke(PlaceCard, DispatcherPriority.Loaded);
+                    Dispatcher.BeginInvoke(() => LavishCommentBox.Focus(), DispatcherPriority.Input);
                 }
                 else
                 {
-                    ShowLavishOutline(null);
-                    Focus();
+                    ShowOutline(null);
+                    RestoreHeight();
+                    Window.GetWindow(this)?.Focus();
                 }
                 break;
         }
     }
 
-    /// <summary>
-    /// Keys while comment mode is on. Nothing reaches triage: a stray `e`
-    /// must not archive a mail while you are writing about it.
-    /// </summary>
-    private void HandleLavishKey(KeyEventArgs e)
+    /// <summary>Shows or hides this window's layer to match the shared state.</summary>
+    private void Sync()
     {
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+        var active = IsActive;
+        if (_button is not null) _button.Tag = active ? "on" : null;
 
+        var wasActive = Visibility == Visibility.Visible;
+        if (active == wasActive) return;
+
+        ShowOutline(null);
+        if (active)
+        {
+            _returnFocus = Keyboard.FocusedElement;
+            Visibility = Visibility.Visible;
+            Window.GetWindow(this)?.Focus();
+        }
+        else
+        {
+            Visibility = Visibility.Collapsed;
+            RestoreHeight();
+
+            // Back to where you were: the reply you were typing, the Settings field.
+            var back = _returnFocus;
+            _returnFocus = null;
+            // Only in the window in front: a window behind a dialog must not take the keyboard back.
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (Window.GetWindow(this) is not { IsActive: true } window) return;
+                if (back is UIElement { IsVisible: true, Focusable: true } el) el.Focus();
+                else window.Focus();
+            }, DispatcherPriority.Input);
+        }
+    }
+
+    // ---- keys ---------------------------------------------------------------
+
+    /// <summary>
+    /// For the window's PreviewKeyDown, before anything else sees the key.
+    /// The Lavish chord works from anywhere, even over a half-written reply;
+    /// while comment mode is on, nothing else in the window hears keys, so a
+    /// stray `e` cannot archive a mail while you are writing about it.
+    /// Returns true when the key was dealt with here.
+    /// </summary>
+    public bool HandleKey(KeyEventArgs e)
+    {
+        if (_lavish is not { } lavish || _keys is null) return false;
+
+        var stroke = KeyStroke.FromEvent(e);
+        if (!stroke.IsEmpty && _keys.Resolve(stroke) == TriageAction.Lavish)
+        {
+            Toggle();
+            e.Handled = true;
+            return true;
+        }
+
+        if (!IsActive) return false;
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key == Key.Escape)
         {
-            if (Lavish.IsComposing) Lavish.Cancel();
-            else Lavish.Stop();
+            if (lavish.IsComposing) lavish.Cancel();
+            else lavish.Stop();
             e.Handled = true;
-            return;
+            return true;
         }
 
-        if (key == Key.Return && ctrl && Lavish.IsComposing)
+        if (key == Key.Return && Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && lavish.IsComposing)
         {
-            if (Lavish.SendCommand.CanExecute(null)) Lavish.SendCommand.Execute(null);
+            if (lavish.SendCommand.CanExecute(null)) lavish.SendCommand.Execute(null);
             e.Handled = true;
-            return;
+            return true;
         }
 
-        // Typing in the note goes to the note.
-        if (LavishCommentBox.IsKeyboardFocusWithin) return;
-
-        e.Handled = true;
+        // Typing in the note goes to the note; everything else stops here.
+        if (!LavishCommentBox.IsKeyboardFocusWithin) e.Handled = true;
+        return true;
     }
 
     // ---- finding elements ---------------------------------------------------
 
     private void OnLavishMouseMove(object sender, MouseEventArgs e)
     {
-        if (Lavish.IsComposing) return;
-        ShowLavishOutline(LavishElementAt(e.GetPosition(AppRoot)));
+        if (_lavish is { IsComposing: false }) ShowOutline(ElementAt(e.GetPosition(_root)));
     }
 
     private void OnLavishMouseLeave(object sender, MouseEventArgs e)
     {
-        if (!Lavish.IsComposing) ShowLavishOutline(null);
+        if (_lavish is { IsComposing: false }) ShowOutline(null);
     }
 
     private void OnLavishPanelEnter(object sender, MouseEventArgs e)
     {
-        if (!Lavish.IsComposing) ShowLavishOutline(null);
+        if (_lavish is { IsComposing: false }) ShowOutline(null);
     }
 
     private void OnLavishMouseDown(object sender, MouseButtonEventArgs e)
     {
+        if (_lavish is not { } lavish) return;
         e.Handled = true;
 
         // A click inside the open card is the card's own business.
-        if (Lavish.IsComposing && LavishCard.IsMouseOver) return;
+        if (lavish.IsComposing && LavishCard.IsMouseOver) return;
 
         // With words already written, a click elsewhere must not throw them away.
-        if (Lavish.IsComposing && !string.IsNullOrWhiteSpace(Lavish.Comment))
+        if (lavish.IsComposing && !string.IsNullOrWhiteSpace(lavish.Comment))
         {
             LavishCommentBox.Focus();
             return;
         }
 
-        var element = LavishElementAt(e.GetPosition(AppRoot));
+        var element = ElementAt(e.GetPosition(_root));
         if (element is null) return;
 
         // The Lavish button itself still switches comment mode off.
-        if (IsWithin(element, LavishButton)) { Lavish.Stop(); return; }
+        if (_button is not null && IsWithin(element, _button)) { lavish.Stop(); return; }
 
-        var (target, safe) = DescribeForLavish(element);
-        ShowLavishOutline(element);
-        Lavish.Begin(target, safe);
-        PlaceLavishCard();
+        var (target, safe) = Describe(element);
+        ShowOutline(element);
+        lavish.Begin(target, safe);
+        PlaceCard();
     }
 
-    /// <summary>What the app would have hit at this point, were the Lavish layer not over it.</summary>
-    private FrameworkElement? LavishElementAt(Point point)
+    /// <summary>What the window would have hit at this point, were this layer not over it.</summary>
+    private FrameworkElement? ElementAt(Point point)
     {
         DependencyObject? hit = null;
-        VisualTreeHelper.HitTest(AppRoot,
-            node => ReferenceEquals(node, LavishLayer) || node is UIElement { IsVisible: false } or UIElement { IsHitTestVisible: false }
+        VisualTreeHelper.HitTest(_root,
+            node => ReferenceEquals(node, this) || node is UIElement { IsVisible: false } or UIElement { IsHitTestVisible: false }
                 ? HitTestFilterBehavior.ContinueSkipSelfAndChildren
                 : HitTestFilterBehavior.Continue,
             result => { hit = result.VisualHit; return HitTestResultBehavior.Stop; },
             new PointHitTestParameters(point));
 
-        return hit is null ? null : PickLavishElement(hit);
+        return hit is null ? null : Pick(hit);
     }
 
     /// <summary>
     /// The element a person means when they point: the button, not the
     /// letters on it; the row, not the text in the row; else the text itself.
     /// </summary>
-    private static FrameworkElement? PickLavishElement(DependencyObject hit)
+    private static FrameworkElement? Pick(DependencyObject hit)
     {
         // A scroll bar's arrows and thumb are the scroll bar, to anyone pointing at them.
         var depth = 0;
@@ -169,7 +286,7 @@ public partial class MainWindow
         depth = 0;
         for (var node = hit; node is not null && depth < 10; node = UpOf(node), depth++)
         {
-            if (node is ButtonBase or TextBoxBase or ComboBox or ListBoxItem or ScrollBar or Slider)
+            if (node is ButtonBase or TextBoxBase or ComboBox or ListBoxItem or Slider)
                 return (FrameworkElement)node;
         }
 
@@ -199,11 +316,11 @@ public partial class MainWindow
     /// when it is written into the window itself; anything bound comes from
     /// data - a subject, a sender, a folder - and stays out unless ticked.
     /// </summary>
-    private (LavishTarget Target, bool TextIsSafe) DescribeForLavish(FrameworkElement element)
+    private (LavishTarget Target, bool TextIsSafe) Describe(FrameworkElement element)
     {
-        var kind = element switch
+        var privateKind = _privateKind(element);
+        var kind = privateKind ?? element switch
         {
-            _ when ReferenceEquals(element, BodySnapshot) || ReferenceEquals(element, ActionBodySnapshot) => "Reading pane",
             CheckBox => "Checkbox",
             ToggleButton => "Toggle",
             ButtonBase => "Button",
@@ -229,7 +346,7 @@ public partial class MainWindow
         // Never what someone typed, and never the picture of a mail.
         string? text = null;
         var safe = false;
-        if (element is not TextBoxBase && kind != "Reading pane")
+        if (element is not TextBoxBase && privateKind is null)
         {
             var parts = TextsOf(element).Take(4).ToList();
             if (parts.Count > 0)
@@ -239,14 +356,7 @@ public partial class MainWindow
             }
         }
 
-        var area = ViewModel.Section switch
-        {
-            Section.Actions => "Action items",
-            Section.Calendar => "Calendar",
-            _ => "Triage",
-        };
-
-        return (new LavishTarget(kind, label, path, area, text), safe);
+        return (new LavishTarget(kind, label, path, _area(), text), safe);
     }
 
     private static string? NonEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
@@ -261,7 +371,7 @@ public partial class MainWindow
         for (var node = UpOf(element); node is not null; node = UpOf(node))
         {
             if (node is FrameworkElement { TemplatedParent: null, Name.Length: >= 4 } fe
-                && fe.Name is not ("AppRoot" or "Root"))
+                && fe.Name is not ("AppRoot" or "Root" or "WindowRoot"))
                 names.Add(Humanize(fe.Name));
         }
         names.Reverse();
@@ -315,9 +425,9 @@ public partial class MainWindow
 
     // ---- drawing ------------------------------------------------------------
 
-    private Rect? BoundsInLavish(FrameworkElement element)
+    private Rect? BoundsOf(FrameworkElement element)
     {
-        if (!element.IsVisible || PresentationSource.FromVisual(element) is null || !IsWithin(element, AppRoot)) return null;
+        if (!element.IsVisible || PresentationSource.FromVisual(element) is null || !IsWithin(element, _root)) return null;
         try
         {
             return element.TransformToVisual(LavishCanvas).TransformBounds(new Rect(element.RenderSize));
@@ -328,10 +438,10 @@ public partial class MainWindow
         }
     }
 
-    private void ShowLavishOutline(FrameworkElement? element)
+    private void ShowOutline(FrameworkElement? element)
     {
-        _lavishElement = element;
-        var bounds = element is null ? null : BoundsInLavish(element);
+        _element = element;
+        var bounds = element is null ? null : BoundsOf(element);
         if (bounds is not { } r || r.Width < 1 || r.Height < 1)
         {
             LavishHover.Visibility = Visibility.Collapsed;
@@ -346,36 +456,62 @@ public partial class MainWindow
         LavishHover.Height = r.Height;
         LavishHover.Visibility = Visibility.Visible;
 
-        LavishHoverText.Text = DescribeForLavish(element!).Target.Describe();
+        LavishHoverText.Text = Describe(element!).Target.Describe();
         LavishHoverChip.Visibility = Visibility.Visible;
         Canvas.SetLeft(LavishHoverChip, Math.Max(2, r.Left));
         Canvas.SetTop(LavishHoverChip, r.Top >= 22 ? r.Top - 20 : r.Bottom + 2);
     }
 
     /// <summary>The card sits under the picked element, or over it when there is no room below.</summary>
-    private void PlaceLavishCard()
+    private void PlaceCard()
     {
-        if (_lavishElement is null || BoundsInLavish(_lavishElement) is not { } r) return;
+        if (_lavish is null || _element is null || BoundsOf(_element) is not { } r) return;
 
         LavishCard.UpdateLayout();
         var width = LavishCard.ActualWidth > 0 ? LavishCard.ActualWidth : LavishCard.Width;
         var height = LavishCard.ActualHeight > 0 ? LavishCard.ActualHeight : 300;
-        var right = LavishCanvas.ActualWidth - (Lavish.IsPanelOpen ? LavishPanel.ActualWidth : 0) - LavishEdge;
+        if (MakeRoom(height)) return; // placed again once the window has grown
 
-        var left = Math.Clamp(r.Left, LavishEdge, Math.Max(LavishEdge, right - width));
-        var top = r.Bottom + LavishCardGap;
-        if (top + height > LavishCanvas.ActualHeight - LavishEdge) top = r.Top - height - LavishCardGap;
-        top = Math.Clamp(top, LavishEdge, Math.Max(LavishEdge, LavishCanvas.ActualHeight - height - LavishEdge));
+        var panel = _hasPanel && _lavish.IsPanelOpen ? LavishPanel.ActualWidth : 0;
+        var right = LavishCanvas.ActualWidth - panel - Edge;
+
+        var left = Math.Clamp(r.Left, Edge, Math.Max(Edge, right - width));
+        var top = r.Bottom + CardGap;
+        if (top + height > LavishCanvas.ActualHeight - Edge) top = r.Top - height - CardGap;
+        top = Math.Clamp(top, Edge, Math.Max(Edge, LavishCanvas.ActualHeight - height - Edge));
 
         Canvas.SetLeft(LavishCard, left);
         Canvas.SetTop(LavishCard, top);
     }
 
+    /// <summary>
+    /// A small window sized to its content (a meeting card) can be shorter
+    /// than the note card; it grows while the card is open. Returns true when
+    /// it had to, and places the card again once it has.
+    /// </summary>
+    private bool MakeRoom(double cardHeight)
+    {
+        var needed = cardHeight + 2 * Edge;
+        if (LavishCanvas.ActualHeight >= needed) return false;
+        if (Window.GetWindow(this) is not { SizeToContent: not SizeToContent.Manual } window) return false;
+
+        _savedMinHeight ??= window.MinHeight;
+        window.MinHeight = window.ActualHeight + (needed - LavishCanvas.ActualHeight);
+        Dispatcher.BeginInvoke(PlaceCard, DispatcherPriority.Loaded);
+        return true;
+    }
+
+    private void RestoreHeight()
+    {
+        if (_savedMinHeight is { } saved && Window.GetWindow(this) is { } window) window.MinHeight = saved;
+        _savedMinHeight = null;
+    }
+
     // ---- pins ---------------------------------------------------------------
 
-    private void PinLavishNote(LavishNote note)
+    private void OnNoteSent(object? sender, LavishNote note)
     {
-        if (_lavishElement is not { } element) return;
+        if (!IsActive || _element is not { } element) return;
 
         var pin = new Border
         {
@@ -399,19 +535,24 @@ public partial class MainWindow
             },
         };
         LavishCanvas.Children.Add(pin);
-        _lavishPins.Add((element, element.DataContext, pin));
-        PlaceLavishPins();
+        _pins.Add((element, element.DataContext, pin));
+        PlacePins();
+    }
+
+    private void OnLayoutUpdated(object? sender, EventArgs e)
+    {
+        if (IsActive) PlacePins();
     }
 
     /// <summary>
     /// Keeps each pin on its element's top-right corner. A recycled list row
     /// now showing a different mail loses its pin rather than lie about it.
     /// </summary>
-    private void PlaceLavishPins()
+    private void PlacePins()
     {
-        foreach (var (element, data, pin) in _lavishPins)
+        foreach (var (element, data, pin) in _pins)
         {
-            if (!ReferenceEquals(element.DataContext, data) || BoundsInLavish(element) is not { } r)
+            if (!ReferenceEquals(element.DataContext, data) || BoundsOf(element) is not { } r)
             {
                 pin.Visibility = Visibility.Collapsed;
                 continue;
@@ -425,10 +566,6 @@ public partial class MainWindow
     private void OnLavishNoteClick(object sender, MouseButtonEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is LavishNoteRow row)
-            Lavish.OpenNoteCommand.Execute(row);
+            _lavish?.OpenNoteCommand.Execute(row);
     }
-
-    /// <summary>The Lavish chord works from anywhere, even over a half-written reply.</summary>
-    private bool IsLavishStroke(KeyStroke stroke) =>
-        !stroke.IsEmpty && ViewModel.Keys.Resolve(stroke) == TriageAction.Lavish;
 }

@@ -22,13 +22,18 @@ public partial class MeetingWindow : Window
         DataContext = card;
         InitializeComponent();
 
+        LavishLayer.Attach(main.Lavish, main.Keys, WindowRoot, LavishButton, area: () => "Meeting card", panel: false);
+
         PreviewKeyDown += (_, e) =>
         {
+            // Lavish first, so Esc leaves comment mode rather than closing the card.
+            if (LavishLayer.HandleKey(e)) return;
             if (e.Key == Key.Escape) { e.Handled = true; Close(); }
         };
 
-        // A pop-up: clicking back into the app puts it away.
-        Deactivated += (_, _) => { if (!_closing) Close(); };
+        // A pop-up: clicking back into the app puts it away - unless you are
+        // commenting on it, when sending a note may well open the browser.
+        Deactivated += (_, _) => { if (!_closing && !LavishLayer.IsActive) Close(); };
 
         // The link is read after the card opens; once it is there, Enter joins.
         card.PropertyChanged += OnCardChanged;
@@ -81,6 +86,8 @@ public partial class MeetingWindow : Window
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
+
+    private void OnLavishButtonClick(object sender, RoutedEventArgs e) => LavishLayer.Toggle();
 
     protected override void OnClosing(CancelEventArgs e)
     {
