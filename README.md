@@ -128,7 +128,7 @@ their own letters.
 | `e` | Archive |
 | `u` | Toggle read / unread |
 | `Ctrl+O` | Open an attachment |
-| `Ctrl+P` | **Save as PDF** - the whole conversation, every message open (also the **PDF** button in the reading pane) |
+| `Ctrl+P` | **Print** - the whole conversation, every message open (also the **Print** button in the reading pane) |
 | `z` / `Ctrl+Z` | Undo the last move or snooze |
 
 ### Replying
@@ -234,11 +234,11 @@ every 30 seconds and moves it back, marked unread so it reads as new.
 closed is swept back the moment you next open it. That is the honest trade for not
 installing a background service.
 
-### Save as PDF (`Ctrl+P`)
-The **PDF** button above the reading pane (or `Ctrl+P`) saves the selected conversation
-as a PDF: the subject on top, then every message, newest first, with From, Sent, To, Cc and
-attachment names, on white paper. It asks where to save, suggesting the newest message's
-date and the subject as the file name. Conversations longer than `ThreadMessageLimit`
+### Print (`Ctrl+P`)
+The **Print** button above the reading pane (or `Ctrl+P`) prints the selected conversation:
+the subject on top, then every message, newest first, with From, Sent, To, Cc and
+attachment names, on white paper. Windows' print dialog picks the printer, copies and
+orientation; choose **Microsoft Print to PDF** there to still get a PDF. Conversations longer than `ThreadMessageLimit`
 note the older messages left out. Remote images follow `BlockRemoteImages`, as on screen.
 
 ### Action items

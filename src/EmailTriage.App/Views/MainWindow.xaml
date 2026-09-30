@@ -551,9 +551,9 @@
                             Visibility="{Binding Triage.OpenBody, Converter={StaticResource NullVis}}">
                         <StackPanel>
                             <DockPanel>
-                                <Button DockPanel.Dock="Right" Content="PDF" Click="OnSavePdf" Margin="12,0,0,0"
+                                <Button DockPanel.Dock="Right" Content="Print" Click="OnPrint" Margin="12,0,0,0"
                                         VerticalAlignment="Top" Style="{StaticResource ReportButton}"
-                                        ToolTip="Save this conversation as a PDF (Ctrl+P)" />
+                                        ToolTip="Print this conversation (Ctrl+P)" />
                                 <TextBlock Text="{Binding Triage.OpenBody.Subject}" FontSize="17"
                                            FontWeight="SemiBold" TextWrapping="Wrap" />
                             </DockPanel>

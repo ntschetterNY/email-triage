@@ -1253,10 +1253,9 @@ public sealed partial class TriageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The selected conversation as a page to print to PDF, with a file name
-    /// to suggest; null when nothing is selected.
+    /// The selected conversation as a page to print; null when nothing is selected.
     /// </summary>
-    public async Task<(string Html, string FileName)?> RenderSelectedForPdfAsync()
+    public async Task<string?> RenderSelectedForPrintAsync()
     {
         if (Selected is not { } row) return null;
 
@@ -1265,8 +1264,7 @@ public sealed partial class TriageViewModel : ObservableObject
         var hiddenOlder = row.Thread.Count - bodies.Count;
         var blockRemote = _settings.BlockRemoteImages;
 
-        var html = await Task.Run(() => HtmlPresenter.RenderThreadForPdf(subject, bodies, blockRemote, hiddenOlder)).ConfigureAwait(true);
-        return (html, HtmlPresenter.PdfFileName(subject, bodies[0].ReceivedUtc));
+        return await Task.Run(() => HtmlPresenter.RenderThreadForPrint(subject, bodies, blockRemote, hiddenOlder)).ConfigureAwait(true);
     }
 
     /// <summary>

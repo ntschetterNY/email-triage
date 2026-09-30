@@ -22,7 +22,7 @@ public partial class MainWindow : Window
     private bool _webViewReady;
     private string _pendingHtml = "";
 
-    /// <summary>The browser environment both mail views share, kept for printing to PDF.</summary>
+    /// <summary>The browser environment both mail views share, kept for printing.</summary>
     private CoreWebView2Environment? _webEnv;
 
     // The action board's email view: a second WebView2 on the same browser profile.
@@ -44,7 +44,7 @@ public partial class MainWindow : Window
         HintStrip.ItemsSource = BuildHints();
 
         viewModel.PropertyChanged += OnViewModelChanged;
-        viewModel.SavePdfRequested += async (_, _) => await SavePdfAsync();
+        viewModel.PrintRequested += async (_, _) => await PrintAsync();
         viewModel.SettingsRequested += (_, _) => ShowSettings();
         LavishLayer.Attach(viewModel.Lavish, viewModel.Keys, AppRoot, LavishButton,
             area: () => ViewModel.Section switch
@@ -248,51 +248,46 @@ public partial class MainWindow : Window
         return bundled;
     }
 
-    // ---- saving a conversation as PDF ----------------------------------------
+    // ---- printing a conversation -------------------------------------------
 
-    private async void OnSavePdf(object sender, RoutedEventArgs e) => await SavePdfAsync();
+    private async void OnPrint(object sender, RoutedEventArgs e) => await PrintAsync();
 
     /// <summary>
-    /// The PDF button and Ctrl+P: renders the conversation for paper and
-    /// prints it in a browser nobody sees, so the reading pane stays as it is.
+    /// The Print button and Ctrl+P: asks for a printer, renders the
+    /// conversation for paper and prints it from a browser nobody sees, so
+    /// the reading pane stays as it is.
     /// </summary>
-    private async Task SavePdfAsync()
+    private async Task PrintAsync()
     {
         var triage = ViewModel.Triage;
         if (_webEnv is null)
         {
-            triage.Status = "Saving as PDF needs the WebView2 runtime, which is not available";
+            triage.Status = "Printing needs the WebView2 runtime, which is not available";
             return;
         }
 
-        (string Html, string FileName)? page;
+        string? html;
         try
         {
-            triage.Status = "Preparing the PDF...";
-            page = await triage.RenderSelectedForPdfAsync();
+            triage.Status = "Preparing to print...";
+            html = await triage.RenderSelectedForPrintAsync();
         }
         catch (Exception ex)
         {
-            triage.Status = $"Could not read the conversation for the PDF: {ex.Message}";
+            triage.Status = $"Could not read the conversation to print: {ex.Message}";
             return;
         }
 
-        if (page is not { } p)
+        if (html is null)
         {
-            triage.Status = "Select a conversation to save it as a PDF";
+            triage.Status = "Select a conversation to print it";
             return;
         }
 
-        var dialog = new Microsoft.Win32.SaveFileDialog
-        {
-            Title = "Save the conversation as a PDF",
-            FileName = p.FileName,
-            DefaultExt = ".pdf",
-            Filter = "PDF document (*.pdf)|*.pdf",
-            AddExtension = true,
-            OverwritePrompt = true,
-        };
-        if (dialog.ShowDialog(this) != true)
+        // Windows' own dialog picks the printer and the copies; the browser
+        // then prints straight to it. "Microsoft Print to PDF" still saves a PDF.
+        var dialog = new PrintDialog { UserPageRangeEnabled = false };
+        if (dialog.ShowDialog() != true)
         {
             triage.Status = "";
             return;
@@ -301,7 +296,7 @@ public partial class MainWindow : Window
         CoreWebView2Controller? controller = null;
         try
         {
-            triage.Status = "Saving the PDF...";
+            triage.Status = "Printing...";
             controller = await _webEnv.CreateCoreWebView2ControllerAsync(new WindowInteropHelper(this).Handle);
             controller.IsVisible = false;
 
@@ -317,21 +312,28 @@ public partial class MainWindow : Window
             var navigations = 0;
             core.NavigationStarting += (_, e) => { if (++navigations > 1) e.Cancel = true; };
             core.NavigationCompleted += (_, e) => loaded.TrySetResult(e.IsSuccess);
-            core.NavigateToString(p.Html);
+            core.NavigateToString(html);
             if (!await loaded.Task) throw new InvalidOperationException("the page did not load");
 
             var settings = _webEnv.CreatePrintSettings();
             settings.ShouldPrintBackgrounds = true;
             settings.ShouldPrintHeaderAndFooter = false;
+            settings.PrinterName = dialog.PrintQueue.FullName;
+            settings.Copies = Math.Max(1, dialog.PrintTicket.CopyCount ?? 1);
+            if (dialog.PrintTicket.PageOrientation == System.Printing.PageOrientation.Landscape)
+                settings.Orientation = CoreWebView2PrintOrientation.Landscape;
 
-            var saved = await core.PrintToPdfAsync(dialog.FileName, settings);
-            triage.Status = saved
-                ? $"Saved {Path.GetFileName(dialog.FileName)} to {Path.GetDirectoryName(dialog.FileName)}"
-                : "Could not save the PDF - is the file open somewhere else?";
+            var status = await core.PrintAsync(settings);
+            triage.Status = status switch
+            {
+                CoreWebView2PrintStatus.Succeeded => $"Sent to {dialog.PrintQueue.Name}",
+                CoreWebView2PrintStatus.PrinterUnavailable => $"{dialog.PrintQueue.Name} is not available",
+                _ => "Could not print the conversation",
+            };
         }
         catch (Exception ex)
         {
-            triage.Status = $"Could not save the PDF: {ex.Message}";
+            triage.Status = $"Could not print: {ex.Message}";
         }
         finally
         {
