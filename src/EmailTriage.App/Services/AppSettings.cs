@@ -155,6 +155,19 @@ public sealed class AppSettings
     public int FollowUpBeforeDueDays { get; set; } = 2;
 
     /// <summary>
+    /// Days a finished card stays in the done log before it is removed from
+    /// the database at the next launch. 0 keeps every finished card for ever.
+    /// </summary>
+    public int DoneRetentionDays { get; set; } = 90;
+
+    /// <summary>Days a snooze that has come back, or a scheduled send that went, is kept. 0 keeps them.</summary>
+    public int SnoozeHistoryDays { get; set; } = 30;
+    public int ScheduledSendHistoryDays { get; set; } = 30;
+
+    /// <summary>The three windows above, as the sweep reads them. A method, so it stays out of settings.json.</summary>
+    public RetentionPolicy GetRetention() => new(DoneRetentionDays, SnoozeHistoryDays, ScheduledSendHistoryDays);
+
+    /// <summary>
     /// On launch, install the latest GitHub release if it is newer. Only
     /// release builds update themselves; a local build never does.
     /// </summary>

@@ -75,6 +75,15 @@ public sealed class ScheduledSendRepository : IScheduledSendRepository
             new { id, state = (int)state, note, when = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
+    public async Task<int> PurgeSettledBeforeAsync(DateTimeOffset cutoffUtc, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        // Pending is state 0; anything else has run its course.
+        return await conn.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM scheduled_sends WHERE state <> 0 AND completed_utc IS NOT NULL AND completed_utc < @cutoff",
+            new { cutoff = cutoffUtc }, cancellationToken: ct)).ConfigureAwait(false);
+    }
+
     public async Task RecordFailureAsync(long id, string error, CancellationToken ct = default)
     {
         await using var conn = _db.Open();

@@ -86,6 +86,7 @@ public partial class App : Application
         services.AddSingleton<ISnoozeRepository, SnoozeRepository>();
         services.AddSingleton<IScheduledSendRepository, ScheduledSendRepository>();
         services.AddSingleton<ScheduledSender>();
+        services.AddSingleton<RetentionSweep>();
         services.AddSingleton<IFolderUsageRepository, FolderUsageRepository>();
 
         // AI commands run through the Claude Code CLI, so they use the user's

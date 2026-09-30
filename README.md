@@ -291,6 +291,14 @@ you, `w` clears the wait instead. Nothing sends by itself, and a draft you
 discard leaves the card where it is. A blocker or `Shift+A` hand-off given a
 date lands in Follow up on that day too, and chases the usual way.
 
+### Housekeeping
+Nothing you have finished is shown for ever, so it is not kept for ever either. On
+launch, once everything is on screen, the app removes finished cards older than
+`DoneRetentionDays` (90) from the done log, snoozes that came back and scheduled
+sends that went more than `SnoozeHistoryDays` / `ScheduledSendHistoryDays` (30) ago,
+and compacts the database when enough went. Anything open, pending or on the board
+is never touched. Set a window to `0` in `settings.json` to keep that kind for good.
+
 ### Calendar
 Meeting invitations, cancellations and responses now show in the triage list, tagged
 `INVITE`, `CANCELLED`, `ACCEPTED` and so on. Before, the list left them out, so they sat

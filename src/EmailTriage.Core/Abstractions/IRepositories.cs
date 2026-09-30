@@ -24,6 +24,10 @@ public interface IActionItemRepository
     Task RestoreAsync(ActionItem snapshot, CancellationToken ct = default);
 
     Task DeleteAsync(long id, CancellationToken ct = default);
+
+    /// <summary>Removes items finished before <paramref name="cutoffUtc"/>, waits and all. Returns how many.</summary>
+    Task<int> PurgeCompletedBeforeAsync(DateTimeOffset cutoffUtc, CancellationToken ct = default);
+
     Task SetCompletedAsync(long id, bool complete, CancellationToken ct = default);
     Task UpdateNotesAsync(long id, string notes, CancellationToken ct = default);
     Task UpdatePriorityAsync(long id, ActionPriority priority, CancellationToken ct = default);
@@ -69,6 +73,9 @@ public interface IScheduledSendRepository
     Task<IReadOnlyList<ScheduledSend>> GetDueAsync(DateTimeOffset now, CancellationToken ct = default);
     Task CompleteAsync(long id, ScheduledSendState state, string note, CancellationToken ct = default);
     Task RecordFailureAsync(long id, string error, CancellationToken ct = default);
+
+    /// <summary>Removes sends that were settled (sent, held, cancelled, failed) before the cutoff. Returns how many.</summary>
+    Task<int> PurgeSettledBeforeAsync(DateTimeOffset cutoffUtc, CancellationToken ct = default);
 }
 
 public interface ISnoozeRepository
@@ -79,6 +86,9 @@ public interface ISnoozeRepository
     Task MarkRestoredAsync(long id, CancellationToken ct = default);
     Task RecordFailureAsync(long id, string error, CancellationToken ct = default);
     Task CancelAsync(long id, CancellationToken ct = default);
+
+    /// <summary>Removes snoozes returned to the inbox before the cutoff. Returns how many.</summary>
+    Task<int> PurgeRestoredBeforeAsync(DateTimeOffset cutoffUtc, CancellationToken ct = default);
 }
 
 /// <summary>

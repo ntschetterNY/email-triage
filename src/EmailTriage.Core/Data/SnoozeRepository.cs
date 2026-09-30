@@ -54,6 +54,14 @@ public sealed class SnoozeRepository : ISnoozeRepository
         return entry;
     }
 
+    public async Task<int> PurgeRestoredBeforeAsync(DateTimeOffset cutoffUtc, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        return await conn.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM snoozes WHERE restored_utc IS NOT NULL AND restored_utc < @cutoff",
+            new { cutoff = cutoffUtc }, cancellationToken: ct)).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<SnoozeEntry>> GetPendingAsync(CancellationToken ct = default)
     {
         await using var conn = _db.Open();
