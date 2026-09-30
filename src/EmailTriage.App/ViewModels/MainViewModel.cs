@@ -266,9 +266,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>
     /// Routes a keystroke. Returns true when it was consumed, so the view can
-    /// stop it reaching the focused control.
+    /// stop it reaching the focused control. <paramref name="caretAtStart"/> and
+    /// <paramref name="caretAtEnd"/> say where the search box's caret sits, so
+    /// Left and Right can fold a result open once they have no text to move over.
     /// </summary>
-    public async Task<bool> HandleKeyAsync(KeyStroke stroke, bool ctrlEnter)
+    public async Task<bool> HandleKeyAsync(KeyStroke stroke, bool ctrlEnter,
+        bool caretAtStart = false, bool caretAtEnd = false)
     {
         if (stroke.IsEmpty) return false;
 
@@ -306,6 +309,22 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 Triage.Move(action == TriageAction.NextMail ? 1 : -1);
                 return true;
+            }
+
+            // Right past the end of the query opens the result's conversation,
+            // Left before its start folds it back; anywhere else they move the caret.
+            if (!stroke.IsTyping)
+            {
+                if (action is TriageAction.NextColumn && caretAtEnd)
+                {
+                    await Triage.ExpandAsync().ConfigureAwait(true);
+                    return true;
+                }
+                if (action is TriageAction.PrevColumn && caretAtStart)
+                {
+                    Triage.CollapseSelected();
+                    return true;
+                }
             }
             return false; // let the search box receive the character
         }
@@ -779,7 +798,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Move",    $"{Keys.Describe(TriageAction.NextMail)} / {Keys.Describe(TriageAction.PrevMail)}", "Next / previous message"),
         ("Move",    $"{Keys.Describe(TriageAction.SwitchSection)} / {Keys.Describe(TriageAction.PrevSection)}", "Next / previous tab: Triage, Action items, Calendar"),
         ("Move",    $"{Keys.Describe(TriageAction.NextColumn)} / {Keys.Describe(TriageAction.PrevColumn)}", "Expand a conversation to read (and see the attachments of) each message, even filed ones / fold it back"),
-        ("Move",    Keys.Describe(TriageAction.Search), "Filter the list"),
+        ("Move",    Keys.Describe(TriageAction.Search), "Filter the list (Right at the end of the query expands a result, Left at its start folds it)"),
         ("Move",    Keys.Describe(TriageAction.AiSearch), "Ask your inbox a question - Claude picks the matches (uses your Claude sign-in)"),
 
         ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - send to the action list"),

@@ -984,7 +984,12 @@ public partial class MainWindow : Window
 
         try
         {
-            return await ViewModel.HandleKeyAsync(stroke, ctrlEnter);
+            // Where the search caret sits decides whether Left/Right edit the
+            // query or fold a result; a selection means the user is editing.
+            var inSearch = SearchBox.IsKeyboardFocused && SearchBox.SelectionLength == 0;
+            return await ViewModel.HandleKeyAsync(stroke, ctrlEnter,
+                caretAtStart: inSearch && SearchBox.CaretIndex == 0,
+                caretAtEnd: inSearch && SearchBox.CaretIndex == SearchBox.Text.Length);
         }
         catch (Exception ex)
         {

@@ -108,7 +108,7 @@ their own letters.
 | `k` / `↑` | Previous message |
 | `Home` / `Ctrl+↑`, `End` / `Ctrl+↓` | First / last message |
 | `Tab` / `Shift+Tab` | Next / previous tab: Triage, Action items, Calendar |
-| `/` | Filter the list |
+| `/` | Filter the list. While typing, `↑`/`↓` pick a result, `→` at the end of the query expands its conversation and `←` at the start folds it back |
 | `Ctrl+/` | **Ask your inbox** - AI search in plain language, `Esc` shows everything again |
 | `F5` | Refresh |
 
