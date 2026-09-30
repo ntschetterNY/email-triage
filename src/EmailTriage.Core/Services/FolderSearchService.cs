@@ -210,6 +210,51 @@ public sealed class FolderSearchService
         return output;
     }
 
+    /// <summary>
+    /// For a scheme name typed up to its next part ("Elara - Procurement - "):
+    /// the parent with every folder beneath it, or, once some of the next part
+    /// is typed ("... - Ri"), just the subfolders that fit it, best first.
+    /// </summary>
+    public IReadOnlyList<FolderMatch> SearchWithin(FolderNode parent, string partial, int limit = 200)
+    {
+        partial = partial.Trim();
+        var under = _index.Where(f => IsUnder(f.Path, parent.Path));
+
+        if (partial.Length == 0)
+        {
+            return under
+                .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+                .Take(limit)
+                .Select(f => new FolderMatch(f, 0, Array.Empty<int>(), Segments(f.Path) - Segments(parent.Path)))
+                .Prepend(new FolderMatch(parent, 0, Array.Empty<int>()))
+                .ToList();
+        }
+
+        var results = new List<FolderMatch>();
+        foreach (var folder in under)
+        {
+            int? nameScore = FuzzyMatcher.Score(partial, folder.Name, out var namePos);
+            int? pathScore = FuzzyMatcher.Score(partial, folder.Path[(parent.Path.Length + 1)..], out _);
+            if (nameScore is null && pathScore is null) continue;
+
+            double score = Math.Max(
+                (nameScore ?? int.MinValue / 4) * 1.6,
+                (pathScore ?? int.MinValue / 4) * 1.0);
+            score += UsageBoost(folder);
+            // The next level down first: that is the part being typed.
+            score -= (Segments(folder.Path) - Segments(parent.Path)) * 1.5;
+
+            results.Add(new FolderMatch(
+                folder, (int)Math.Round(score), nameScore is not null ? namePos : Array.Empty<int>()));
+        }
+
+        return results
+            .OrderByDescending(r => r.Score)
+            .ThenBy(r => r.Folder.Path, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .ToList();
+    }
+
     private static bool IsUnder(string path, string parent) =>
         path.Length > parent.Length + 1
         && path[parent.Length] == '\\'

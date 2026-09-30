@@ -1903,15 +1903,27 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private void RefreshFolderPalette()
     {
-        var matches = _folders.Search(Palette.Query).ToList();
         var typed = Palette.Query.Trim();
+        var within = TypedParent(typed);
+        List<FolderMatch> matches;
 
-        // A name typed the way the user names folders ("Elara - Field
-        // Reports - Rimkus") finds the nested folder it stands for.
-        if (NestedLevels(typed) is { } levels && _folders.FindByLevels(levels) is { } nested)
+        if (within is { } w)
         {
-            matches.RemoveAll(m => m.Folder.Ref.EntryId == nested.Ref.EntryId);
-            matches.Insert(0, new FolderMatch(nested, 0, Array.Empty<int>()));
+            // "Elara - Procurement - " lists what is already filed under
+            // Elara\Procurement, narrowing as the next part is typed.
+            matches = _folders.SearchWithin(w.Parent, w.Partial).ToList();
+        }
+        else
+        {
+            matches = _folders.Search(Palette.Query).ToList();
+
+            // A name typed the way the user names folders ("Elara - Field
+            // Reports - Rimkus") finds the nested folder it stands for.
+            if (NestedLevels(typed) is { } levels && _folders.FindByLevels(levels) is { } nested)
+            {
+                matches.RemoveAll(m => m.Folder.Ref.EntryId == nested.Ref.EntryId);
+                matches.Insert(0, new FolderMatch(nested, 0, Array.Empty<int>()));
+            }
         }
 
         // The breadcrumb leaves out the mailbox, so name it only when the
@@ -1923,17 +1935,37 @@ public sealed partial class TriageViewModel : ObservableObject
             m.Indent > 0 ? m.Folder.Name : m.Folder.Breadcrumb,
             manyStores && m.Indent == 0 ? m.Folder.StoreName : "",
             m.Folder,
-            // Recomputed rather than carried: the nested hit has none.
-            m.Indent == 0 && typed.Length > 0 && FuzzyMatcher.Score(typed, m.Folder.Name, out var pos) is not null
-                ? pos
-                : Array.Empty<int>(),
+            m.NameHighlights,
             m.Indent)));
 
         // When nothing matches, offer to create what was typed rather than
-        // making the user leave and go build the folder in Outlook.
-        Palette.CreatePrompt = Palette.Mode == PaletteMode.Folder && matches.Count == 0 && typed.Length > 0
-            ? BuildCreatePrompt(typed)
+        // making the user leave and go build the folder in Outlook. A new
+        // next part is offered beside the folders already there.
+        var newPart = within is { Partial.Length: > 0 } p
+            && !matches.Any(m => m.Folder.Path.Equals($"{p.Parent.Path}\\{p.Partial}", StringComparison.OrdinalIgnoreCase));
+
+        Palette.CreatePrompt = Palette.Mode != PaletteMode.Folder || typed.Length == 0 ? null
+            : matches.Count == 0 ? BuildCreatePrompt(typed)
+            : newPart ? $"Ctrl+Enter: {BuildCreatePrompt(typed)}"
             : null;
+    }
+
+    /// <summary>
+    /// The existing folder a scheme name is typed up to, and the start of the
+    /// part after it: "Elara - Procurement - Ri" gives Elara\Procurement and
+    /// "Ri". Null when the text is not in the scheme or that folder is not there.
+    /// </summary>
+    private (FolderNode Parent, string Partial)? TypedParent(string typed)
+    {
+        if (!_settings.NestNewFolders || typed.IndexOfAny(new[] { '\\', '/' }) >= 0) return null;
+        if (_settings.GetFolderScheme().ToTypingLevels(typed) is not { } t) return null;
+
+        // Under the scheme's home folder first, then wherever that chain sits.
+        var home = FolderOrganizer.NormalisePath(_settings.FolderHome)
+            .Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        var parent = _folders.FindByLevels(home.Concat(t.Parent).ToList()) ?? _folders.FindByLevels(t.Parent);
+
+        return parent is null ? null : (parent, t.Partial);
     }
 
     /// <summary>
@@ -1944,18 +1976,34 @@ public sealed partial class TriageViewModel : ObservableObject
     private IReadOnlyList<string>? NestedLevels(string typed)
     {
         if (!_settings.NestNewFolders || typed.IndexOfAny(new[] { '\\', '/' }) >= 0) return null;
-        return FolderOrganizer.NewFolderLevels(typed, _settings.GetFolderScheme(), _settings.FolderHome);
+        var scheme = _settings.GetFolderScheme();
+        return FolderOrganizer.NewFolderLevels(scheme.WithoutTrailingSeparator(typed), scheme, _settings.FolderHome);
+    }
+
+    /// <summary>
+    /// What creating the typed name makes: the folders to add, outermost
+    /// first, and the existing folder they go under (null for the top of the
+    /// mailbox).
+    /// </summary>
+    private (FolderNode? Under, IReadOnlyList<string> Levels) CreationTarget(string typed)
+    {
+        if (TypedParent(typed) is { Partial.Length: > 0 } w) return (w.Parent, new[] { w.Partial });
+        if (NestedLevels(typed) is { } levels) return (null, levels);
+
+        var (parent, name) = _folders.ResolveCreationTarget(_settings.GetFolderScheme().WithoutTrailingSeparator(typed));
+        return (parent, new[] { name });
     }
 
     private string BuildCreatePrompt(string typed)
     {
-        if (NestedLevels(typed) is { } levels)
+        var (under, levels) = CreationTarget(typed);
+        if (under is null && levels.Count > 1)
             return $"Create {string.Join(" › ", levels)} and move here";
 
-        var (parent, name) = _folders.ResolveCreationTarget(typed);
-        return parent is null
+        var name = string.Join(" › ", levels);
+        return under is null
             ? $"Create \"{name}\" at the top level and move here"
-            : $"Create \"{name}\" under {parent.Path} and move here";
+            : $"Create \"{name}\" under {under.Path} and move here";
     }
 
     public async Task ConfirmPaletteAsync(bool forceCreate)
@@ -2104,17 +2152,9 @@ public sealed partial class TriageViewModel : ObservableObject
             {
                 if (typed.Length == 0) return;
 
-                if (NestedLevels(typed) is { } levels)
-                {
-                    target = await CreateNestedAsync(levels).ConfigureAwait(true);
-                }
-                else
-                {
-                    var (parent, name) = _folders.ResolveCreationTarget(typed);
-                    target = await _store
-                        .CreateFolderAsync(parent?.Ref ?? default, name).ConfigureAwait(true);
-                    _folders.AddToIndex(target);
-                }
+                var (under, levels) = CreationTarget(typed);
+                if (levels.Count == 0 || levels[0].Length == 0) return;
+                target = await CreateNestedAsync(under, levels).ConfigureAwait(true);
 
                 Status = $"Created {target.Path}";
             }
@@ -2138,12 +2178,12 @@ public sealed partial class TriageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Makes each level from the top of the mailbox down, reusing any that
-    /// already exist, and returns the innermost.
+    /// Makes each level from <paramref name="under"/> (the top of the mailbox
+    /// when null) down, reusing any that already exist, and returns the innermost.
     /// </summary>
-    private async Task<FolderNode> CreateNestedAsync(IReadOnlyList<string> levels)
+    private async Task<FolderNode> CreateNestedAsync(FolderNode? under, IReadOnlyList<string> levels)
     {
-        FolderNode? node = null;
+        var node = under;
         foreach (var level in levels)
         {
             node = await _store.CreateFolderAsync(node?.Ref ?? default, level).ConfigureAwait(true);
