@@ -1203,7 +1203,8 @@ public sealed partial class TriageViewModel : ObservableObject
             m.Folder.Name,
             TrimPath(m.Folder.Path, m.Folder.Name),
             m.Folder,
-            m.NameHighlights)));
+            m.NameHighlights,
+            m.Indent)));
 
         // When nothing matches, offer to create what was typed rather than
         // making the user leave and go build the folder in Outlook.

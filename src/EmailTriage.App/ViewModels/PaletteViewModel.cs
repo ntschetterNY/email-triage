@@ -8,9 +8,13 @@ public sealed record PaletteEntry(
     string Primary,
     string Secondary,
     object Payload,
-    int[] Highlights)
+    int[] Highlights,
+    int Indent = 0)
 {
     public bool HasSecondary => !string.IsNullOrWhiteSpace(Secondary);
+
+    /// <summary>Row padding, shifted right for subfolders nested under a match.</summary>
+    public System.Windows.Thickness Padding => new(10 + Indent * 20, 7, 10, 7);
 }
 
 public enum PaletteMode { Folder, Snooze, Attachment, Rsvp, Schedule }

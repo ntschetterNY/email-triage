@@ -1417,7 +1417,7 @@
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Margin="10,7">
+                                <StackPanel Margin="{Binding Padding}">
                                     <TextBlock x:Name="PrimaryText" Text="{Binding Primary}" FontSize="13.5"
                                                Foreground="{StaticResource Text}"
                                                TextTrimming="CharacterEllipsis" />

@@ -3,7 +3,11 @@ using EmailTriage.Core.Models;
 
 namespace EmailTriage.Core.Services;
 
-public sealed record FolderMatch(FolderNode Folder, int Score, int[] NameHighlights)
+/// <param name="Indent">
+/// Nesting below a matched parent: 0 for a ranked match, 1 for its direct
+/// subfolders, and so on.
+/// </param>
+public sealed record FolderMatch(FolderNode Folder, int Score, int[] NameHighlights, int Indent = 0)
 {
     public string Display => Folder.Path;
 }
@@ -27,6 +31,12 @@ public sealed class FolderSearchService
 
     /// <summary>Folder trees change rarely; re-reading them on every keystroke would be wasteful.</summary>
     public TimeSpan IndexLifetime { get; init; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>How many parents get their subfolders listed beneath them.</summary>
+    public int ExpandedParents { get; init; } = 3;
+
+    /// <summary>Cap on subfolders listed under any one parent.</summary>
+    public int SubfoldersPerParent { get; init; } = 60;
 
     public FolderSearchService(IMailStore store, IFolderUsageRepository usage)
     {
@@ -120,13 +130,76 @@ public sealed class FolderSearchService
                 nameScore is not null ? namePos : Array.Empty<int>()));
         }
 
-        return results
+        var ranked = results
             .OrderByDescending(r => r.Score)
             .ThenBy(r => r.Folder.Depth)
             .ThenBy(r => r.Folder.Path, StringComparer.OrdinalIgnoreCase)
             .Take(limit)
             .ToList();
+
+        return NestSubfolders(query, ranked);
     }
+
+    /// <summary>
+    /// When the query names a folder outright ("1940 Jerome"), list that
+    /// folder's subfolders directly beneath it so the user can see what is
+    /// already there before filing or creating another one.
+    /// </summary>
+    private List<FolderMatch> NestSubfolders(string query, List<FolderMatch> ranked)
+    {
+        var key = Compact(query);
+        if (key.Length == 0) return ranked;
+
+        // Pick the parents first, so a subfolder that out-ranked its parent
+        // still lands under it rather than floating above on its own.
+        var parents = ranked
+            .Where(m => Compact(m.Folder.Name).Contains(key, StringComparison.OrdinalIgnoreCase))
+            .Where(m => _index.Any(f => IsUnder(f.Path, m.Folder.Path)))
+            .Take(ExpandedParents)
+            .ToList();
+        parents.RemoveAll(p => parents.Any(q => IsUnder(p.Folder.Path, q.Folder.Path)));
+
+        if (parents.Count == 0) return ranked;
+
+        var output = new List<FolderMatch>(ranked.Count);
+        var shown = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var match in ranked)
+        {
+            // Listed beneath its parent instead.
+            if (parents.Any(p => IsUnder(match.Folder.Path, p.Folder.Path))) continue;
+            if (!shown.Add(match.Folder.Path)) continue;
+            output.Add(match);
+
+            if (!parents.Contains(match)) continue;
+
+            var children = _index
+                .Where(f => IsUnder(f.Path, match.Folder.Path))
+                .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+                .Take(SubfoldersPerParent);
+
+            foreach (var child in children)
+            {
+                if (!shown.Add(child.Path)) continue;
+                output.Add(new FolderMatch(
+                    child, match.Score, Array.Empty<int>(),
+                    Segments(child.Path) - Segments(match.Folder.Path)));
+            }
+        }
+
+        return output;
+    }
+
+    private static bool IsUnder(string path, string parent) =>
+        path.Length > parent.Length + 1
+        && path[parent.Length] == '\\'
+        && path.StartsWith(parent, StringComparison.OrdinalIgnoreCase);
+
+    private static int Segments(string path) => path.Count(c => c == '\\');
+
+    /// <summary>Letters and digits only, so "1940 jer" and "1940-Jerome" compare alike.</summary>
+    private static string Compact(string text) =>
+        new(text.Where(char.IsLetterOrDigit).ToArray());
 
     /// <summary>
     /// Diminishing-returns boost so a folder used 200 times does not permanently

@@ -76,6 +76,53 @@ public class FolderSearchServiceTests
     }
 
     [Fact]
+    public async Task Naming_a_parent_lists_its_subfolders_beneath_it()
+    {
+        var (service, _, _) = Build();
+        await service.EnsureIndexedAsync();
+
+        var results = service.Search("acme");
+        var paths = results.Select(m => m.Folder.Path).ToList();
+        var at = paths.IndexOf(@"Mailbox\Clients\Acme");
+
+        Assert.Equal(@"Mailbox\Clients\Acme\Contracts", paths[at + 1]);
+        Assert.Equal(@"Mailbox\Clients\Acme\Invoices", paths[at + 2]);
+        Assert.Equal(1, results[at + 1].Indent);
+        Assert.Equal(paths.Count, paths.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Parent_names_with_spaces_expand_on_a_partial_query()
+    {
+        var (service, store, _) = Build();
+        store.Folders.AddRange(new[]
+        {
+            Node(@"Mailbox\Projects\1940 Jerome", 2),
+            Node(@"Mailbox\Projects\1940 Jerome\Permits", 3),
+            Node(@"Mailbox\Projects\1940 Jerome\Permits\Electrical", 4),
+            Node(@"Mailbox\Projects\1940 Jerome\RFIs", 3),
+        });
+        await service.EnsureIndexedAsync();
+
+        var results = service.Search("1940 jer");
+        var at = results.ToList().FindIndex(m => m.Folder.Name == "1940 Jerome");
+
+        Assert.Equal(0, results[at].Indent);
+        Assert.Equal(("Permits", 1), (results[at + 1].Folder.Name, results[at + 1].Indent));
+        Assert.Equal(("Electrical", 2), (results[at + 2].Folder.Name, results[at + 2].Indent));
+        Assert.Equal(("RFIs", 1), (results[at + 3].Folder.Name, results[at + 3].Indent));
+    }
+
+    [Fact]
+    public async Task Abbreviated_queries_do_not_expand_subfolders()
+    {
+        var (service, _, _) = Build();
+        await service.EnsureIndexedAsync();
+
+        Assert.All(service.Search("acmeinv"), m => Assert.Equal(0, m.Indent));
+    }
+
+    [Fact]
     public async Task Returns_nothing_when_there_is_no_match()
     {
         var (service, _, _) = Build();
