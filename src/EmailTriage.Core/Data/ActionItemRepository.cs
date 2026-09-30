@@ -242,6 +242,15 @@ public sealed class ActionItemRepository : IActionItemRepository
             .ConfigureAwait(false);
     }
 
+    public async Task<int> PurgeCompletedBeforeAsync(DateTimeOffset cutoffUtc, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        // Blockers and hand-offs cascade with their item (foreign_keys is on).
+        return await conn.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM action_items WHERE completed_utc IS NOT NULL AND completed_utc < @cutoff",
+            new { cutoff = cutoffUtc }, cancellationToken: ct)).ConfigureAwait(false);
+    }
+
     public async Task SetCompletedAsync(long id, bool complete, CancellationToken ct = default)
     {
         await using var conn = _db.Open();

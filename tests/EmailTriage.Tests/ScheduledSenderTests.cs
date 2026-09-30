@@ -8,6 +8,8 @@ namespace EmailTriage.Tests;
 
 public sealed class FakeScheduledSends : IScheduledSendRepository
 {
+    public Task<int> PurgeSettledBeforeAsync(DateTimeOffset cutoffUtc, CancellationToken ct = default) => Task.FromResult(0);
+
     public List<ScheduledSend> All { get; } = new();
 
     public Task<ScheduledSend> AddAsync(ScheduledSend entry, CancellationToken ct = default)

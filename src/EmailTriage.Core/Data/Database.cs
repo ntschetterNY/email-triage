@@ -48,6 +48,15 @@ public sealed class Database
         return conn;
     }
 
+    /// <summary>Gives deleted rows' space back to disk. Cannot run inside a transaction.</summary>
+    public void Vacuum()
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "VACUUM;";
+        cmd.ExecuteNonQuery();
+    }
+
     public void Migrate()
     {
         using var conn = Open();

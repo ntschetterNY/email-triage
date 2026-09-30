@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using EmailTriage.App.Input;
 using EmailTriage.App.Services;
 using EmailTriage.Core.Abstractions;
+using EmailTriage.Core.Data;
 using EmailTriage.Core.Models;
 using EmailTriage.Core.Services;
 
@@ -27,6 +28,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly AiUsageLog _aiUsage;
     private readonly ClaudeCodeCli _claude;
     private readonly FolderSearchService _folders;
+    private readonly RetentionSweep _retention;
     private AiAuthInfo? _aiAuth;
 
     public KeyMap Keys { get; }
@@ -75,8 +77,10 @@ public sealed partial class MainViewModel : ObservableObject
         IClock clock,
         AiUsageLog aiUsage,
         ClaudeCodeCli claude,
-        FolderSearchService folders)
+        FolderSearchService folders,
+        RetentionSweep retention)
     {
+        _retention = retention;
         _folders = folders;
         _aiUsage = aiUsage;
         _claude = claude;
@@ -291,12 +295,37 @@ public sealed partial class MainViewModel : ObservableObject
 
             await RefreshSnoozeCountAsync().ConfigureAwait(true);
             await RefreshScheduledCountAsync().ConfigureAwait(true);
+
+            // Housekeeping last, once everything is on screen: it touches only
+            // records nothing shows any more.
+            _ = SweepAsync();
         }
         catch (Exception ex)
         {
             IsConnected = false;
             ConnectionStatus = "Not connected";
             FatalError = ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Retires finished records past their retention windows (Settings:
+    /// DoneRetentionDays, SnoozeHistoryDays, ScheduledSendHistoryDays).
+    /// Quiet when it works; a failure is only ever a status line.
+    /// </summary>
+    private async Task SweepAsync()
+    {
+        try
+        {
+            var result = await Task.Run(() => _retention.RunAsync(_settings.GetRetention())).ConfigureAwait(true);
+            if (result.TotalRemoved > 0)
+                System.Diagnostics.Debug.WriteLine(
+                    $"Retention: removed {result.DoneRemoved} done cards, {result.SnoozesRemoved} snoozes, " +
+                    $"{result.SendsRemoved} scheduled sends" + (result.Vacuumed ? ", compacted the database" : ""));
+        }
+        catch (Exception ex)
+        {
+            Triage.Status = $"Could not tidy old records: {ex.Message}";
         }
     }
 
