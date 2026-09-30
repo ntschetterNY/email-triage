@@ -2113,6 +2113,23 @@
                                     ToolTip="Pick a day to follow up and who it's waiting on (Ctrl+Shift+F)"
                                     Visibility="{Binding Triage.Composer.IsFollowingUp, Converter={StaticResource BoolVisInv}}" />
 
+                            <!-- link (Ctrl+K): Enter puts it in the message, Esc goes back -->
+                            <DockPanel Margin="0,0,0,10"
+                                       Visibility="{Binding Triage.Composer.IsLinking, Converter={StaticResource BoolVis}}">
+                                <TextBlock Text="Link" FontSize="12" VerticalAlignment="Center" Width="52"
+                                           Foreground="{StaticResource Accent}" FontWeight="SemiBold" />
+                                <TextBlock Text="Text" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"
+                                           Foreground="{StaticResource Muted}" />
+                                <TextBox x:Name="LinkLabelBox" Width="200" Style="{StaticResource FlatInput}" FontSize="13"
+                                         Text="{Binding Triage.Composer.LinkLabel, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="Address" FontSize="12" VerticalAlignment="Center" Margin="14,0,8,0"
+                                           Foreground="{StaticResource Muted}" />
+                                <TextBlock DockPanel.Dock="Right" Text="Enter to insert · Esc to cancel" FontSize="12"
+                                           VerticalAlignment="Center" Margin="10,0,0,0" Foreground="{StaticResource Muted}" />
+                                <TextBox x:Name="LinkAddressBox" Style="{StaticResource FlatInput}" FontSize="13"
+                                         Text="{Binding Triage.Composer.LinkAddress, UpdateSourceTrigger=PropertyChanged}" />
+                            </DockPanel>
+
                             <!-- send later (Ctrl+Shift+L) -->
                             <DockPanel Margin="0,0,0,10"
                                        Visibility="{Binding Triage.Composer.IsScheduling, Converter={StaticResource BoolVis}}">
@@ -2129,10 +2146,10 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Esc discard · @ mentions · drop files to attach"
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+K link · Esc discard · @ mentions · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Esc discard · @ mentions · drop files to attach"
+                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Ctrl+K link · Esc discard · @ mentions · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"

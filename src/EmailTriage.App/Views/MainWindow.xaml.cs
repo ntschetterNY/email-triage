@@ -58,8 +58,12 @@ public partial class MainWindow : Window
             RecipientField.Bcc => BccBox,
             RecipientField.Subject => SubjectBox,
             RecipientField.FollowUp => FollowUpBox,
+            RecipientField.LinkLabel => LinkLabelBox,
+            RecipientField.LinkAddress => LinkAddressBox,
             _ => ComposerBox,
         });
+        viewModel.Triage.Composer.LinkRequested += (_, _) => viewModel.Triage.Composer.StartLink(
+            ComposerBox.SelectionStart, ComposerBox.SelectionLength, ClipboardText());
 
         // Suggestions belong to the line being typed in; moving elsewhere drops them.
         foreach (var box in new[] { ToBox, CcBox, BccBox, SubjectBox, ComposerBox, FollowUpBox })
@@ -1076,6 +1080,13 @@ public partial class MainWindow : Window
         BodyView.CoreWebView2.Navigate(url);
     }
 
+    /// <summary>The clipboard's text, or null - another app can hold it locked.</summary>
+    private static string? ClipboardText()
+    {
+        try { return Clipboard.ContainsText() ? Clipboard.GetText() : null; }
+        catch (System.Runtime.InteropServices.ExternalException) { return null; }
+    }
+
     private void UpdateMentionSearch()
     {
         if (!ComposerBox.IsKeyboardFocusWithin) return;
@@ -1135,8 +1146,13 @@ public partial class MainWindow : Window
     {
         if (field == RecipientField.Body)
         {
+            // Focus too: a link is taken from the link row, outside the message.
             var caret = ViewModel.Triage.Composer.BodyCaret;
-            Dispatcher.BeginInvoke(() => ComposerBox.CaretIndex = Math.Min(caret, ComposerBox.Text.Length));
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () =>
+            {
+                ComposerBox.Focus();
+                ComposerBox.CaretIndex = Math.Min(caret, ComposerBox.Text.Length);
+            });
             return;
         }
 
