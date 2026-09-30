@@ -1190,6 +1190,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.PropertyName == nameof(ActionItemsViewModel.IsReviewing))
+        {
+            _ = UpdateAirspaceAsync();
+            return;
+        }
+
         if (e.PropertyName != nameof(ActionItemsViewModel.Editor)) return;
 
         _ = UpdateAirspaceAsync();

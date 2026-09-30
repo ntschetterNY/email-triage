@@ -155,6 +155,13 @@ public sealed class AppSettings
     public int FollowUpBeforeDueDays { get; set; } = 2;
 
     /// <summary>
+    /// Days an open card may sit untouched - no stage move, note, wait or
+    /// chase - before the board marks it stale and Shift+R offers it for
+    /// review. 0 turns the marking off.
+    /// </summary>
+    public int StaleAfterDays { get; set; } = 30;
+
+    /// <summary>
     /// Days a finished card stays in the done log before it is removed from
     /// the database at the next launch. 0 keeps every finished card for ever.
     /// </summary>

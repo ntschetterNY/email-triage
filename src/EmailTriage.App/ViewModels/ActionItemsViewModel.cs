@@ -138,6 +138,21 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     /// <summary>Cards in the Follow up column: waits whose follow-up day has come.</summary>
     [ObservableProperty] private int _scheduledFollowUpCount;
 
+    /// <summary>Open cards nobody has touched past the stale threshold.</summary>
+    [ObservableProperty] private int _staleCount;
+
+    // ---- the stale review (Shift+R): one neglected card at a time ----
+
+    [ObservableProperty] private bool _isReviewing;
+    [ObservableProperty] private ActionItem? _reviewItem;
+    [ObservableProperty] private string _reviewPosition = "";
+    private List<ActionItem> _reviewQueue = new();
+    private int _reviewIndex;
+    private int _reviewed;
+
+    public string ReviewHint =>
+        $"{CompleteKey} done · {DeleteKey} drop · {ConfirmKey} keep (resets its clock) · {DueKey} give it a due date · Esc stop";
+
     // Inline editor state. One editor at a time keeps the key handling simple.
     [ObservableProperty] private EditorMode _editor = EditorMode.None;
     [ObservableProperty] private string _editorTitle = "";
@@ -246,6 +261,13 @@ public sealed partial class ActionItemsViewModel : ObservableObject
             foreach (var due in followUps) due.Item.FollowUpDays = due.DaysWaiting;
             FollowUpDueCount = followUps.Count;
 
+            // Cards nobody has touched for weeks: a chip, the bottom of their
+            // column, and a queue for the review walk.
+            foreach (var item in all) item.StaleDays = 0;
+            var stale = StaleItems.Find(open, _settings.StaleAfterDays, _clock.UtcNow);
+            foreach (var item in stale) item.StaleDays = StaleItems.DaysIdle(item, _clock.UtcNow);
+            StaleCount = stale.Count;
+
             WaitingOnPeople.Clear();
             foreach (var (person, count, overdue) in ActionWorkflow.WaitingOn(all))
                 WaitingOnPeople.Add(new WaitingChip(person, count, overdue));
@@ -260,7 +282,8 @@ public sealed partial class ActionItemsViewModel : ObservableObject
                 column.Fill(shown
                     .Where(i => !i.IsInFollowUp)
                     .Where(i => (i.Stage == ActionStage.Done ? ActionStage.Doing : i.Stage) == stage)
-                    .OrderByDescending(i => i.IsOverdue)
+                    .OrderBy(i => i.IsStale)
+                    .ThenByDescending(i => i.IsOverdue)
                     .ThenByDescending(i => i.Priority)
                     .ThenBy(i => i.NextDueUtc ?? DateTimeOffset.MaxValue)
                     .ThenByDescending(i => i.ReceivedUtc));
@@ -295,6 +318,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
                    + (FollowUpDueCount > 0
                        ? $"  ·  {FollowUpDueCount} follow-up{(FollowUpDueCount == 1 ? "" : "s")} due ({ChaseKey} drafts a chase)"
                        : "")
+                   + (StaleCount > 0 ? $"  ·  {StaleCount} stale ({ReviewKey} reviews them)" : "")
                    + (HasFilter ? $"  ·  showing {PersonFilter}" : "");
 
             if (open.Any(i => i.IsAwaitingSentCopy)) _ = ResolveSentCopiesAsync();
@@ -349,6 +373,99 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     }
 
     private string CompleteKey => _keys.Describe(TriageAction.ToggleComplete) is { Length: > 0 } key ? key : "x";
+    private string DeleteKey => _keys.Describe(TriageAction.Delete) is { Length: > 0 } key ? key : "#";
+    private string ConfirmKey => _keys.Describe(TriageAction.Confirm) is { Length: > 0 } key ? key : "Enter";
+    private string DueKey => _keys.Describe(TriageAction.SetDue) is { Length: > 0 } key ? key : "d";
+    private string ReviewKey => _keys.Describe(TriageAction.ReviewStale) is { Length: > 0 } key ? key : "Shift+R";
+
+    // ---- the stale review ------------------------------------------------------
+
+    /// <summary>Shift+R: the stale cards, longest idle first, one at a time.</summary>
+    public void StartReview()
+    {
+        _reviewQueue = _all.Where(i => i.IsStale).OrderByDescending(i => i.StaleDays).ToList();
+        if (_reviewQueue.Count == 0)
+        {
+            Status = _settings.StaleAfterDays > 0
+                ? $"Nothing is stale - no open card has sat untouched for {_settings.StaleAfterDays} days"
+                : "Stale marking is off (StaleAfterDays in settings)";
+            return;
+        }
+
+        _reviewIndex = 0;
+        _reviewed = 0;
+        IsReviewing = true;
+        IsDoneLog = false;
+        IsByPerson = false;
+        ShowReviewItem();
+    }
+
+    private void ShowReviewItem()
+    {
+        var item = _reviewQueue[_reviewIndex];
+        ReviewItem = item;
+        ReviewPosition = $"{_reviewIndex + 1} of {_reviewQueue.Count}";
+
+        // The card behind the panel, so its email shows beneath.
+        var onBoard = Columns.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == item.Id);
+        if (onBoard is not null) Select(onBoard); else Selected = item;
+
+        Status = $"Reviewing stale cards · {ReviewPosition} · idle {item.StaleDays} days";
+    }
+
+    public void EndReview()
+    {
+        if (!IsReviewing) return;
+        IsReviewing = false;
+        ReviewItem = null;
+        Status = _reviewed == 0 ? "Review stopped" : $"Reviewed {_reviewed} stale card{(_reviewed == 1 ? "" : "s")}";
+    }
+
+    /// <summary>Enter: it is still live - restart its clock and move on.</summary>
+    public async Task ReviewKeepAsync()
+    {
+        if (ReviewItem is not { } item) return;
+        await _repo.TouchAsync(item.Id).ConfigureAwait(true);
+        await AdvanceReviewAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>x: it happened somewhere else - done, with undo as usual.</summary>
+    public async Task ReviewDoneAsync()
+    {
+        if (ReviewItem is not { } item) return;
+        await _repo.SetCompletedAsync(item.Id, true).ConfigureAwait(true);
+        await ClearCategoryAsync(item).ConfigureAwait(true);
+        _lastDone = item;
+        await AdvanceReviewAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>#: it never mattered - off the list for good.</summary>
+    public async Task ReviewDropAsync()
+    {
+        if (ReviewItem is not { } item) return;
+        await _repo.DeleteAsync(item.Id).ConfigureAwait(true);
+        await ClearCategoryAsync(item).ConfigureAwait(true);
+        await AdvanceReviewAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>d: give it a real date; saving the date moves the review on.</summary>
+    public void ReviewDue()
+    {
+        if (ReviewItem is not { } item) return;
+        Selected = item;
+        OpenEditor(EditorMode.Due);
+    }
+
+    private async Task AdvanceReviewAsync()
+    {
+        _reviewed++;
+        _reviewIndex++;
+        await LoadAsync().ConfigureAwait(true);
+
+        if (_reviewIndex >= _reviewQueue.Count) { EndReview(); return; }
+        ShowReviewItem();
+    }
+
     private string DoneLogKey => _keys.Describe(TriageAction.ToggleDoneLog) is { Length: > 0 } key ? key : "Shift+D";
     private string UndoKey => _keys.Describe(TriageAction.Undo) is { Length: > 0 } key ? key : "z";
 
@@ -933,6 +1050,14 @@ public sealed partial class ActionItemsViewModel : ObservableObject
             }
 
             CloseEditor();
+
+            // A due date given in the stale review answers that card.
+            if (IsReviewing && Editor == EditorMode.None && ReviewItem is { } reviewing && item.Id == reviewing.Id)
+            {
+                await AdvanceReviewAsync().ConfigureAwait(true);
+                return;
+            }
+
             await LoadAsync().ConfigureAwait(true);
         }
         catch (Exception ex)

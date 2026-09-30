@@ -40,6 +40,9 @@ public interface IActionItemRepository
     /// <summary>Stamps that a follow-up chase was drafted, restarting the staleness clock.</summary>
     Task MarkFollowedUpAsync(long id, CancellationToken ct = default);
 
+    /// <summary>Marks the card as looked at just now, and nothing else - "keep" in the stale review.</summary>
+    Task TouchAsync(long id, CancellationToken ct = default);
+
     Task<BlockingTask> AddBlockerAsync(BlockingTask blocker, CancellationToken ct = default);
     Task SetBlockerResolvedAsync(long blockerId, bool resolved, CancellationToken ct = default);
     Task DeleteBlockerAsync(long blockerId, CancellationToken ct = default);

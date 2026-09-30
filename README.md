@@ -155,6 +155,7 @@ their own letters.
 | `Shift+A` | Assign someone a task |
 | `x` | Mark done - the card leaves the board; `z` puts it back. In the done log, reopens it |
 | `Shift+D` | Done log - everything you have finished, newest first |
+| `Shift+R` | **Review stale cards** - the ones nobody has touched for 30 days, one at a time: `x` done, `#` drop, `Enter` keep, `d` give it a date |
 | `Shift+P` | Cycle priority |
 | `o` | Open the original in Outlook |
 | `#` / `Delete` | Delete the card |
@@ -282,6 +283,13 @@ only ever hold what still needs a hand. Its open blockers and hand-offs close wi
 it. A strip under the board counts what you finished today; `Shift+D` opens the
 full log, newest first, where `x` reopens one and `o` opens its mail. `z` on the
 board puts the last finished card back exactly as it was.
+
+A card nobody has touched for `StaleAfterDays` (30) - no stage move, note, wait or
+chase - gets a `stale · 34d` chip, sinks to the bottom of its column, and counts in
+the tab title. `Shift+R` walks them longest-idle first, each with its email beneath:
+`x` it got done somewhere else, `#` it never mattered, `Enter` it is still live
+(which restarts its clock), `d` give it a real due date. `Esc` stops. A five-minute
+Friday habit instead of a column you scroll past every day.
 
 On the day, the card moves to the board's **Follow up** column (the tab reads
 `Action items · 2 to follow up`). Go through them there: `Shift+C` opens a reply
