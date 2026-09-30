@@ -7,3 +7,6 @@ artifacts/
 publish/
 TestResults/
 .lavish/
+
+# Impeccable per-session cache
+.impeccable/hook.cache.json
