@@ -117,7 +117,12 @@ public sealed partial class CaptureViewModel : ObservableObject
         : "Tell them by email  Ctrl+M";
 
     /// <summary>Where the card will land, as the form stands.</summary>
-    public string ResultLine => ActionCapture.Describe(Preview(), _currentStage, _clock.Now);
+    public string ResultLine => ActionCapture.Describe(Preview(), _currentStage, _clock.Now)
+        + (ReturnTime is { } back ? $" · out of the inbox until {back.ToLocalTime():ddd d MMM HH:mm}" : "");
+
+    /// <summary>When the mail comes back to the Inbox, or null when saving leaves it there.</summary>
+    public DateTimeOffset? ReturnTime =>
+        _settings.SnoozeUntilActionDate ? ActionCapture.ReturnTime(Preview(), _clock.UtcNow) : null;
 
     public string Hint =>
         "Enter save · Tab next field · Shift+Enter flag with no details · Esc cancel"

@@ -142,7 +142,7 @@ public sealed partial class MainViewModel : ObservableObject
             // Filed before any archive, while the answered mail is still where it was.
             if (sent.FollowUp is { } followUp)
             {
-                status = $"{status} · {await Triage.RecordFollowUpAsync(sent.InReplyTo, followUp).ConfigureAwait(true)}";
+                status = $"{status} · {await Triage.RecordFollowUpAsync(sent.InReplyTo, followUp, park: !sent.MarkDone).ConfigureAwait(true)}";
                 if (Section == Section.Actions) Actions.Status = status;
                 await Actions.LoadAsync().ConfigureAwait(true);
 

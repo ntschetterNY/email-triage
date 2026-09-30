@@ -55,6 +55,19 @@ public static partial class ActionCapture
     }
 
     /// <summary>
+    /// When a flagged mail comes back to the Inbox: the first date that
+    /// needs the user again, the chase day or the due date. Null when no date
+    /// was given or it has already passed, so the mail stays where it is.
+    /// </summary>
+    public static DateTimeOffset? ReturnTime(CaptureRequest request, DateTimeOffset now)
+    {
+        var first = new[] { request.HasWait ? request.FollowUpUtc : null, request.DueUtc }
+            .Where(d => d is not null)
+            .Min();
+        return first is { } when && when > now ? when : null;
+    }
+
+    /// <summary>
     /// The preview line under the form, e.g. "Lands in Waiting on Sam Lee ·
     /// due Fri 2 Oct · follow up Wed 30 Sep".
     /// </summary>

@@ -122,6 +122,43 @@ public class ActionCaptureTests
 
         Assert.StartsWith("Lands in Waiting on Sam Lee (blocker)", line);
     }
+
+    [Fact]
+    public void A_hand_off_comes_back_on_its_chase_day()
+    {
+        var request = new CaptureRequest { Who = Sam, DueUtc = Now.AddDays(3), FollowUpUtc = Now.AddDays(1) };
+
+        Assert.Equal(Now.AddDays(1), ActionCapture.ReturnTime(request, Now));
+    }
+
+    [Fact]
+    public void A_card_on_the_user_comes_back_on_its_due_date()
+    {
+        var request = new CaptureRequest { DueUtc = Now.AddDays(1) };
+
+        Assert.Equal(Now.AddDays(1), ActionCapture.ReturnTime(request, Now));
+    }
+
+    [Fact]
+    public void A_due_date_before_the_chase_day_brings_it_back_sooner()
+    {
+        var request = new CaptureRequest { Who = Sam, DueUtc = Now.AddDays(1), FollowUpUtc = Now.AddDays(4) };
+
+        Assert.Equal(Now.AddDays(1), ActionCapture.ReturnTime(request, Now));
+    }
+
+    [Fact]
+    public void A_flag_with_no_date_stays_in_the_inbox()
+    {
+        Assert.Null(ActionCapture.ReturnTime(new CaptureRequest(), Now));
+        Assert.Null(ActionCapture.ReturnTime(new CaptureRequest { FollowUpUtc = Now.AddDays(1) }, Now));
+    }
+
+    [Fact]
+    public void A_date_already_past_stays_in_the_inbox()
+    {
+        Assert.Null(ActionCapture.ReturnTime(new CaptureRequest { DueUtc = Now.AddHours(-1) }, Now));
+    }
 }
 
 public class ActionCaptureRepositoryTests : IDisposable

@@ -149,6 +149,13 @@ public sealed class AppSettings
     public bool AskDetailsOnFlag { get; set; } = true;
 
     /// <summary>
+    /// A mail flagged with a due or follow-up date leaves the Inbox and is
+    /// snoozed until that date, so it comes back when it needs you. Off, it
+    /// stays in the Inbox and only the board tracks the date.
+    /// </summary>
+    public bool SnoozeUntilActionDate { get; set; } = true;
+
+    /// <summary>
     /// When a hand-off has a due date but no follow-up day, chase this many
     /// days before it is due. 0 chases on the due day itself.
     /// </summary>
