@@ -746,6 +746,17 @@
                                     </Style>
                                 </Button.Style>
                             </Button>
+                            <Button Content="Done" Margin="4,0,0,0" Click="OnShowDoneLog" ToolTip="Everything finished, newest first (Shift+D toggles)">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource ReportButton}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsDoneLog}" Value="True">
+                                                <Setter Property="Tag" Value="on" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
                         </StackPanel>
 
                         <Border DockPanel.Dock="Right" Background="#33E0AF68" CornerRadius="4" Padding="8,2"
@@ -882,9 +893,22 @@
                     </Grid>
                 </DockPanel>
 
-                <!-- the board -->
-                <ItemsControl Grid.Row="1" ItemsSource="{Binding Columns}" Margin="8,8,8,4"
-                              Visibility="{Binding IsByPerson, Converter={StaticResource BoolVisInv}}">
+                <!-- the board, with today's finished cards in a strip beneath -->
+                <DockPanel Grid.Row="1" Visibility="{Binding IsBoardShown, Converter={StaticResource BoolVis}}">
+                <Border DockPanel.Dock="Bottom" Margin="12,0,12,6" Padding="12,7" CornerRadius="7"
+                        Background="{StaticResource Panel}" BorderBrush="{StaticResource Border}" BorderThickness="1">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Right" FontSize="11" Foreground="{StaticResource Muted}"
+                                   VerticalAlignment="Center" Margin="12,0,0,0" Text="Shift+D  the log" />
+                        <TextBlock DockPanel.Dock="Left" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                   Foreground="{StaticResource Ok}" Margin="0,0,12,0">
+                            <Run Text="✓ Done today · " /><Run Text="{Binding DoneTodayCount, Mode=OneWay}" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding DoneTodayLine}" FontSize="11.5" VerticalAlignment="Center"
+                                   Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis" />
+                    </DockPanel>
+                </Border>
+                <ItemsControl ItemsSource="{Binding Columns}" Margin="8,8,8,4">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
@@ -1007,6 +1031,58 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                </DockPanel>
+
+                <!-- the done log (Shift+D): everything finished, newest first; x reopens -->
+                <DockPanel Grid.Row="1" Margin="12,8,12,4"
+                           Visibility="{Binding IsDoneLog, Converter={StaticResource BoolVis}}">
+                    <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8" FontSize="12" Foreground="{StaticResource Muted}"
+                               Text="Everything you have marked done, newest first · x reopens one · o opens the mail · Shift+D back to the board" />
+                    <Grid>
+                        <TextBlock Text="Nothing finished yet" FontSize="13" Foreground="{StaticResource Muted}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Visibility="{Binding DoneLog.Count, Converter={StaticResource CountVisInv}}" />
+                        <ListBox ItemsSource="{Binding DoneLog}"
+                                 SelectedItem="{Binding Selected, Mode=OneWay}"
+                                 Background="Transparent" BorderThickness="0" Focusable="False"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem" BasedOn="{StaticResource MailRowContainer}">
+                                    <Setter Property="Margin" Value="0,0,0,4" />
+                                    <EventSetter Event="PreviewMouseLeftButtonUp" Handler="OnBoardCardClick" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border x:Name="Row" BorderThickness="1" CornerRadius="5" Padding="12,7"
+                                            Background="{StaticResource Panel}" BorderBrush="{StaticResource Border}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="110" />
+                                                <ColumnDefinition Width="3*" />
+                                                <ColumnDefinition Width="2*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="When" Grid.Column="0" FontSize="11.5" Foreground="{StaticResource Ok}"
+                                                       Text="{Binding CompletedDisplay}" />
+                                            <TextBlock x:Name="What" Grid.Column="1" Text="{Binding DisplayTitle}" FontSize="12.5"
+                                                       TextTrimming="CharacterEllipsis" Margin="0,0,10,0" Foreground="{StaticResource Text}" />
+                                            <TextBlock x:Name="From" Grid.Column="2" Text="{Binding SenderName}" FontSize="11.5"
+                                                       TextTrimming="CharacterEllipsis" Foreground="{StaticResource Muted}" />
+                                        </Grid>
+                                    </Border>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                            <Setter TargetName="Row" Property="Background" Value="{StaticResource SelectedRow}" />
+                                            <Setter TargetName="What" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                            <Setter TargetName="From" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                            <Setter TargetName="When" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </DockPanel>
 
                 <GridSplitter Grid.Row="2" Height="4" HorizontalAlignment="Stretch" Background="{StaticResource Border}" />
 

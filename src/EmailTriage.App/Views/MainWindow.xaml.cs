@@ -562,8 +562,9 @@ public partial class MainWindow : Window
 
     private void OnShowAllMail(object sender, RoutedEventArgs e) { ViewModel.Triage.ShowUnreadOnly = false; Focus(); }
     private void OnShowUnreadMail(object sender, RoutedEventArgs e) { ViewModel.Triage.ShowUnreadOnly = true; Focus(); }
-    private void OnShowBoard(object sender, RoutedEventArgs e) { ViewModel.Actions.IsByPerson = false; Focus(); }
+    private async void OnShowBoard(object sender, RoutedEventArgs e) { ViewModel.Actions.IsByPerson = false; await ViewModel.Actions.ShowDoneLogAsync(false); Focus(); }
     private void OnShowByPerson(object sender, RoutedEventArgs e) { ViewModel.Actions.IsByPerson = true; Focus(); }
+    private async void OnShowDoneLog(object sender, RoutedEventArgs e) { await ViewModel.Actions.ShowDoneLogAsync(true); Focus(); }
     private void OnReportExport(object sender, RoutedEventArgs e) { ViewModel.Actions.ExportReport(); Focus(); }
     private async void OnReportEmail(object sender, RoutedEventArgs e) { await ViewModel.Actions.EmailReportAsync(); Focus(); }
 

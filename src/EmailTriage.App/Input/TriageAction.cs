@@ -86,6 +86,9 @@ public enum TriageAction
     /// <summary>Switch the action tab between the board and the By person report.</summary>
     ToggleBoardView,
 
+    /// <summary>Switch the action tab between the board and the log of what is done.</summary>
+    ToggleDoneLog,
+
     // Calendar
 
     /// <summary>Accept, tentatively accept or decline an invitation, optionally with a note.</summary>

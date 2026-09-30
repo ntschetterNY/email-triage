@@ -95,6 +95,9 @@ public sealed class ActionItem
 
     public string DueDisplay => NextDueUtc is { } d ? d.ToLocalTime().ToString("ddd d MMM") : "";
 
+    /// <summary>The day it was finished, for the done log; empty while open.</summary>
+    public string CompletedDisplay => CompletedUtc is { } d ? d.ToLocalTime().ToString("ddd d MMM") : "";
+
     /// <summary>
     /// One line for a board card saying what it is waiting on, e.g.
     /// "Blocked by Dina Brown · Assigned to Bobby K".

@@ -276,6 +276,38 @@ public class ActionCaptureRepositoryTests : IDisposable
     }
 
     [Fact]
+    public async Task Marking_done_closes_its_open_waits()
+    {
+        var item = await _repo.CaptureAsync(NewItem(), new CaptureRequest { Who = Sam });
+        await _repo.AddBlockerAsync(new BlockingTask { ActionItemId = item.Id, Description = "Drawings", WaitingOn = "Dina" });
+
+        await _repo.SetCompletedAsync(item.Id, true);
+
+        var done = (await _repo.GetCompletedAsync(10)).Single();
+        Assert.True(done.IsComplete);
+        Assert.False(done.IsWaiting);
+        Assert.All(done.Assignments, a => Assert.True(a.IsDone));
+        Assert.All(done.Blockers, b => Assert.True(b.IsResolved));
+    }
+
+    [Fact]
+    public async Task Restoring_a_snapshot_reopens_the_waits_that_were_open()
+    {
+        await _repo.CaptureAsync(NewItem(), new CaptureRequest { Who = Sam });
+        var before = (await _repo.GetByMessageIdAsync("mid-1"))!;
+
+        await _repo.SetCompletedAsync(before.Id, true);
+        await _repo.RestoreAsync(before);
+
+        var restored = (await _repo.GetByMessageIdAsync("mid-1"))!;
+        Assert.False(restored.IsComplete);
+        Assert.Equal(ActionStage.Waiting, restored.Stage);
+        Assert.True(restored.IsWaiting);
+        Assert.False(Assert.Single(restored.Assignments).IsDone);
+        Assert.Single(await _repo.GetOpenAsync());
+    }
+
+    [Fact]
     public async Task Restoring_keeps_the_waits_the_snapshot_already_had()
     {
         var item = await _repo.CaptureAsync(NewItem(), new CaptureRequest { Who = Sam });

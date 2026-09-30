@@ -90,6 +90,7 @@ public sealed class KeyMap
         ("w",           TriageAction.ClearWait),
         ("shift+c",     TriageAction.Chase),
         ("g",           TriageAction.ToggleBoardView),
+        ("shift+d",     TriageAction.ToggleDoneLog),
 
         // Calendar: y answers an invitation, s schedules time for a mail or
         // task, Shift+S replies with a meeting invitation
