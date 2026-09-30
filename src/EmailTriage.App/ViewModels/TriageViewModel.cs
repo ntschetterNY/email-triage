@@ -1509,23 +1509,36 @@ public sealed partial class TriageViewModel : ObservableObject
         var rows = Targets();
         if (rows.Count == 0) return Array.Empty<ActionItem>();
 
+        // A date on the card takes the mail out of the Inbox until that day.
+        var park = required && capture is not null && _settings.SnoozeUntilActionDate
+            ? ActionCapture.ReturnTime(capture, _clock.UtcNow)
+            : null;
+        if (park is not null) _ = GetSnoozeFolderAsync();
+
         var before = rows.ToDictionary(r => r, r => r.IsActionRequired);
         foreach (var row in rows) row.IsActionRequired = required;
 
-        var next = rows.Count == 1 ? null : RowAfter(rows);
-        if (rows.Count == 1) Move(1);
-        else { ClearMarks(); if (next is not null) Selected = next; }
+        if (park is not null) TakeOut(rows);
+        else if (rows.Count == 1) Move(1);
+        else
+        {
+            var next = RowAfter(rows);
+            ClearMarks();
+            if (next is not null) Selected = next;
+        }
 
         var what = rows.Count == 1 ? rows[0].Subject : $"{rows.Count} conversations";
         Status = !required ? $"Marked as needing no action · {what}"
             : capture is null ? $"Flagged for action · {what}"
             : $"Flagged · {what}"
               + (capture.HasWait ? $" · waiting on {capture.Who!.Value.Display}" : "")
-              + (ActionCapture.Details(capture, _clock.Now) is { Length: > 0 } details ? $" · {details}" : "");
+              + (ActionCapture.Details(capture, _clock.Now) is { Length: > 0 } details ? $" · {details}" : "")
+              + (park is { } back ? $" · back in your inbox {back.ToLocalTime():ddd d MMM HH:mm}" : "");
 
         string? error = null;
         var results = new List<ActionItem>();
         var changed = new List<(MailRowViewModel Row, IReadOnlyList<ActionItem> Removed, ActionItem? Previous)>();
+        var filed = new List<Filed>();
         foreach (var row in rows)
         {
             try
@@ -1533,6 +1546,7 @@ public sealed partial class TriageViewModel : ObservableObject
                 var mail = required ? await FlaggedMailAsync(row).ConfigureAwait(true) : row.Summary;
                 var outcome = await SetActionRequiredAsync(mail, required, row, before[row], capture).ConfigureAwait(true);
                 if (outcome.Result is not null) results.Add(outcome.Result);
+                filed.Add(new Filed(row, mail, before[row], outcome));
 
                 if (before[row] != required) changed.Add((row, outcome.Removed, null));
                 // Already flagged: the popup edited the card, so undo puts it back as it was.
@@ -1543,6 +1557,13 @@ public sealed partial class TriageViewModel : ObservableObject
                 row.IsActionRequired = before[row];
                 error ??= ex.Message;
             }
+        }
+
+        if (park is { } when)
+        {
+            if (error is not null) Status = $"Could not update that message: {error}";
+            _ = ParkFlagged(rows, when, filed);
+            return results;
         }
 
         if (changed.Count > 0)
@@ -1583,7 +1604,73 @@ public sealed partial class TriageViewModel : ObservableObject
     /// What flagging changed: the tasks that clearing the flag removed, the
     /// card as it stood before the popup edited it, and the card as it is now.
     /// </summary>
-    private sealed record FlagOutcome(IReadOnlyList<ActionItem> Removed, ActionItem? Previous, ActionItem? Result);
+    /// <param name="Written">The Outlook category write, which runs on behind the keystroke.</param>
+    private sealed record FlagOutcome(
+        IReadOnlyList<ActionItem> Removed, ActionItem? Previous, ActionItem? Result, Task Written);
+
+    /// <summary>One conversation flagged: the mail its card hangs on, and whether it was flagged before.</summary>
+    private sealed record Filed(MailRowViewModel Row, MailSummary Mail, bool WasFlagged, FlagOutcome Outcome);
+
+    /// <summary>
+    /// Snoozes conversations just flagged with a date until
+    /// <paramref name="when"/>. Waits for their category writes first, since
+    /// moving a mail mid-write loses the write. One undo step puts back both
+    /// the mail and the card; the rows were already taken out of the list.
+    /// </summary>
+    private Task ParkFlagged(IReadOnlyList<MailRowViewModel> rows, DateTimeOffset when, IReadOnlyList<Filed> filed)
+    {
+        var origin = _inbox;
+        var parked = new List<Parked>();
+
+        PushUndo("flag and snooze", async () =>
+        {
+            var back = new Dictionary<string, MailRef>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in parked)
+            {
+                back[p.MessageId] = await _store.MoveAsync(p.Ref, origin).ConfigureAwait(true);
+                await _snoozes.CancelAsync(p.SnoozeId).ConfigureAwait(true);
+            }
+
+            foreach (var f in filed)
+            {
+                if (!f.WasFlagged && f.Outcome.Result is { } card)
+                {
+                    await _actions.DeleteAsync(card.Id).ConfigureAwait(true);
+                    var mail = back.TryGetValue(f.Mail.InternetMessageId, out var moved) ? moved : f.Mail.Ref;
+                    await _store.SetCategoryAsync(mail, _settings.ActionCategory, false).ConfigureAwait(true);
+                }
+                else if (f.Outcome.Previous is { } previous)
+                {
+                    await _actions.RestoreAsync(previous).ConfigureAwait(true);
+                }
+            }
+
+            await LoadAsync().ConfigureAwait(true);
+        });
+
+        return RunInBackground(async () =>
+        {
+            string? error;
+            try
+            {
+                await Task.WhenAll(filed.Select(f => f.Outcome.Written)).ConfigureAwait(true);
+                error = await ParkAsync(filed.Select(f => f.Row), when, origin, parked).ConfigureAwait(true);
+
+                // The cards follow their mail, so the board opens it where it now is.
+                var cards = filed.Select(f => f.Mail.InternetMessageId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var p in parked.Where(p => cards.Contains(p.MessageId)))
+                    await _actions.UpdateLocationAsync(p.MessageId, p.Ref.EntryId, p.Ref.StoreId).ConfigureAwait(true);
+            }
+            finally { Settle(rows); }
+
+            // A conversation that could not be flagged or moved comes back into the list.
+            if (error is not null || filed.Count < rows.Count)
+            {
+                if (error is not null) Status = $"Could not snooze that conversation: {error}";
+                await RefreshQuietlyAsync().ConfigureAwait(true);
+            }
+        });
+    }
 
     /// <summary>
     /// The mail in the conversation the row's card hangs on. A reply after
@@ -1667,8 +1754,8 @@ public sealed partial class TriageViewModel : ObservableObject
             }
         }
 
-        _ = SetCategoryInBackgroundAsync(row, summary.Ref, required, wasActionRequired);
-        return new FlagOutcome(removed, previous, result);
+        var written = SetCategoryInBackgroundAsync(row, summary.Ref, required, wasActionRequired);
+        return new FlagOutcome(removed, previous, result, written);
     }
 
     /// <summary>
@@ -2198,59 +2285,36 @@ public sealed partial class TriageViewModel : ObservableObject
         Palette.Close();
         if (rows.Count == 0) return Task.CompletedTask;
 
-        var origin = _inbox;
-        var moved = new List<(MailRef Ref, long SnoozeId)>();
-        TakeOut(rows);
         Status = (rows.Count == 1 ? "" : $"{rows.Count} conversations · ")
                + $"Back in your inbox {Humanise(when - _clock.Now)} · {when:ddd d MMM HH:mm}";
+        return SnoozeRows(rows, when);
+    }
+
+    /// <summary>
+    /// Takes conversations out of the list and parks them until
+    /// <paramref name="when"/>, with an undo step that brings them back.
+    /// </summary>
+    private Task SnoozeRows(IReadOnlyList<MailRowViewModel> rows, DateTimeOffset when)
+    {
+        var origin = _inbox;
+        var parked = new List<Parked>();
+        TakeOut(rows);
 
         // Recorded now, like a move, so it keeps its place in the undo order.
         PushUndo("snooze", async () =>
         {
-            foreach (var (m, id) in moved)
+            foreach (var p in parked)
             {
-                await _store.MoveAsync(m, origin).ConfigureAwait(true);
-                await _snoozes.CancelAsync(id).ConfigureAwait(true);
+                await _store.MoveAsync(p.Ref, origin).ConfigureAwait(true);
+                await _snoozes.CancelAsync(p.SnoozeId).ConfigureAwait(true);
             }
             await LoadAsync().ConfigureAwait(true);
-        }, () => moved.Count == 0);
+        }, () => parked.Count == 0);
 
         return RunInBackground(async () =>
         {
-            string? error = null;
-
-            try
-            {
-                var holding = await GetSnoozeFolderAsync().ConfigureAwait(true);
-
-                // Every Inbox message in the conversation is parked, each with
-                // its own entry, so they all come back together.
-                foreach (var m in rows.SelectMany(r => r.InboxMessages))
-                {
-                    try
-                    {
-                        var to = await _store.MoveAsync(m.Ref, holding).ConfigureAwait(true);
-
-                        var entry = await _snoozes.AddAsync(new SnoozeEntry
-                        {
-                            InternetMessageId = m.InternetMessageId,
-                            EntryId = to.EntryId,
-                            StoreId = to.StoreId,
-                            Subject = m.Subject,
-                            SenderName = m.DisplaySender,
-                            OriginFolderEntryId = origin.EntryId,
-                            OriginFolderStoreId = origin.StoreId,
-                            OriginFolderPath = origin.Path,
-                            SnoozedUtc = _clock.UtcNow,
-                            ReturnUtc = when.ToUniversalTime(),
-                        }).ConfigureAwait(true);
-
-                        moved.Add((to, entry.Id));
-                    }
-                    catch (Exception ex) { error ??= ex.Message; }
-                }
-            }
-            catch (Exception ex) { error ??= ex.Message; }
+            string? error;
+            try { error = await ParkAsync(rows, when, origin, parked).ConfigureAwait(true); }
             finally { Settle(rows); }
 
             if (error is not null)
@@ -2259,6 +2323,54 @@ public sealed partial class TriageViewModel : ObservableObject
                 await RefreshQuietlyAsync().ConfigureAwait(true);
             }
         });
+    }
+
+    /// <summary>A mail in the holding folder: where it is now, its snooze entry, and its Message-ID.</summary>
+    private sealed record Parked(MailRef Ref, long SnoozeId, string MessageId);
+
+    /// <summary>
+    /// Moves every Inbox message of the conversations to the holding folder,
+    /// each with its own snooze entry, so they all come back together.
+    /// Fills <paramref name="parked"/> as it goes, for undo; returns the first
+    /// error, or null.
+    /// </summary>
+    private async Task<string?> ParkAsync(
+        IEnumerable<MailRowViewModel> rows, DateTimeOffset when, FolderRef origin, List<Parked> parked)
+    {
+        string? error = null;
+
+        try
+        {
+            var holding = await GetSnoozeFolderAsync().ConfigureAwait(true);
+
+            foreach (var m in rows.SelectMany(r => r.InboxMessages))
+            {
+                try
+                {
+                    var to = await _store.MoveAsync(m.Ref, holding).ConfigureAwait(true);
+
+                    var entry = await _snoozes.AddAsync(new SnoozeEntry
+                    {
+                        InternetMessageId = m.InternetMessageId,
+                        EntryId = to.EntryId,
+                        StoreId = to.StoreId,
+                        Subject = m.Subject,
+                        SenderName = m.DisplaySender,
+                        OriginFolderEntryId = origin.EntryId,
+                        OriginFolderStoreId = origin.StoreId,
+                        OriginFolderPath = origin.Path,
+                        SnoozedUtc = _clock.UtcNow,
+                        ReturnUtc = when.ToUniversalTime(),
+                    }).ConfigureAwait(true);
+
+                    parked.Add(new Parked(to, entry.Id, m.InternetMessageId));
+                }
+                catch (Exception ex) { error ??= ex.Message; }
+            }
+        }
+        catch (Exception ex) { error ??= ex.Message; }
+
+        return error;
     }
 
     // ---- replies and forwards (r / Shift+R / f) ---------------------------
@@ -2287,13 +2399,16 @@ public sealed partial class TriageViewModel : ObservableObject
     /// there already); a new message answers nothing, so it is filed under a
     /// placeholder until its copy reaches Sent Items. Either way the person
     /// gets a dated hand-off and the card waits on them; on the day it moves
-    /// to the board's Follow up column. Returns a line for the status bar.
+    /// to the board's Follow up column. With <paramref name="park"/>, the
+    /// answered conversation also leaves the Inbox until that day. Returns a
+    /// line for the status bar.
     /// </summary>
-    public async Task<string> RecordFollowUpAsync(MailRef answered, FollowUpRequest followUp)
+    public async Task<string> RecordFollowUpAsync(MailRef answered, FollowUpRequest followUp, bool park = false)
     {
         try
         {
             ActionItem? item;
+            var written = Task.CompletedTask;
             if (answered.IsEmpty)
             {
                 item = await _actions.UpsertAsync(new ActionItem
@@ -2316,7 +2431,7 @@ public sealed partial class TriageViewModel : ObservableObject
                 item = await _actions.GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
                 if (item is null || item.IsComplete)
                 {
-                    await SetActionRequiredAsync(summary, true).ConfigureAwait(true);
+                    written = (await SetActionRequiredAsync(summary, true).ConfigureAwait(true)).Written;
                     item = await _actions.GetByMessageIdAsync(summary.InternetMessageId).ConfigureAwait(true);
                     if (item is null) return "the follow-up could not be saved";
                 }
@@ -2340,7 +2455,17 @@ public sealed partial class TriageViewModel : ObservableObject
             if (ActionWorkflow.AfterWaitAdded(item) is { } stage)
                 await _actions.UpdateStageAsync(item.Id, stage).ConfigureAwait(true);
 
-            return $"follow up with {followUp.Person.Display} on {followUp.DueUtc.ToLocalTime():ddd d MMM} - it joins the board's Follow up column that day";
+            var when = followUp.DueUtc.ToLocalTime();
+            if (park && _settings.SnoozeUntilActionDate && followUp.DueUtc > _clock.UtcNow
+                && Rows.FirstOrDefault(r => r.InboxMessages.Any(m => m.Ref == answered)) is { } row)
+            {
+                // Moving the mail mid-write would lose its new category.
+                await written.ConfigureAwait(true);
+                _ = SnoozeRows(new[] { row }, followUp.DueUtc);
+                return $"follow up with {followUp.Person.Display} on {when:ddd d MMM} - out of the inbox until {when:ddd d MMM HH:mm}";
+            }
+
+            return $"follow up with {followUp.Person.Display} on {when:ddd d MMM} - it joins the board's Follow up column that day";
         }
         catch (Exception ex)
         {

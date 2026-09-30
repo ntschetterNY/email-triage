@@ -260,6 +260,13 @@ usual Outlook draft to tell them once it is saved. Flag a mail that is already o
 the board and the popup edits its card. Several selected conversations get the same
 answers. Set `AskDetailsOnFlag` to `false` in settings to have `a` flag at once.
 
+Give the card a date and the mail leaves your inbox until it needs you again: it is
+snoozed (see above) until the follow-up day, or the due date if that comes first, and
+the popup's last line says when it will be back. A reply sent with a follow-up does
+the same with its conversation, unless you sent it with mark done. One `z` puts both
+the mail and the card back. Set `SnoozeUntilActionDate` to `false` to keep dated
+mail in the inbox.
+
 Assignments are **local by default**. Nothing is sent when you assign someone. When
 you want to actually tell them, the app opens a pre-filled draft in Outlook for you to
 review and send yourself.
