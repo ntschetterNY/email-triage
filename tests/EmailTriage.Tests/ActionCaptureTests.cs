@@ -148,6 +148,15 @@ public class ActionCaptureTests
     }
 
     [Fact]
+    public void A_time_given_with_the_date_is_when_it_comes_back()
+    {
+        Assert.True(NaturalDateParser.TryParse("fri 2:30pm", Now, out var due));
+        var request = new CaptureRequest { DueUtc = due.ToUniversalTime() };
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 2, 14, 30, 0, Now.Offset), ActionCapture.ReturnTime(request, Now));
+    }
+
+    [Fact]
     public void A_flag_with_no_date_stays_in_the_inbox()
     {
         Assert.Null(ActionCapture.ReturnTime(new CaptureRequest(), Now));
