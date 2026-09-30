@@ -50,10 +50,10 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     private (ActionItem Item, MailRef Target)? _chase;
 
-    /// <summary>The tab's label, with how many follow-ups are due when any are.</summary>
-    public string ActionsTabTitle => Actions.ScheduledFollowUpCount > 0
-        ? $"Action items · {Actions.ScheduledFollowUpCount} to follow up"
-        : "Action items";
+    /// <summary>The tab's label, with how many follow-ups are due and how many cards have gone stale.</summary>
+    public string ActionsTabTitle => "Action items"
+        + (Actions.ScheduledFollowUpCount > 0 ? $" · {Actions.ScheduledFollowUpCount} to follow up" : "")
+        + (Actions.StaleCount > 0 ? $" · {Actions.StaleCount} stale" : "");
 
     /// <summary>Top-bar AI readout: today's calls, tokens and cost, and which account pays.</summary>
     [ObservableProperty] private string _aiUsageText = "";
@@ -110,7 +110,8 @@ public sealed partial class MainViewModel : ObservableObject
         Actions.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(ActionItemsViewModel.Status)) OnPropertyChanged(nameof(StatusText));
-            if (e.PropertyName == nameof(ActionItemsViewModel.ScheduledFollowUpCount)) OnPropertyChanged(nameof(ActionsTabTitle));
+            if (e.PropertyName is nameof(ActionItemsViewModel.ScheduledFollowUpCount) or nameof(ActionItemsViewModel.StaleCount))
+                OnPropertyChanged(nameof(ActionsTabTitle));
         };
         Calendar.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(CalendarViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
 
@@ -469,6 +470,7 @@ public sealed partial class MainViewModel : ObservableObject
             return await HandlePaletteKeyAsync(stroke, action, ctrlEnter).ConfigureAwait(true);
         }
         if (Actions.Editor != EditorMode.None) return await HandleEditorKeyAsync(action, ctrlEnter).ConfigureAwait(true);
+        if (Actions.IsReviewing) return await HandleReviewKeyAsync(action).ConfigureAwait(true);
 
         if (IsHelpVisible)
         {
@@ -696,6 +698,36 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// The stale review walk: three answers and a date, and the rest of the
+    /// keyboard waits until it is over. Leaving the tab ends it.
+    /// </summary>
+    private async Task<bool> HandleReviewKeyAsync(TriageAction action)
+    {
+        switch (action)
+        {
+            case TriageAction.ToggleComplete: await Actions.ReviewDoneAsync().ConfigureAwait(true); return true;
+            case TriageAction.Delete: await Actions.ReviewDropAsync().ConfigureAwait(true); return true;
+            case TriageAction.Confirm: await Actions.ReviewKeepAsync().ConfigureAwait(true); return true;
+            case TriageAction.SetDue: Actions.ReviewDue(); return true;
+            case TriageAction.Cancel:
+            case TriageAction.ReviewStale:
+                Actions.EndReview();
+                return true;
+
+            case TriageAction.OpenInOutlook: await Actions.OpenInOutlookAsync().ConfigureAwait(true); return true;
+
+            case TriageAction.SwitchSection:
+            case TriageAction.PrevSection:
+            case TriageAction.ShowHelp:
+                Actions.EndReview();
+                return await HandleGlobalKeyAsync(action).ConfigureAwait(true);
+
+            default:
+                return true; // the walk has the keyboard
+        }
     }
 
     private async Task<bool> HandleEditorKeyAsync(TriageAction action, bool ctrlEnter)
@@ -1120,6 +1152,7 @@ public sealed partial class MainViewModel : ObservableObject
             case TriageAction.SetDue: Actions.RequestFocus(FormField.Due); return true;
             case TriageAction.ToggleBoardView: Actions.ToggleByPerson(); return true;
             case TriageAction.ToggleDoneLog: await Actions.ToggleDoneLogAsync().ConfigureAwait(true); return true;
+            case TriageAction.ReviewStale: Actions.StartReview(); return true;
             case TriageAction.Undo: await Actions.UndoAsync().ConfigureAwait(true); return true;
             case TriageAction.ClearWait: await Actions.ClearNextWaitAsync().ConfigureAwait(true); return true;
             case TriageAction.Chase: await ChaseSelectedAsync().ConfigureAwait(true); return true;
@@ -1230,6 +1263,8 @@ public sealed partial class MainViewModel : ObservableObject
         ("Actions", Keys.Describe(TriageAction.AddAssignment), "Assign to someone else"),
         ("Actions", Keys.Describe(TriageAction.ToggleComplete), "Mark done - the card leaves the board (z puts it back); in the done log, reopens it"),
         ("Actions", Keys.Describe(TriageAction.ToggleDoneLog), "Done log - everything finished, newest first"),
+        ("Actions", Keys.Describe(TriageAction.ReviewStale), "Review stale cards one at a time - x done, # drop, Enter keep, d due date"
+            + (_settings.StaleAfterDays > 0 ? $"; a card is stale after {_settings.StaleAfterDays} untouched days" : "")),
         ("Actions", Keys.Describe(TriageAction.CyclePriority), "Cycle priority"),
         ("Actions", Keys.Describe(TriageAction.OpenInOutlook), "Open the original in Outlook"),
 

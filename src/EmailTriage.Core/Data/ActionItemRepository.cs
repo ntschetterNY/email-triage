@@ -32,9 +32,18 @@ public sealed class ActionItemRepository : IActionItemRepository
                notes               AS Notes,
                stage               AS Stage,
                due_utc             AS DueUtc,
-               last_follow_up_utc  AS LastFollowUpUtc
+               last_follow_up_utc  AS LastFollowUpUtc,
+               touched_utc         AS TouchedUtc
         FROM action_items
         """;
+
+    // Every change a person makes to a card moves its touched stamp, so the
+    // stale rule measures neglect and nothing else.
+    private const string Touch = "UPDATE action_items SET touched_utc = @now WHERE id = @id";
+    private const string TouchBlockerParent =
+        "UPDATE action_items SET touched_utc = @now WHERE id = (SELECT action_item_id FROM blocking_tasks WHERE id = @id)";
+    private const string TouchAssignmentParent =
+        "UPDATE action_items SET touched_utc = @now WHERE id = (SELECT action_item_id FROM assignments WHERE id = @id)";
 
     public async Task<IReadOnlyList<ActionItem>> GetOpenAsync(CancellationToken ct = default)
         => await LoadAsync($"{SelectItem} WHERE completed_utc IS NULL", null, ct).ConfigureAwait(false);
@@ -108,6 +117,7 @@ public sealed class ActionItemRepository : IActionItemRepository
         await using var conn = _db.Open();
 
         if (item.CreatedUtc == default) item.CreatedUtc = _clock.UtcNow;
+        item.TouchedUtc = _clock.UtcNow;
 
         var id = await conn.ExecuteScalarAsync<long>(new CommandDefinition(
             UpsertSql, item, cancellationToken: ct)).ConfigureAwait(false);
@@ -121,10 +131,10 @@ public sealed class ActionItemRepository : IActionItemRepository
     private const string UpsertSql = """
         INSERT INTO action_items
             (internet_message_id, entry_id, store_id, subject, title, sender_name,
-             sender_address, received_utc, created_utc, completed_utc, priority, notes)
+             sender_address, received_utc, created_utc, completed_utc, priority, notes, touched_utc)
         VALUES
             (@InternetMessageId, @EntryId, @StoreId, @Subject, @Title, @SenderName,
-             @SenderAddress, @ReceivedUtc, @CreatedUtc, @CompletedUtc, @Priority, @Notes)
+             @SenderAddress, @ReceivedUtc, @CreatedUtc, @CompletedUtc, @Priority, @Notes, @TouchedUtc)
         ON CONFLICT(internet_message_id) DO UPDATE SET
             entry_id      = excluded.entry_id,
             store_id      = excluded.store_id,
@@ -132,7 +142,8 @@ public sealed class ActionItemRepository : IActionItemRepository
             sender_name   = excluded.sender_name,
             sender_address= excluded.sender_address,
             completed_utc = NULL,
-            stage         = CASE WHEN stage = 3 THEN 0 ELSE stage END
+            stage         = CASE WHEN stage = 3 THEN 0 ELSE stage END,
+            touched_utc   = excluded.touched_utc
         RETURNING id;
         """;
 
@@ -144,6 +155,7 @@ public sealed class ActionItemRepository : IActionItemRepository
 
         var now = _clock.UtcNow;
         if (item.CreatedUtc == default) item.CreatedUtc = now;
+        item.TouchedUtc = now;
 
         var id = await conn.ExecuteScalarAsync<long>(new CommandDefinition(
             UpsertSql, item, tx, cancellationToken: ct)).ConfigureAwait(false);
@@ -155,11 +167,13 @@ public sealed class ActionItemRepository : IActionItemRepository
                 notes    = CASE WHEN @notes <> '' THEN @notes ELSE notes END,
                 priority = @priority,
                 due_utc  = COALESCE(@due, due_utc),
-                stage    = CASE WHEN @wait = 1 THEN 2 ELSE stage END
+                stage    = CASE WHEN @wait = 1 THEN 2 ELSE stage END,
+                touched_utc = @now
             WHERE id = @id
             """, new
             {
                 id,
+                now,
                 title = request.Title.Trim(),
                 notes = request.Notes.Trim(),
                 priority = (int)request.Priority,
@@ -207,7 +221,8 @@ public sealed class ActionItemRepository : IActionItemRepository
         await conn.ExecuteAsync(new CommandDefinition("""
             UPDATE action_items
             SET title = @Title, notes = @Notes, priority = @Priority, due_utc = @DueUtc,
-                stage = @Stage, completed_utc = @CompletedUtc, last_follow_up_utc = @LastFollowUpUtc
+                stage = @Stage, completed_utc = @CompletedUtc, last_follow_up_utc = @LastFollowUpUtc,
+                touched_utc = @TouchedUtc
             WHERE id = @Id
             """, snapshot, tx, cancellationToken: ct)).ConfigureAwait(false);
 
@@ -256,13 +271,14 @@ public sealed class ActionItemRepository : IActionItemRepository
         await using var conn = _db.Open();
         await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
 
-        var when = complete ? (DateTimeOffset?)_clock.UtcNow : null;
+        var now = _clock.UtcNow;
+        var when = complete ? (DateTimeOffset?)now : null;
 
         await conn.ExecuteAsync(new CommandDefinition(
             // Completion and the Done stage are one fact, so they move together.
             // Reopening lands in Doing: it was being worked on before.
-            "UPDATE action_items SET completed_utc = @when, stage = @stage WHERE id = @id",
-            new { id, when, stage = complete ? 3 : 1 }, tx, cancellationToken: ct)).ConfigureAwait(false);
+            "UPDATE action_items SET completed_utc = @when, stage = @stage, touched_utc = @now WHERE id = @id",
+            new { id, when, now, stage = complete ? 3 : 1 }, tx, cancellationToken: ct)).ConfigureAwait(false);
 
         // A finished item is not waiting on anyone any more, so its open waits
         // close with it and the by-person report stops counting them. Reopening
@@ -286,7 +302,8 @@ public sealed class ActionItemRepository : IActionItemRepository
         await conn.ExecuteAsync(new CommandDefinition("""
             UPDATE action_items
             SET stage = @stage,
-                completed_utc = CASE WHEN @stage = 3 THEN COALESCE(completed_utc, @now) ELSE NULL END
+                completed_utc = CASE WHEN @stage = 3 THEN COALESCE(completed_utc, @now) ELSE NULL END,
+                touched_utc = @now
             WHERE id = @id
             """, new { id, stage = (int)stage, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
@@ -295,16 +312,16 @@ public sealed class ActionItemRepository : IActionItemRepository
     {
         await using var conn = _db.Open();
         await conn.ExecuteAsync(new CommandDefinition(
-            "UPDATE action_items SET due_utc = @dueUtc WHERE id = @id",
-            new { id, dueUtc }, cancellationToken: ct)).ConfigureAwait(false);
+            "UPDATE action_items SET due_utc = @dueUtc, touched_utc = @now WHERE id = @id",
+            new { id, dueUtc, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task UpdateNotesAsync(long id, string notes, CancellationToken ct = default)
     {
         await using var conn = _db.Open();
         await conn.ExecuteAsync(new CommandDefinition(
-            "UPDATE action_items SET notes = @notes WHERE id = @id",
-            new { id, notes }, cancellationToken: ct)).ConfigureAwait(false);
+            "UPDATE action_items SET notes = @notes, touched_utc = @now WHERE id = @id",
+            new { id, notes, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task UpdatePriorityAsync(
@@ -312,8 +329,8 @@ public sealed class ActionItemRepository : IActionItemRepository
     {
         await using var conn = _db.Open();
         await conn.ExecuteAsync(new CommandDefinition(
-            "UPDATE action_items SET priority = @priority WHERE id = @id",
-            new { id, priority = (int)priority }, cancellationToken: ct)).ConfigureAwait(false);
+            "UPDATE action_items SET priority = @priority, touched_utc = @now WHERE id = @id",
+            new { id, priority = (int)priority, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task<BlockingTask> AddBlockerAsync(
@@ -329,6 +346,9 @@ public sealed class ActionItemRepository : IActionItemRepository
             RETURNING id;
             """, blocker, cancellationToken: ct)).ConfigureAwait(false);
 
+        await conn.ExecuteAsync(new CommandDefinition(
+            Touch, new { id = blocker.ActionItemId, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
+
         return blocker;
     }
 
@@ -340,11 +360,15 @@ public sealed class ActionItemRepository : IActionItemRepository
             "UPDATE blocking_tasks SET resolved_utc = @when WHERE id = @id",
             new { id = blockerId, when = resolved ? (DateTimeOffset?)_clock.UtcNow : null },
             cancellationToken: ct)).ConfigureAwait(false);
+        await conn.ExecuteAsync(new CommandDefinition(
+            TouchBlockerParent, new { id = blockerId, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task DeleteBlockerAsync(long blockerId, CancellationToken ct = default)
     {
         await using var conn = _db.Open();
+        await conn.ExecuteAsync(new CommandDefinition(
+            TouchBlockerParent, new { id = blockerId, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
         await conn.ExecuteAsync(new CommandDefinition(
             "DELETE FROM blocking_tasks WHERE id = @id",
             new { id = blockerId }, cancellationToken: ct)).ConfigureAwait(false);
@@ -365,6 +389,9 @@ public sealed class ActionItemRepository : IActionItemRepository
             RETURNING id;
             """, assignment, cancellationToken: ct)).ConfigureAwait(false);
 
+        await conn.ExecuteAsync(new CommandDefinition(
+            Touch, new { id = assignment.ActionItemId, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
+
         return assignment;
     }
 
@@ -376,14 +403,23 @@ public sealed class ActionItemRepository : IActionItemRepository
             "UPDATE assignments SET done_utc = @when WHERE id = @id",
             new { id = assignmentId, when = done ? (DateTimeOffset?)_clock.UtcNow : null },
             cancellationToken: ct)).ConfigureAwait(false);
+        await conn.ExecuteAsync(new CommandDefinition(
+            TouchAssignmentParent, new { id = assignmentId, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task MarkFollowedUpAsync(long id, CancellationToken ct = default)
     {
         await using var conn = _db.Open();
         await conn.ExecuteAsync(new CommandDefinition(
-            "UPDATE action_items SET last_follow_up_utc = @when WHERE id = @id",
+            "UPDATE action_items SET last_follow_up_utc = @when, touched_utc = @when WHERE id = @id",
             new { id, when = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
+    }
+
+    public async Task TouchAsync(long id, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        await conn.ExecuteAsync(new CommandDefinition(
+            Touch, new { id, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task MarkAssignmentDraftedAsync(long assignmentId, CancellationToken ct = default)
@@ -393,11 +429,15 @@ public sealed class ActionItemRepository : IActionItemRepository
             "UPDATE assignments SET notified_utc = @when WHERE id = @id",
             new { id = assignmentId, when = _clock.UtcNow }, cancellationToken: ct))
             .ConfigureAwait(false);
+        await conn.ExecuteAsync(new CommandDefinition(
+            TouchAssignmentParent, new { id = assignmentId, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task DeleteAssignmentAsync(long assignmentId, CancellationToken ct = default)
     {
         await using var conn = _db.Open();
+        await conn.ExecuteAsync(new CommandDefinition(
+            TouchAssignmentParent, new { id = assignmentId, now = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
         await conn.ExecuteAsync(new CommandDefinition(
             "DELETE FROM assignments WHERE id = @id",
             new { id = assignmentId }, cancellationToken: ct)).ConfigureAwait(false);

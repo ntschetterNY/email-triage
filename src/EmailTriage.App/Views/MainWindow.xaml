@@ -981,6 +981,12 @@
                                                                     <TextBlock FontSize="10" Foreground="{StaticResource Warn}"
                                                                                Text="{Binding FollowUpLabel}" />
                                                                 </Border>
+                                                                <!-- nobody has touched it for weeks: Shift+R walks these -->
+                                                                <Border CornerRadius="3" Padding="5,0" Margin="6,0,0,0" Background="#22858C9A"
+                                                                        Visibility="{Binding IsStale, Converter={StaticResource BoolVis}}">
+                                                                    <TextBlock FontSize="10" Foreground="{StaticResource Muted}"
+                                                                               Text="{Binding StaleLabel}" />
+                                                                </Border>
                                                                 <TextBlock x:Name="NotesMark" Text="✎ notes" FontSize="10" Margin="8,0,0,0"
                                                                            Foreground="{StaticResource Muted}"
                                                                            Visibility="{Binding Notes, Converter={StaticResource NullVis}}" />
@@ -2274,6 +2280,51 @@
                     <Border Grid.Row="2" Background="{StaticResource Raised}" CornerRadius="0,0,9,9" Padding="16,9">
                         <TextBlock Text="{Binding Triage.Capture.Hint}" FontSize="11"
                                    Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- stale review (Shift+R): one neglected card at a time, its email still showing beneath -->
+        <Grid Grid.RowSpan="3" Background="#70000000"
+              Visibility="{Binding Actions.IsReviewing, Converter={StaticResource BoolVis}}">
+            <Border Width="620" VerticalAlignment="Top" Margin="0,80,0,0"
+                    Background="{StaticResource Panel}" CornerRadius="9"
+                    BorderBrush="{StaticResource Border}" BorderThickness="1">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="32" ShadowDepth="6" Opacity="0.55" Color="Black" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="18,14,18,14">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding Actions.ReviewPosition}" FontSize="12"
+                                       Foreground="{StaticResource Muted}" />
+                            <TextBlock Text="STILL A THING?" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Muted}" />
+                        </DockPanel>
+                        <TextBlock Text="{Binding Actions.ReviewItem.DisplayTitle}" FontSize="16" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" Margin="0,8,0,0" />
+                        <TextBlock FontSize="12" Margin="0,4,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap">
+                            <Run Text="{Binding Actions.ReviewItem.SenderName, Mode=OneWay}" />
+                            <Run Text="·" />
+                            <Run Text="{Binding Actions.ReviewItem.ReceivedUtc, Mode=OneWay, StringFormat='received {0:ddd d MMM}'}" />
+                            <Run Text="·" />
+                            <Run Text="{Binding Actions.ReviewItem.Stage, Mode=OneWay}" />
+                            <Run Text="·" />
+                            <Run Text="{Binding Actions.ReviewItem.StaleDays, Mode=OneWay, StringFormat='untouched for {0} days'}" FontWeight="SemiBold" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding Actions.ReviewItem.WaitingLine}" FontSize="12" Margin="0,6,0,0"
+                                   Foreground="{StaticResource Warn}" TextWrapping="Wrap"
+                                   Visibility="{Binding Actions.ReviewItem.IsWaiting, Converter={StaticResource BoolVis}}" />
+                        <TextBlock Text="{Binding Actions.ReviewItem.Notes}" FontSize="12" Margin="0,6,0,0"
+                                   Foreground="{StaticResource Text}" TextWrapping="Wrap" MaxHeight="60" TextTrimming="CharacterEllipsis"
+                                   Visibility="{Binding Actions.ReviewItem.Notes, Converter={StaticResource NullVis}}" />
+                    </StackPanel>
+                    <Border Grid.Row="1" Background="{StaticResource Raised}" CornerRadius="0,0,9,9" Padding="18,9">
+                        <TextBlock Text="{Binding Actions.ReviewHint}" FontSize="11" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
                     </Border>
                 </Grid>
             </Border>

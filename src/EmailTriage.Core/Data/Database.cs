@@ -219,5 +219,12 @@ public sealed class Database
             -- flagged. Empty falls back to the subject.
             ALTER TABLE action_items ADD COLUMN title TEXT NOT NULL DEFAULT '';
             """),
+
+        (7, """
+            -- When the card was last worked on, so ones nobody has touched
+            -- for weeks can be pointed out. Existing cards count from creation.
+            ALTER TABLE action_items ADD COLUMN touched_utc TEXT NULL;
+            UPDATE action_items SET touched_utc = created_utc;
+            """),
     };
 }

@@ -89,6 +89,9 @@ public enum TriageAction
     /// <summary>Switch the action tab between the board and the log of what is done.</summary>
     ToggleDoneLog,
 
+    /// <summary>Walk the cards nobody has touched for weeks, one at a time: done, drop or keep.</summary>
+    ReviewStale,
+
     // Calendar
 
     /// <summary>Accept, tentatively accept or decline an invitation, optionally with a note.</summary>

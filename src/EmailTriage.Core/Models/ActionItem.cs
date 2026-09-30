@@ -45,6 +45,22 @@ public sealed class ActionItem
     public DateTimeOffset? LastFollowUpUtc { get; set; }
 
     /// <summary>
+    /// When the user last did anything to this card: a stage move, a note, a
+    /// wait added or cleared, a chase, or a "keep" in the stale review.
+    /// </summary>
+    public DateTimeOffset? TouchedUtc { get; set; }
+
+    /// <summary>
+    /// Days this card has sat untouched past the stale threshold; 0 when it
+    /// is fine. Not persisted - the board sets it from <c>StaleItems</c> on load.
+    /// </summary>
+    public int StaleDays { get; set; }
+
+    public bool IsStale => StaleDays > 0;
+
+    public string StaleLabel => $"stale · {StaleDays}d";
+
+    /// <summary>
     /// Days this item has sat waiting past the follow-up threshold; 0 when not
     /// due. Not persisted - the board sets it from <c>FollowUpPlanner</c> on load.
     /// </summary>
