@@ -64,7 +64,7 @@ public static partial class HtmlPresenter
     /// subject on top and every message open with its full header, newest
     /// first as in the reading pane.
     /// </summary>
-    public static string RenderThreadForPdf(
+    public static string RenderThreadForPrint(
         string subject, IReadOnlyList<MailBody> bodies, bool blockRemoteImages, int hiddenOlder = 0)
     {
         static string E(string s) => WebUtility.HtmlEncode(s);
@@ -100,17 +100,6 @@ public static partial class HtmlPresenter
             sb.Append($"<p class=\"older\">{hidden} older message{(hidden == 1 ? "" : "s")} in this conversation not included.</p>");
 
         return Document(sb.ToString(), blockRemoteImages, darkTheme: false);
-    }
-
-    /// <summary>"2026-09-28 Level 3 punch list.pdf": the newest message's date, then the subject, safe as a file name.</summary>
-    public static string PdfFileName(string subject, DateTimeOffset newest)
-    {
-        var bad = System.IO.Path.GetInvalidFileNameChars().Concat(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }).ToHashSet();
-        var name = new string(subject.Select(c => bad.Contains(c) || char.IsControl(c) ? ' ' : c).ToArray());
-        name = string.Join(' ', name.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Trim(' ', '.');
-        if (name.Length > 80) name = name[..80].TrimEnd(' ', '.');
-        if (name.Length == 0) name = "Email";
-        return $"{newest.ToLocalTime():yyyy-MM-dd} {name}.pdf";
     }
 
     private static string MessageHeader(MailBody body)
@@ -211,7 +200,7 @@ public static partial class HtmlPresenter
               details.msg[open] .snippet { display: none; }
               details.msg > .msg-body { padding: 12px 16px; }
               p.older { opacity: .6; font-size: 12.5px; }
-              /* the PDF copy of a conversation */
+              /* the printed copy of a conversation */
               h1.subject { font-size: 20px; margin: 0 0 2px; }
               p.count { opacity: .6; font-size: 12px; margin: 0 0 14px; }
               table.head { border-collapse: collapse; font-size: 12.5px; }

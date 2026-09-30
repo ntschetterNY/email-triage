@@ -908,8 +908,8 @@ public sealed partial class MainViewModel : ObservableObject
                 Triage.OpenReplyWithMeetingForSelected();
                 return true;
 
-            case TriageAction.SavePdf:
-                SavePdfRequested?.Invoke(this, EventArgs.Empty);
+            case TriageAction.Print:
+                PrintRequested?.Invoke(this, EventArgs.Empty);
                 return true;
 
             default:
@@ -968,7 +968,7 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>Ctrl+P in triage: the window prints the conversation, since that takes its browser.</summary>
-    public event EventHandler? SavePdfRequested;
+    public event EventHandler? PrintRequested;
 
     /// <summary>Ctrl+, or the Settings button: the view opens the Settings window.</summary>
     public event EventHandler? SettingsRequested;
@@ -1250,7 +1250,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.OpenFolderInOutlook), "Open a folder in Outlook, from any tab"),
         ("Triage",  Keys.Describe(TriageAction.Snooze), "Come back to this later"),
         ("Triage",  Keys.Describe(TriageAction.Archive), "Archive"),
-        ("Triage",  Keys.Describe(TriageAction.SavePdf), "Save the conversation as a PDF (also the PDF button)"),
+        ("Triage",  Keys.Describe(TriageAction.Print), "Print the conversation (also the Print button)"),
         ("Triage",  Keys.Describe(TriageAction.ToggleRead), "Toggle read / unread"),
         ("Triage",  Keys.Describe(TriageAction.OpenAttachment), "Open an attachment (or click it in the header)"),
         ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move, snooze, flag, read change or calendar block"),

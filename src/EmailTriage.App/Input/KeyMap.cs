@@ -77,7 +77,7 @@ public sealed class KeyMap
         ("x",           TriageAction.ToggleComplete),
         ("shift+p",     TriageAction.CyclePriority),
         ("o",           TriageAction.OpenInOutlook),
-        ("ctrl+p",      TriageAction.SavePdf),
+        ("ctrl+p",      TriageAction.Print),
 
         // Action board: arrows between columns, [ ] or Shift+arrows move the card
         ("left",        TriageAction.PrevColumn),
@@ -239,7 +239,9 @@ public sealed class KeyMap
                 var stroke = KeyStroke.Parse(strokeText);
                 if (stroke.IsEmpty) continue;
 
-                if (Enum.TryParse<TriageAction>(actionText, ignoreCase: true, out var action))
+                // Files written before the PDF button became Print still say SavePdf.
+                var name = string.Equals(actionText, "SavePdf", StringComparison.OrdinalIgnoreCase) ? nameof(TriageAction.Print) : actionText;
+                if (Enum.TryParse<TriageAction>(name, ignoreCase: true, out var action))
                     map.Bind(stroke, action);
             }
         }
