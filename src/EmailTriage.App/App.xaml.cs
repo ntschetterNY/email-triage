@@ -134,6 +134,8 @@ public partial class App : Application
         services.AddSingleton<TriageViewModel>();
         services.AddSingleton<ActionItemsViewModel>();
         services.AddSingleton<CalendarViewModel>();
+        services.AddSingleton<LavishConnection>();
+        services.AddSingleton<LavishViewModel>();
         services.AddSingleton<MainViewModel>();
         services.AddSingleton<MainWindow>();
     }

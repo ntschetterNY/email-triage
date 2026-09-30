@@ -31,7 +31,8 @@ public static class AppUpdater
     public static string DisplayVersion =>
         Repo is { Length: > 0 } ? $"v{CurrentVersion.ToString(3)}" : "local build";
 
-    private static string? Repo =>
+    /// <summary>The GitHub repo a release build was published from; null on a local build.</summary>
+    public static string? Repo =>
         Assembly.GetEntryAssembly()?
             .GetCustomAttributes<AssemblyMetadataAttribute>()
             .FirstOrDefault(a => a.Key == "UpdateRepo")?.Value;

@@ -36,6 +36,9 @@ public sealed partial class MainViewModel : ObservableObject
     public ActionItemsViewModel Actions { get; }
     public CalendarViewModel Calendar { get; }
 
+    /// <summary>The Lavish button: comments on the app itself, filed as GitHub issues.</summary>
+    public LavishViewModel Lavish { get; }
+
     [ObservableProperty] private Section _section = Section.Triage;
     [ObservableProperty] private bool _isHelpVisible;
     [ObservableProperty] private string _connectionStatus = "Starting...";
@@ -78,8 +81,10 @@ public sealed partial class MainViewModel : ObservableObject
         AiUsageLog aiUsage,
         ClaudeCodeCli claude,
         FolderSearchService folders,
-        RetentionSweep retention)
+        RetentionSweep retention,
+        LavishViewModel lavish)
     {
+        Lavish = lavish;
         _retention = retention;
         _folders = folders;
         _aiUsage = aiUsage;
@@ -1296,6 +1301,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("General", Keys.Describe(TriageAction.Refresh), "Refresh"),
         ("General", Keys.Describe(TriageAction.ShowHelp), "This help"),
         ("General", Keys.Describe(TriageAction.OpenSettings), "Settings - how your folders are named and nested, and organizing them"),
+        ("General", Keys.Describe(TriageAction.Lavish), "Lavish - click any part of the app and say what should change; it goes to GitHub as an issue"),
         ("General", Keys.Describe(TriageAction.Cancel), "Close / cancel"),
     };
 }

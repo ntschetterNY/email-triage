@@ -138,4 +138,7 @@ public enum TriageAction
 
     /// <summary>The Settings page: folder naming, nesting and organizing. Bound to Ctrl+,.</summary>
     OpenSettings,
+
+    /// <summary>Lavish: comment on any part of the app, filed as a GitHub issue. Bound to Ctrl+Shift+L.</summary>
+    Lavish,
 }

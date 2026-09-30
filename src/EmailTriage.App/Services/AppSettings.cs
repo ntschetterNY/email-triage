@@ -180,6 +180,14 @@ public sealed class AppSettings
     /// </summary>
     public bool CheckForUpdates { get; set; } = true;
 
+    /// <summary>
+    /// The GitHub repo ("owner/name") Lavish files comments to. Empty uses
+    /// the repo this copy was released from. Filing directly takes a token
+    /// from GH_TOKEN, GITHUB_TOKEN or a signed-in `gh` CLI; without one,
+    /// Lavish opens GitHub's issue form filled in, to submit in the browser.
+    /// </summary>
+    public string LavishRepo { get; set; } = "";
+
     /// <summary>The model each feature runs on: its own setting, or AiModel.</summary>
     public string ResolveDraftModel() => Pick(AiDraftModel);
     public string ResolveFollowUpModel() => Pick(AiFollowUpModel);
