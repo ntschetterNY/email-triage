@@ -557,6 +557,20 @@ public sealed partial class MainViewModel : ObservableObject
             }
         }
 
+        // Ctrl+K: a link on the selected text, as in Outlook. Enter puts it
+        // in; Esc goes back to the message without one.
+        if (stroke.Key == System.Windows.Input.Key.K && stroke.Modifiers == System.Windows.Input.ModifierKeys.Control)
+        {
+            composer.RequestLink();
+            return true;
+        }
+
+        if (composer.IsLinking && !ctrlEnter)
+        {
+            if (action == TriageAction.Confirm) { composer.InsertLink(); return true; }
+            if (action == TriageAction.Cancel) { composer.CancelLink(); return true; }
+        }
+
         if (action == TriageAction.Cancel && composer.IsFollowingUp && !composer.HasSuggestions)
         {
             composer.ToggleFollowUp();
@@ -1246,6 +1260,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Reply",   "Ctrl+Shift+L", "Send later - optionally held for review if they reply first"),
         ("Reply",   "Ctrl+Shift+F", "Follow up - pick a day and who it's waiting on (the first To by default); on that day it lands in the board's Follow up column"),
         ("Reply",   "Ctrl+Shift+T", "Follow-up: toggle tracking it as a task"),
+        ("Reply",   "Ctrl+K", "Insert a link - on the selected text, or type the text; a copied address is filled in"),
         ("Reply",   "Ctrl+Shift+O / C / B / M", "Jump to To / Cc / Bcc / the message"),
         ("Reply",   "Ctrl+Shift+,", "Discard the draft (Esc too)"),
 

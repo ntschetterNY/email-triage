@@ -270,7 +270,7 @@ public static partial class HtmlPresenter
 
     /// <summary>
     /// Wraps the user's reply text as HTML to sit above Outlook's quoted history,
-    /// with any @mentions written as Outlook writes them.
+    /// with any @mentions written as Outlook writes them, and links as links.
     /// </summary>
     public static string ComposeReplyFragment(string plainText, IReadOnlyCollection<ContactEntry>? mentions = null)
     {
@@ -282,15 +282,29 @@ public static partial class HtmlPresenter
 
     private static string LineHtml(string line, IReadOnlyCollection<ContactEntry>? mentions)
     {
-        if (mentions is null || mentions.Count == 0) return WebUtility.HtmlEncode(line);
+        var html = new StringBuilder();
+        foreach (var part in LinkText.Split(line))
+        {
+            if (part.Url is { } url) html.Append(Hyperlink(part.Text, url));
+            else html.Append(MentionsHtml(part.Text, mentions));
+        }
+        return html.ToString();
+    }
+
+    private static string MentionsHtml(string text, IReadOnlyCollection<ContactEntry>? mentions)
+    {
+        if (mentions is null || mentions.Count == 0) return WebUtility.HtmlEncode(text);
 
         var html = new StringBuilder();
-        foreach (var segment in MentionText.Split(line, mentions))
+        foreach (var segment in MentionText.Split(text, mentions))
         {
             html.Append(segment.Contact is { } who ? MentionLink(segment.Text, who) : WebUtility.HtmlEncode(segment.Text));
         }
         return html.ToString();
     }
+
+    private static string Hyperlink(string text, string url) =>
+        $"<a href=\"{WebUtility.HtmlEncode(url)}\">{WebUtility.HtmlEncode(text)}</a>";
 
     /// <summary>
     /// A mailto link with an "OWAAM" id is how Outlook marks a mention, and

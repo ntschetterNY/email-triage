@@ -16,7 +16,7 @@ public sealed record SentEventArgs(string Message, MailRef InReplyTo, bool MarkD
 }
 
 /// <summary>Where suggestions are showing: a recipient line, or an @mention in the message.</summary>
-public enum RecipientField { None, To, Cc, Bcc, Body, Subject, FollowUp }
+public enum RecipientField { None, To, Cc, Bcc, Body, Subject, FollowUp, LinkLabel, LinkAddress }
 
 /// <summary>
 /// The inline reply and forward box. Outlook builds the draft - quoted history,
@@ -57,6 +57,11 @@ public sealed partial class ComposerViewModel : ObservableObject
     // Who follows the first To recipient until the user types in it.
     private bool _followUpWhoEdited;
     private bool _settingWho;
+
+    // Link row (Ctrl+K): the text shown and where it goes.
+    [ObservableProperty] private bool _isLinking;
+    [ObservableProperty] private string _linkLabel = "";
+    [ObservableProperty] private string _linkAddress = "";
 
     [ObservableProperty] private RecipientField _suggestingFor;
     [ObservableProperty] private ContactEntry? _selectedSuggestion;
@@ -106,6 +111,75 @@ public sealed partial class ComposerViewModel : ObservableObject
     {
         IsScheduling = !IsScheduling;
         Status = "";
+    }
+
+    // ---- links ----------------------------------------------------------------
+
+    // The part of the message the link replaces, noted when the row opens.
+    private int _linkStart, _linkLength;
+
+    /// <summary>
+    /// Raised for Ctrl+K. The view knows the selection and the clipboard, so
+    /// it answers with <see cref="StartLink"/>.
+    /// </summary>
+    public event EventHandler? LinkRequested;
+
+    public void RequestLink()
+    {
+        if (!IsLinking) LinkRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Opens the link row for the text selected in the message (or the caret,
+    /// when nothing is). A web address already on the clipboard is filled in.
+    /// </summary>
+    public void StartLink(int selectionStart, int selectionLength, string? clipboard)
+    {
+        CloseSuggestions();
+        _linkStart = Math.Clamp(selectionStart, 0, BodyText.Length);
+        _linkLength = Math.Clamp(selectionLength, 0, BodyText.Length - _linkStart);
+
+        var selected = BodyText.Substring(_linkStart, _linkLength);
+        if (LinkText.LooksLikeAddress(selected))
+        {
+            LinkLabel = "";
+            LinkAddress = selected.Trim();
+        }
+        else
+        {
+            LinkLabel = selected.Trim();
+            LinkAddress = LinkText.LooksLikeAddress(clipboard) ? clipboard!.Trim() : "";
+        }
+
+        Status = "";
+        IsLinking = true;
+        RequestFocus(LinkLabel.Length == 0 && LinkAddress.Length == 0 ? RecipientField.LinkLabel : RecipientField.LinkAddress);
+    }
+
+    /// <summary>Writes the link into the message and goes back to typing after it.</summary>
+    public void InsertLink()
+    {
+        if (!IsLinking) return;
+
+        if (LinkText.Normalize(LinkAddress).Length == 0)
+        {
+            Status = "Where should the link go? Type or paste an address.";
+            return;
+        }
+
+        (BodyText, BodyCaret) = LinkText.Insert(BodyText, _linkStart, _linkLength, LinkLabel, LinkAddress);
+        IsLinking = false;
+        LinkLabel = LinkAddress = "";
+        Status = "";
+        SuggestionAccepted?.Invoke(this, RecipientField.Body);
+    }
+
+    public void CancelLink()
+    {
+        IsLinking = false;
+        LinkLabel = LinkAddress = "";
+        Status = "";
+        RequestFocus(RecipientField.Body);
     }
 
     // ---- follow-up ------------------------------------------------------------
@@ -310,7 +384,7 @@ public sealed partial class ComposerViewModel : ObservableObject
     /// <summary>Where the caret belongs in the message after a mention is taken.</summary>
     public int BodyCaret { get; private set; }
 
-    /// <summary>Raised after a suggestion is taken, so the view can put the caret at the end.</summary>
+    /// <summary>Raised after a suggestion or link is taken, so the view can put the caret after it.</summary>
     public event EventHandler<RecipientField>? SuggestionAccepted;
 
     public void Open(ReplyDraft draft)
@@ -321,6 +395,8 @@ public sealed partial class ComposerViewModel : ObservableObject
         IsScheduling = false;
         ScheduleText = "";
         HoldIfReplied = true;
+        IsLinking = false;
+        LinkLabel = LinkAddress = "";
         ResetFollowUp();
 
         _settingLines = true;
@@ -461,6 +537,13 @@ public sealed partial class ComposerViewModel : ObservableObject
     public async Task SendAsync(bool markDone = false)
     {
         if (Draft is null || IsSending) return;
+
+        // Sent with the link row still open: the link the user was writing goes in.
+        if (IsLinking)
+        {
+            if (LinkText.Normalize(LinkAddress).Length > 0) InsertLink();
+            else CancelLink();
+        }
 
         CloseSuggestions();
 
@@ -623,6 +706,8 @@ public sealed partial class ComposerViewModel : ObservableObject
         Status = "";
         IsScheduling = false;
         ScheduleText = "";
+        IsLinking = false;
+        LinkLabel = LinkAddress = "";
         ResetFollowUp();
 
         _settingLines = true;
