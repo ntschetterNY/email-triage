@@ -118,7 +118,7 @@ their own letters.
 ### Triage
 | Key | |
 |---|---|
-| `a` | Needs action - flags it and adds it to the action list |
+| `a` | **Needs action** - asks what has to happen, who has the ball, when it's due and when to chase, then flags it. Everything is optional: `Enter` saves, `Shift+Enter` just flags, `Esc` cancels |
 | `n` | No action needed |
 | `v` | **Move to folder** - type to search, `Ctrl+Enter` creates and moves |
 | `Shift+V` | **Open a folder in Outlook** - type to search, `Enter` shows it in Outlook's window (any tab) |
@@ -241,6 +241,20 @@ note the older messages left out. Remote images follow `BlockRemoteImages`, as o
 Flagging a mail does two things: it applies an Outlook category (so the flag is
 visible in Outlook itself, not trapped in this app) and creates a local record for the
 notes, blockers, and assignments.
+
+`a` asks first, while the mail is still in front of you: **What** needs to happen
+(it starts as the subject, minus the RE:s), **Who** has the ball, when it is **Due**
+and when to **Follow up**. `Tab` moves through them and `Enter` saves from any of
+them, so `a` `Enter` is the plain flag it always was; `Shift+Enter` skips the
+questions outright. Name someone and the card lands in **Waiting** on them, with the
+follow-up day (a couple of days before it is due unless you type one - `FollowUpBeforeDueDays`
+in settings) putting it in the **Follow up** column when the day comes. A first name
+is enough: people on the thread come first, then anyone you have waited on before,
+then your contacts. `Ctrl+B` makes the wait a blocker rather than a hand-off,
+`Ctrl+P` cycles the priority, `Ctrl+N` opens a notes box, and `Ctrl+M` opens the
+usual Outlook draft to tell them once it is saved. Flag a mail that is already on
+the board and the popup edits its card. Several selected conversations get the same
+answers. Set `AskDetailsOnFlag` to `false` in settings to have `a` flag at once.
 
 Assignments are **local by default**. Nothing is sent when you assign someone. When
 you want to actually tell them, the app opens a pre-filled draft in Outlook for you to

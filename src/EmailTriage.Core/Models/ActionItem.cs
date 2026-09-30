@@ -16,6 +16,16 @@ public sealed class ActionItem
     public string StoreId { get; set; } = "";
 
     public required string Subject { get; set; }
+
+    /// <summary>
+    /// What has to happen, in the user's words ("Get Rimkus to confirm the
+    /// reroute"); empty means the subject still says it best.
+    /// </summary>
+    public string Title { get; set; } = "";
+
+    /// <summary>The line a board card shows: the title when one was given, else the subject.</summary>
+    public string DisplayTitle => Title.Length > 0 ? Title : Subject;
+
     public required string SenderName { get; set; }
     public required string SenderAddress { get; set; }
     public DateTimeOffset ReceivedUtc { get; set; }

@@ -428,6 +428,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         // Modal surfaces claim the keyboard first: while one is open, ordinary
         // letters are text the user is typing, not commands.
+        if (Triage.Capture.IsOpen) return await HandleCaptureKeyAsync(stroke).ConfigureAwait(true);
         if (Triage.Composer.IsOpen) return await HandleComposerKeyAsync(stroke, action, ctrlEnter).ConfigureAwait(true);
         if (Triage.Palette.IsOpen)
         {
@@ -614,6 +615,57 @@ public sealed partial class MainViewModel : ObservableObject
         if (Section != Section.Triage && Triage.Status != before) SetStatus(Triage.Status);
     }
 
+    /// <summary>
+    /// The capture popup's keys. Only its own chords are claimed; everything
+    /// else is typing, and Tab moves between its fields on its own.
+    /// </summary>
+    private async Task<bool> HandleCaptureKeyAsync(KeyStroke stroke)
+    {
+        var capture = Triage.Capture;
+        var mods = stroke.Modifiers;
+        const System.Windows.Input.ModifierKeys Ctrl = System.Windows.Input.ModifierKeys.Control;
+        const System.Windows.Input.ModifierKeys Shift = System.Windows.Input.ModifierKeys.Shift;
+        const System.Windows.Input.ModifierKeys Plain = System.Windows.Input.ModifierKeys.None;
+
+        switch (stroke.Key)
+        {
+            case System.Windows.Input.Key.Return when mods == Shift:
+                await Triage.FlagWithoutDetailsAsync().ConfigureAwait(true);
+                await Actions.LoadAsync().ConfigureAwait(true);
+                return true;
+
+            case System.Windows.Input.Key.Return:
+                var tell = await Triage.CommitCaptureAsync().ConfigureAwait(true);
+                if (capture.IsOpen) return true; // a date it could not read keeps it open
+
+                await Actions.LoadAsync().ConfigureAwait(true);
+                foreach (var (item, handoff) in tell)
+                {
+                    await Actions.DraftAssignmentMailAsync(item, handoff).ConfigureAwait(true);
+                    Triage.Status = Actions.Status;
+                }
+                return true;
+
+            case System.Windows.Input.Key.Escape:
+                Triage.CloseCapture();
+                return true;
+
+            case System.Windows.Input.Key.Up when mods == Plain && capture.HasSuggestions:
+                capture.MoveSuggestion(-1);
+                return true;
+            case System.Windows.Input.Key.Down when mods == Plain && capture.HasSuggestions:
+                capture.MoveSuggestion(1);
+                return true;
+
+            case System.Windows.Input.Key.B when mods == Ctrl: capture.IsBlocker = !capture.IsBlocker; return true;
+            case System.Windows.Input.Key.N when mods == Ctrl: capture.ToggleNotes(); return true;
+            case System.Windows.Input.Key.M when mods == Ctrl: capture.TellThem = !capture.TellThem; return true;
+            case System.Windows.Input.Key.P when mods == Ctrl: capture.CyclePriority(); return true;
+        }
+
+        return false;
+    }
+
     private async Task<bool> HandleEditorKeyAsync(TriageAction action, bool ctrlEnter)
     {
         if (ctrlEnter) { await Actions.CommitEditorAsync().ConfigureAwait(true); return true; }
@@ -698,9 +750,10 @@ public sealed partial class MainViewModel : ObservableObject
             case TriageAction.NextColumn: await Triage.ExpandAsync().ConfigureAwait(true); return true;
             case TriageAction.PrevColumn: Triage.CollapseSelected(); return true;
 
+            // Opens the capture popup; the board reloads when it is saved.
             case TriageAction.MarkActionRequired:
-                await Triage.ToggleActionRequiredAsync(true).ConfigureAwait(true);
-                await Actions.LoadAsync().ConfigureAwait(true);
+                if (await Triage.OpenCaptureAsync().ConfigureAwait(true))
+                    await Actions.LoadAsync().ConfigureAwait(true);
                 return true;
 
             case TriageAction.MarkNoAction:
@@ -1105,7 +1158,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Move",    Keys.Describe(TriageAction.AiSearch), "Ask your inbox a question - Claude picks the matches (uses your Claude sign-in)"),
         ("Move",    $"{Keys.Describe(TriageAction.ExtendSelectionDown)} / {Keys.Describe(TriageAction.ExtendSelectionUp)}", "Select several - e, v, h, a and n act on all of them"),
 
-        ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - send to the action list"),
+        ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - asks what has to happen, who has the ball and when; Enter saves, Shift+Enter just flags"),
         ("Triage",  Keys.Describe(TriageAction.MarkNoAction), "No action needed"),
         ("Triage",  Keys.Describe(TriageAction.MoveToFolder), "Move to folder (type to search, Ctrl+Enter creates)"),
         ("Triage",  Keys.Describe(TriageAction.OpenFolderInOutlook), "Open a folder in Outlook, from any tab"),

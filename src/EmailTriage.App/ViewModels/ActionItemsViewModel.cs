@@ -1020,8 +1020,12 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     /// </summary>
     public async Task DraftAssignmentMailAsync(Assignment assignment)
     {
-        if (Selected is not { } item) return;
+        if (Selected is { } item) await DraftAssignmentMailAsync(item, assignment).ConfigureAwait(true);
+    }
 
+    /// <summary>The same, for a card that is not the selected one - a hand-off just captured from the inbox.</summary>
+    public async Task DraftAssignmentMailAsync(ActionItem item, Assignment assignment)
+    {
         if (string.IsNullOrWhiteSpace(assignment.PersonEmail))
         {
             Status = $"No email address on file for {assignment.PersonName}";
