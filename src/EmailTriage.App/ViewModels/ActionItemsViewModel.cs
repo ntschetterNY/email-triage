@@ -59,15 +59,17 @@ public sealed record WaitingChip(string Person, int Count, bool AnyOverdue)
 }
 
 /// <summary>
-/// The action board: every mail that needs work, in To do, Doing, Waiting,
-/// Follow up and Done columns, with the blockers and hand-offs that hold it up and the
-/// original email underneath. Built for moving fast from the keyboard;
-/// assignments stay local until the user explicitly drafts a chase email.
+/// The action board: every mail that needs work, in To do, Doing, Waiting and
+/// Follow up columns, with the blockers and hand-offs that hold it up and the
+/// original email underneath. A finished card leaves the board at once; a
+/// strip counts today's and a log (Shift+D) keeps the rest. Built for moving
+/// fast from the keyboard; assignments stay local until the user explicitly
+/// drafts a chase email.
 /// </summary>
 public sealed partial class ActionItemsViewModel : ObservableObject
 {
-    /// <summary>How far back the Done column reaches.</summary>
-    private static readonly TimeSpan DoneWindow = TimeSpan.FromDays(14);
+    /// <summary>How many finished cards the done log shows.</summary>
+    private const int DoneLogLimit = 200;
 
     private readonly IActionItemRepository _repo;
     private readonly IMailStore _store;
@@ -90,8 +92,24 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         new BoardColumn(ActionStage.Doing, "DOING"),
         new BoardColumn(ActionStage.Waiting, "WAITING"),
         new BoardColumn(ActionStage.Waiting, "FOLLOW UP", isFollowUps: true),
-        new BoardColumn(ActionStage.Done, "DONE"),
     };
+
+    /// <summary>Cards finished today, for the strip under the board.</summary>
+    public ObservableCollection<ActionItem> DoneToday { get; } = new();
+
+    /// <summary>Everything finished, newest first, for the done log (Shift+D).</summary>
+    public ObservableCollection<ActionItem> DoneLog { get; } = new();
+
+    [ObservableProperty] private int _doneTodayCount;
+    [ObservableProperty] private string _doneTodayLine = "";
+
+    /// <summary>The done log is showing instead of the board.</summary>
+    [ObservableProperty] private bool _isDoneLog;
+
+    public bool IsBoardShown => !IsByPerson && !IsDoneLog;
+
+    /// <summary>The card most recently marked done, as it stood, so `z` can put it back.</summary>
+    private ActionItem? _lastDone;
 
     private BoardColumn FollowUps => Columns.First(c => c.IsFollowUps);
 
@@ -207,12 +225,11 @@ public sealed partial class ActionItemsViewModel : ObservableObject
             var previous = Selected?.Id;
 
             var open = await _repo.GetOpenAsync(ct).ConfigureAwait(true);
-            var recentDone = (await _repo.GetCompletedAsync(60, ct).ConfigureAwait(true))
-                .Where(i => i.CompletedUtc is { } d && _clock.UtcNow - d < DoneWindow);
-
-            var all = open.Concat(recentDone).ToList();
+            var all = open.ToList();
             _all = all;
             _loadedDay = _clock.Now.Date;
+
+            await RefreshDoneAsync(ct).ConfigureAwait(true);
 
             // Waits whose follow-up day has come go to the Follow up column.
             var now = _clock.Now;
@@ -242,9 +259,8 @@ public sealed partial class ActionItemsViewModel : ObservableObject
                 var stage = column.Stage;
                 column.Fill(shown
                     .Where(i => !i.IsInFollowUp)
-                    .Where(i => (i.IsComplete ? ActionStage.Done : i.Stage == ActionStage.Done ? ActionStage.Doing : i.Stage) == stage)
-                    .OrderByDescending(i => stage == ActionStage.Done ? i.CompletedUtc : null)
-                    .ThenByDescending(i => i.IsOverdue)
+                    .Where(i => (i.Stage == ActionStage.Done ? ActionStage.Doing : i.Stage) == stage)
+                    .OrderByDescending(i => i.IsOverdue)
                     .ThenByDescending(i => i.Priority)
                     .ThenBy(i => i.NextDueUtc ?? DateTimeOffset.MaxValue)
                     .ThenByDescending(i => i.ReceivedUtc));
@@ -265,8 +281,10 @@ public sealed partial class ActionItemsViewModel : ObservableObject
             RebuildReport();
 
             // Keep the same card selected across a reload, wherever it moved.
-            var again = previous is null ? null : Columns.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == previous);
+            var again = previous is null ? null
+                : (IsDoneLog ? DoneLog : Columns.SelectMany(c => c.Items)).FirstOrDefault(i => i.Id == previous);
             if (again is not null) Select(again);
+            else if (IsDoneLog) Selected = DoneLog.FirstOrDefault();
             else SelectInColumn(ActiveColumn, 0);
 
             Status = $"{OpenCount} open  ·  {WaitingCount} waiting"
@@ -284,6 +302,109 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         catch (Exception ex)
         {
             Status = $"Could not load action items: {ex.Message}";
+        }
+    }
+
+    /// <summary>Fills the done strip, and the log while it is showing.</summary>
+    private async Task RefreshDoneAsync(CancellationToken ct = default)
+    {
+        var done = await _repo.GetCompletedAsync(IsDoneLog ? DoneLogLimit : 60, ct).ConfigureAwait(true);
+
+        var today = _clock.Now.Date;
+        var todays = done
+            .Where(i => i.CompletedUtc is { } d && d.ToOffset(_clock.Now.Offset).Date == today)
+            .ToList();
+
+        DoneToday.Clear();
+        foreach (var i in todays) DoneToday.Add(i);
+        DoneTodayCount = todays.Count;
+        DoneTodayLine = todays.Count == 0
+            ? "Nothing marked done yet today"
+            : string.Join("  ·  ", todays.Take(3).Select(i => i.DisplayTitle))
+              + (todays.Count > 3 ? $"  ·  +{todays.Count - 3} more" : "");
+
+        DoneLog.Clear();
+        if (IsDoneLog) foreach (var i in done) DoneLog.Add(i);
+    }
+
+    /// <summary>Shift+D: the log of what is finished, newest first, or back to the board.</summary>
+    public async Task ToggleDoneLogAsync() => await ShowDoneLogAsync(!IsDoneLog).ConfigureAwait(true);
+
+    public async Task ShowDoneLogAsync(bool show)
+    {
+        if (IsDoneLog == show) return;
+
+        IsDoneLog = show;
+        if (show) IsByPerson = false;
+
+        await LoadAsync().ConfigureAwait(true);
+
+        if (show)
+        {
+            Selected = DoneLog.FirstOrDefault();
+            Status = DoneLog.Count == 0
+                ? "Nothing finished yet"
+                : $"{DoneLog.Count} done · {CompleteKey} reopens one · {DoneLogKey} back to the board";
+        }
+    }
+
+    private string CompleteKey => _keys.Describe(TriageAction.ToggleComplete) is { Length: > 0 } key ? key : "x";
+    private string DoneLogKey => _keys.Describe(TriageAction.ToggleDoneLog) is { Length: > 0 } key ? key : "Shift+D";
+    private string UndoKey => _keys.Describe(TriageAction.Undo) is { Length: > 0 } key ? key : "z";
+
+    /// <summary>
+    /// Marks every open card for one of these mails done - Send &amp; mark done
+    /// finishing the card along with the conversation. Returns how many.
+    /// </summary>
+    public async Task<int> CompleteAnyAsync(IEnumerable<string> messageIds)
+    {
+        var ids = messageIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var items = _all.Where(i => !i.IsComplete && ids.Contains(i.InternetMessageId)).ToList();
+
+        foreach (var item in items)
+        {
+            await _repo.SetCompletedAsync(item.Id, true).ConfigureAwait(true);
+            await ClearCategoryAsync(item).ConfigureAwait(true);
+        }
+
+        if (items.Count > 0) _lastDone = items[^1];
+        return items.Count;
+    }
+
+    /// <summary>`z` on the board: the last card marked done comes back as it was.</summary>
+    public async Task UndoAsync()
+    {
+        if (_lastDone is not { } item)
+        {
+            Status = "Nothing to undo on the board";
+            return;
+        }
+
+        try
+        {
+            await _repo.RestoreAsync(item).ConfigureAwait(true);
+            _lastDone = null;
+
+            if (!string.IsNullOrEmpty(item.EntryId))
+            {
+                try
+                {
+                    await _store.SetCategoryAsync(
+                        new MailRef(item.EntryId, item.StoreId), _settings.ActionCategory, true).ConfigureAwait(true);
+                }
+                catch { /* the mail may have been filed or deleted since */ }
+            }
+
+            if (IsDoneLog) await ShowDoneLogAsync(false).ConfigureAwait(true);
+            else await LoadAsync().ConfigureAwait(true);
+
+            var back = Columns.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == item.Id);
+            if (back is not null) Select(back);
+            Status = $"Put back: {item.DisplayTitle}";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not undo: {ex.Message}";
         }
     }
 
@@ -394,7 +515,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
     public void Move(int delta)
     {
-        var items = Columns[ActiveColumn].Items;
+        var items = IsDoneLog ? DoneLog : Columns[ActiveColumn].Items;
         if (items.Count == 0) return;
 
         var index = Selected is null ? 0 : items.IndexOf(Selected) + delta;
@@ -476,6 +597,14 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     // ---- By person report --------------------------------------------------------
 
     public void ToggleByPerson() => IsByPerson = !IsByPerson;
+
+    partial void OnIsByPersonChanged(bool value)
+    {
+        if (value) IsDoneLog = false;
+        OnPropertyChanged(nameof(IsBoardShown));
+    }
+
+    partial void OnIsDoneLogChanged(bool value) => OnPropertyChanged(nameof(IsBoardShown));
 
     partial void OnReportSortChanged(SortChoice value) => RebuildReport();
 
@@ -884,34 +1013,49 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         Status = "Nothing is holding this up";
     }
 
+    /// <summary>
+    /// `x`: a finished card leaves the board at once - the strip below counts
+    /// it and `z` brings it back. On a card in the done log, reopens it.
+    /// </summary>
     public async Task ToggleCompleteAsync()
     {
         if (Selected is not { } item) return;
+
+        // Where the cursor was, so it lands on the next card rather than the top.
+        var column = ActiveColumn;
+        var index = Columns[column].Items.IndexOf(item);
 
         try
         {
             var target = !item.IsComplete;
             await _repo.SetCompletedAsync(item.Id, target).ConfigureAwait(true);
 
-            if (target && !string.IsNullOrEmpty(item.EntryId))
-            {
-                // Clear the Outlook category too, so the two views agree.
-                try
-                {
-                    await _store.SetCategoryAsync(
-                        new MailRef(item.EntryId, item.StoreId),
-                        _settings.ActionCategory, false).ConfigureAwait(true);
-                }
-                catch { /* the mail may have been filed or deleted since */ }
-            }
+            // Clear the Outlook category too, so the two views agree.
+            if (target) await ClearCategoryAsync(item).ConfigureAwait(true);
 
-            Status = target ? "Done" : "Reopened · back in Doing";
+            if (target) _lastDone = item;
+            Status = target
+                ? $"Done · {item.DisplayTitle} · {UndoKey} puts it back"
+                : "Reopened · back in Doing";
             await LoadAsync().ConfigureAwait(true);
+
+            if (target && !IsDoneLog && index >= 0) SelectInColumn(column, index);
         }
         catch (Exception ex)
         {
             Status = $"Could not update: {ex.Message}";
         }
+    }
+
+    private async Task ClearCategoryAsync(ActionItem item)
+    {
+        if (string.IsNullOrEmpty(item.EntryId)) return;
+        try
+        {
+            await _store.SetCategoryAsync(
+                new MailRef(item.EntryId, item.StoreId), _settings.ActionCategory, false).ConfigureAwait(true);
+        }
+        catch { /* the mail may have been filed or deleted since */ }
     }
 
     public async Task CyclePriorityAsync()

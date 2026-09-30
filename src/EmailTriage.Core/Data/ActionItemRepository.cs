@@ -211,7 +211,8 @@ public sealed class ActionItemRepository : IActionItemRepository
             WHERE id = @Id
             """, snapshot, tx, cancellationToken: ct)).ConfigureAwait(false);
 
-        // Waits added since the snapshot go; the ones it held stay as they are.
+        // Waits added since the snapshot go; the ones it held go back to how
+        // they stood, open or closed.
         await conn.ExecuteAsync(new CommandDefinition(
             "DELETE FROM blocking_tasks WHERE action_item_id = @id AND id NOT IN @keep",
             new { id = snapshot.Id, keep = snapshot.Blockers.Select(b => b.Id).ToArray() },
@@ -220,6 +221,15 @@ public sealed class ActionItemRepository : IActionItemRepository
             "DELETE FROM assignments WHERE action_item_id = @id AND id NOT IN @keep",
             new { id = snapshot.Id, keep = snapshot.Assignments.Select(a => a.Id).ToArray() },
             tx, cancellationToken: ct)).ConfigureAwait(false);
+
+        foreach (var blocker in snapshot.Blockers)
+            await conn.ExecuteAsync(new CommandDefinition(
+                "UPDATE blocking_tasks SET resolved_utc = @ResolvedUtc WHERE id = @Id",
+                blocker, tx, cancellationToken: ct)).ConfigureAwait(false);
+        foreach (var assignment in snapshot.Assignments)
+            await conn.ExecuteAsync(new CommandDefinition(
+                "UPDATE assignments SET done_utc = @DoneUtc WHERE id = @Id",
+                assignment, tx, cancellationToken: ct)).ConfigureAwait(false);
 
         await tx.CommitAsync(ct).ConfigureAwait(false);
     }
@@ -235,12 +245,30 @@ public sealed class ActionItemRepository : IActionItemRepository
     public async Task SetCompletedAsync(long id, bool complete, CancellationToken ct = default)
     {
         await using var conn = _db.Open();
+        await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        var when = complete ? (DateTimeOffset?)_clock.UtcNow : null;
+
         await conn.ExecuteAsync(new CommandDefinition(
-            // Completion and the Done column are one fact, so they move together.
+            // Completion and the Done stage are one fact, so they move together.
             // Reopening lands in Doing: it was being worked on before.
             "UPDATE action_items SET completed_utc = @when, stage = @stage WHERE id = @id",
-            new { id, when = complete ? (DateTimeOffset?)_clock.UtcNow : null, stage = complete ? 3 : 1 },
-            cancellationToken: ct)).ConfigureAwait(false);
+            new { id, when, stage = complete ? 3 : 1 }, tx, cancellationToken: ct)).ConfigureAwait(false);
+
+        // A finished item is not waiting on anyone any more, so its open waits
+        // close with it and the by-person report stops counting them. Reopening
+        // leaves them closed: the user says what is still outstanding.
+        if (complete)
+        {
+            await conn.ExecuteAsync(new CommandDefinition(
+                "UPDATE blocking_tasks SET resolved_utc = @when WHERE action_item_id = @id AND resolved_utc IS NULL",
+                new { id, when }, tx, cancellationToken: ct)).ConfigureAwait(false);
+            await conn.ExecuteAsync(new CommandDefinition(
+                "UPDATE assignments SET done_utc = @when WHERE action_item_id = @id AND done_utc IS NULL",
+                new { id, when }, tx, cancellationToken: ct)).ConfigureAwait(false);
+        }
+
+        await tx.CommitAsync(ct).ConfigureAwait(false);
     }
 
     public async Task UpdateStageAsync(long id, ActionStage stage, CancellationToken ct = default)

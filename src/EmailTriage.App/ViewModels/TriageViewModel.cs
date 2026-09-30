@@ -2366,6 +2366,12 @@ public sealed partial class TriageViewModel : ObservableObject
     /// mark done. Found by message rather than trusting the selection, which a
     /// live refresh may have moved since the reply was opened.
     /// </summary>
+    /// <summary>The Message-IDs of the conversation holding <paramref name="mail"/>, for its board card.</summary>
+    public IReadOnlyList<string> ConversationMessageIds(MailRef mail) =>
+        Rows.FirstOrDefault(r => r.InboxMessages.Any(m => m.Ref.EntryId == mail.EntryId))
+            ?.InboxMessages.Select(m => m.InternetMessageId).ToList()
+        ?? new List<string>();
+
     public async Task ArchiveConversationOfAsync(MailRef mail)
     {
         var row = Rows.FirstOrDefault(r => r.InboxMessages.Any(m => m.Ref.EntryId == mail.EntryId));

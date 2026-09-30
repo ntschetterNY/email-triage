@@ -138,7 +138,7 @@ their own letters.
 | `f` | Forward |
 | `Ctrl+G` | **AI draft** - Claude writes the reply from the conversation, or expands notes you typed first. Nothing sends itself |
 | `Ctrl+Enter` | Send |
-| `Ctrl+Shift+Enter` | Send & mark done - archives the conversation |
+| `Ctrl+Shift+Enter` | Send & mark done - archives the conversation and finishes its card on the board |
 | `Ctrl+Shift+L` | Send later |
 | `Ctrl+Shift+F` | **Follow-up** - who owes what, by when; see below |
 | `Ctrl+Shift+T` | Follow-up: toggle tracking it as a task |
@@ -153,7 +153,8 @@ their own letters.
 | `t` | Edit notes |
 | `b` | Add a blocker |
 | `Shift+A` | Assign someone a task |
-| `x` | Mark done |
+| `x` | Mark done - the card leaves the board; `z` puts it back. In the done log, reopens it |
+| `Shift+D` | Done log - everything you have finished, newest first |
 | `Shift+P` | Cycle priority |
 | `o` | Open the original in Outlook |
 | `#` / `Delete` | Delete the card |
@@ -275,6 +276,12 @@ through them. Leave the date empty, or press `Esc`, and nothing happens.
   board in **Waiting**, with a hand-off to that person dated that day. For a
   reply it is the mail you answered; for a brand-new message it is your sent
   copy, which the card picks up once Outlook has filed it in Sent Items.
+
+A finished card (`x`) leaves the board the moment you press the key, so the columns
+only ever hold what still needs a hand. Its open blockers and hand-offs close with
+it. A strip under the board counts what you finished today; `Shift+D` opens the
+full log, newest first, where `x` reopens one and `o` opens its mail. `z` on the
+board puts the last finished card back exactly as it was.
 
 On the day, the card moves to the board's **Follow up** column (the tab reads
 `Action items · 2 to follow up`). Go through them there: `Shift+C` opens a reply

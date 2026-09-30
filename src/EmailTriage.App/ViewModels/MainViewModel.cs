@@ -151,8 +151,11 @@ public sealed partial class MainViewModel : ObservableObject
 
             if (sent.MarkDone)
             {
+                // Its card is finished along with the conversation.
+                var cards = await Actions.CompleteAnyAsync(Triage.ConversationMessageIds(sent.InReplyTo)).ConfigureAwait(true);
                 await Triage.ArchiveConversationOfAsync(sent.InReplyTo).ConfigureAwait(true);
-                status = $"{sent.Message} · {Triage.Status}";
+                status = $"{sent.Message} · {Triage.Status}" + (cards > 0 ? " · card done" : "");
+                if (cards > 0) await Actions.LoadAsync().ConfigureAwait(true);
             }
 
             await Triage.LoadAsync().ConfigureAwait(true);
@@ -1087,6 +1090,8 @@ public sealed partial class MainViewModel : ObservableObject
             case TriageAction.StageForward: await Actions.StepStageAsync(1).ConfigureAwait(true); return true;
             case TriageAction.SetDue: Actions.RequestFocus(FormField.Due); return true;
             case TriageAction.ToggleBoardView: Actions.ToggleByPerson(); return true;
+            case TriageAction.ToggleDoneLog: await Actions.ToggleDoneLogAsync().ConfigureAwait(true); return true;
+            case TriageAction.Undo: await Actions.UndoAsync().ConfigureAwait(true); return true;
             case TriageAction.ClearWait: await Actions.ClearNextWaitAsync().ConfigureAwait(true); return true;
             case TriageAction.Chase: await ChaseSelectedAsync().ConfigureAwait(true); return true;
             case TriageAction.Cancel: await Actions.ClearFilterAsync().ConfigureAwait(true); return true;
@@ -1194,7 +1199,8 @@ public sealed partial class MainViewModel : ObservableObject
         ("Actions", Keys.Describe(TriageAction.AddNote), "Edit notes"),
         ("Actions", Keys.Describe(TriageAction.AddBlocker), "Blocked by - who or what it is waiting on"),
         ("Actions", Keys.Describe(TriageAction.AddAssignment), "Assign to someone else"),
-        ("Actions", Keys.Describe(TriageAction.ToggleComplete), "Mark done"),
+        ("Actions", Keys.Describe(TriageAction.ToggleComplete), "Mark done - the card leaves the board (z puts it back); in the done log, reopens it"),
+        ("Actions", Keys.Describe(TriageAction.ToggleDoneLog), "Done log - everything finished, newest first"),
         ("Actions", Keys.Describe(TriageAction.CyclePriority), "Cycle priority"),
         ("Actions", Keys.Describe(TriageAction.OpenInOutlook), "Open the original in Outlook"),
 
