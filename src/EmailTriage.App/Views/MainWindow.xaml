@@ -353,9 +353,13 @@
                                             </Style>
                                         </Ellipse.Style>
                                     </Ellipse>
-                                    <TextBlock x:Name="Label" Text="{Binding Text}" FontSize="11.5"
+                                    <!-- the countdown ("in 5 min") larger and bold so it reads at a glance -->
+                                    <TextBlock x:Name="Label" FontSize="11.5"
                                                MaxWidth="{Binding DataContext.Calendar.PillMaxWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center"><Run
+                                            Text="{Binding Lead, Mode=OneWay}" /><Run
+                                            Text="{Binding Countdown, Mode=OneWay}" FontSize="15" FontWeight="Bold" /><Run
+                                            Text="{Binding Tail, Mode=OneWay}" /></TextBlock>
                                 </StackPanel>
                             </Border>
                             <DataTemplate.Triggers>

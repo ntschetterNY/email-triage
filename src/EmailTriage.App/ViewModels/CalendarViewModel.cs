@@ -13,32 +13,53 @@ namespace EmailTriage.App.ViewModels;
 /// <summary>How close the next meeting is, for colouring the strip in the top bar.</summary>
 public enum StripState { Clear, Upcoming, Soon, Now }
 
-/// <summary>One meeting in the top bar.</summary>
+/// <summary>
+/// One meeting in the top bar. The line is split around the countdown
+/// ("in 5 min") so the strip can show that part larger and bold.
+/// </summary>
 public sealed partial class MeetingPill : ObservableObject
 {
-    public MeetingPill(CalendarEvent? ev, string text, StripState state)
+    public MeetingPill(CalendarEvent? ev, string lead, string countdown, string tail, StripState state)
     {
         Event = ev;
-        _text = text;
+        _lead = lead;
+        _countdown = countdown;
+        _tail = tail;
         _state = state;
     }
 
     /// <summary>Null for the "No more meetings today" pill.</summary>
     public CalendarEvent? Event { get; }
 
+    /// <summary>Before the countdown: "Next · Design review ".</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(Hint))]
-    private string _text;
+    [NotifyPropertyChangedFor(nameof(Text), nameof(Hint))]
+    private string _lead;
+
+    /// <summary>"in 5 min", or empty when there is nothing to count down to.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Text), nameof(Hint))]
+    private string _countdown;
+
+    /// <summary>After the countdown: " · 14:00 · Room 4".</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Text), nameof(Hint))]
+    private string _tail;
 
     [ObservableProperty] private StripState _state;
+
+    /// <summary>The whole line.</summary>
+    public string Text => Lead + Countdown + Tail;
 
     /// <summary>The tooltip: the whole line, in case it was cut short, and what a click does.</summary>
     public string Hint => $"{Text}\nClick for the details and a Join button";
 
-    public void Update(string text, StripState state)
+    public void Update(MeetingPill from)
     {
-        Text = text;
-        State = state;
+        Lead = from.Lead;
+        Countdown = from.Countdown;
+        Tail = from.Tail;
+        State = from.State;
     }
 }
 
@@ -668,13 +689,13 @@ public sealed partial class CalendarViewModel : ObservableObject
 
         var pills = upcoming.Select((e, i) => PillFor(e, now, first: i == 0)).ToList();
         if (pills.Count == 0 && _loadedAt != DateTimeOffset.MinValue)
-            pills.Add(new MeetingPill(null, "No more meetings today", StripState.Clear));
+            pills.Add(new MeetingPill(null, "No more meetings today", "", "", StripState.Clear));
 
         // Update in place when the same meetings are showing, so the tick
         // does not rebuild the pills (and drop a hover) every 20 seconds.
         if (pills.Select(p => p.Event?.Key).SequenceEqual(Pills.Select(p => p.Event?.Key)))
         {
-            for (var i = 0; i < pills.Count; i++) Pills[i].Update(pills[i].Text, pills[i].State);
+            for (var i = 0; i < pills.Count; i++) Pills[i].Update(pills[i]);
         }
         else
         {
@@ -688,11 +709,12 @@ public sealed partial class CalendarViewModel : ObservableObject
     private static MeetingPill PillFor(CalendarEvent e, DateTimeOffset now, bool first)
     {
         if (e.Start <= now)
-            return new MeetingPill(e, $"Now · {Title(e)} · ends {CalendarMath.Countdown(e.End - now)}", StripState.Now);
+            return new MeetingPill(e, $"Now · {Title(e)} · ends ", CalendarMath.Countdown(e.End - now), "", StripState.Now);
 
         var soon = e.Start - now <= TimeSpan.FromMinutes(5);
-        var text = $"{Title(e)} {CalendarMath.Countdown(e.Start - now)} · {e.Start:HH:mm}{Where(e)}";
-        return new MeetingPill(e, soon || !first ? text : $"Next · {text}", soon ? StripState.Soon : StripState.Upcoming);
+        var lead = soon || !first ? $"{Title(e)} " : $"Next · {Title(e)} ";
+        return new MeetingPill(e, lead, CalendarMath.Countdown(e.Start - now), $" · {e.Start:HH:mm}{Where(e)}",
+            soon ? StripState.Soon : StripState.Upcoming);
     }
 
     private static string Title(CalendarEvent e) =>
