@@ -367,7 +367,9 @@ opens it in the Day view. `5` Agenda lists the next `CalendarDaysAhead` days (14
 default). The arrow keys step a day, week or month, and `Home` comes back to today.
 An unanswered invitation has a dashed amber outline, a tentative one is striped, and a
 declined one is struck through. The pane on the right shows the selected meeting's
-attendees, their answers and the invitation text. The tab opens on the view you used
+attendees, their answers and the invitation text. Click a meeting that's already
+selected, or double-click one, to expand it into a card with the whole subject, its
+Join button, attendees and invitation text. The tab opens on the view you used
 last, or `CalendarView` (`WorkWeek`) the first time. Settings also cover `DefaultEventMinutes` (30),
 `BlockReminderMinutes` (5), and `JoinLeadMinutes` (10), which is how close a meeting
 must be for `Ctrl+J` to join it rather than the one you're in.
