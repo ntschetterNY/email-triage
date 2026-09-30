@@ -120,6 +120,7 @@ public sealed class KeyMap
         ("f5",          TriageAction.Refresh),
         ("shift+oem2",  TriageAction.ShowHelp),
         ("ctrl+oemcomma", TriageAction.OpenSettings),
+        ("ctrl+shift+l", TriageAction.Lavish),
         ("z",           TriageAction.Undo),
         ("ctrl+z",      TriageAction.Undo),
         ("escape",      TriageAction.Cancel),

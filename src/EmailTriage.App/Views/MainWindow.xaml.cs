@@ -46,6 +46,7 @@ public partial class MainWindow : Window
         viewModel.PropertyChanged += OnViewModelChanged;
         viewModel.SavePdfRequested += async (_, _) => await SavePdfAsync();
         viewModel.SettingsRequested += (_, _) => ShowSettings();
+        WireLavish();
         viewModel.Triage.PropertyChanged += OnTriageChanged;
         viewModel.Triage.Palette.PropertyChanged += OnPaletteChanged;
         viewModel.Triage.Capture.PropertyChanged += OnCaptureChanged;
@@ -795,7 +796,8 @@ public partial class MainWindow : Window
         ViewModel.Triage.Palette.IsOpen
         || ViewModel.Triage.Composer.IsOpen
         || ViewModel.Actions.Editor != EditorMode.None
-        || ViewModel.IsHelpVisible;
+        || ViewModel.IsHelpVisible
+        || ViewModel.Lavish.IsAnnotating;
 
     /// <summary>
     /// WebView2 is a native child window, and WPF cannot draw over one: an
@@ -1238,6 +1240,19 @@ public partial class MainWindow : Window
     {
         base.OnPreviewKeyDown(e);
         if (e.Handled) return;
+
+        // Lavish comment mode sits over everything, so it hears keys first.
+        if (IsLavishStroke(KeyStroke.FromEvent(e)))
+        {
+            ViewModel.Lavish.Toggle();
+            e.Handled = true;
+            return;
+        }
+        if (ViewModel.Lavish.IsAnnotating)
+        {
+            HandleLavishKey(e);
+            return;
+        }
 
         // Typing in the action form: its own keys, never shortcuts.
         if (ViewModel.Section == Section.Actions && TryHandleFormKey(e, out var submit))

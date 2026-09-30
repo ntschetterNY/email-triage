@@ -19,6 +19,7 @@ fast filing, a real action list, and snooze.
 | **Write** | `Enter` reply-all, `r` reply-to-sender, `c` a new message, all sent from inside the app. |
 | **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. The Calendar tab shows your day, work week, week or month (keys `1`-`5`), and the top bar counts down to your next meeting. |
 | **AI** (optional) | `Ctrl+G` has Claude draft the reply from the conversation - or from notes you type first - offering times you're free when it's about meeting. `Ctrl+/` asks your inbox a question in plain language. Runs through your own Claude Code sign-in; see below for what leaves the machine. |
+| **Feedback** | The **Lavish** button (top right, `Ctrl+Shift+L`) lets you click any part of the app and say what should change. Each note becomes a GitHub issue, and the Lavish panel follows it through branch, pull request, merge and release. |
 
 ## Requirements
 
@@ -114,6 +115,7 @@ their own letters.
 | `Ctrl+/` | **Ask your inbox** - AI search in plain language, `Esc` shows everything again |
 | `F5` | Refresh |
 | `Ctrl+,` | Settings (also the **⚙ Settings** button in the top bar) |
+| `Ctrl+Shift+L` | **Lavish** - comment on any part of the app (also the **Lavish** button, top right); `Esc` finishes |
 
 ### Triage
 | Key | |
@@ -447,6 +449,40 @@ it runs through, a per-command breakdown, the last 7 and 30 days, and the last
 failure. Cost is Claude Code's list-price estimate: on an API key it is billed, on a
 subscription it only measures how much of your plan's usage went. Every call is
 logged as a JSON line in `%LOCALAPPDATA%\EmailTriage\ai-usage.jsonl` (30 days kept).
+
+### Lavish feedback (`Ctrl+Shift+L`)
+The **Lavish** button at the top right turns the window into something to comment on,
+in the style of [lavish-axi](https://github.com/kunchenguid/lavish-axi): a brass outline
+follows the mouse, a click on any element - a button, a label, a row, the reading pane -
+opens a note card under it, and `Ctrl+Enter` sends. `Esc` drops the note, a second `Esc`
+(or the button again) leaves comment mode. Nothing in the app reacts to keys or clicks
+while it is on, so a stray `e` cannot archive the mail you are writing about.
+
+Each note is filed as an issue on the app's GitHub repo, labelled `lavish`, with the
+element, where it sits, the tab, the app version and a tracking checklist. Issues there
+are public, so **mail never goes into one**: text the app itself shows ("⚙ Settings") is
+included, but anything bound to data - a subject, a sender, a folder name - is only sent
+if you tick *Include what it says*, and the reading pane is never described.
+
+- **Filing.** With a GitHub token - `GH_TOKEN`, `GITHUB_TOKEN`, or a signed-in
+  [`gh`](https://cli.github.com) CLI - the issue is filed straight away under your name.
+  Without one, GitHub's new-issue form opens in your browser already filled in; press
+  *Submit* there. The app stores no GitHub secret of its own.
+- **Tracking.** The panel down the right lists every note you have sent (kept in
+  `%LOCALAPPDATA%\EmailTriage\lavish.json`) and reads their progress back from GitHub
+  when comment mode opens: *Filed › Branch › PR › Merged › Released*. Click one to open
+  the issue. Numbered brass pins mark the elements you commented on this session.
+- **Moving an issue along.** `.github/workflows/lavish.yml` does it from the work itself.
+  Name the branch `lavish-41-short-name` (or use GitHub's *Create a branch* on the
+  issue, which makes `41-…`), and write `Fixes #41` in the pull request. The workflow
+  labels the issue `lavish: branch`, then `lavish: in review`, closes it as
+  `lavish: merged` when the PR merges into `main`, and marks it `lavish: released` once
+  the release workflow ships a build containing that merge.
+- **Repo.** Notes go to the repo the release was built from. `LavishRepo` in
+  `settings.json` points a fork somewhere else.
+
+Lavish only calls GitHub when you send a note or open comment mode with notes to
+check, and it only ever sends what the note card shows.
 
 ### Identity
 Outlook `EntryID`s change whenever an item moves between stores, which is what breaks

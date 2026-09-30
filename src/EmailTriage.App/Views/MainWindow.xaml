@@ -245,7 +245,7 @@
 
     </Window.Resources>
 
-    <Grid>
+    <Grid x:Name="AppRoot">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -253,7 +253,7 @@
         </Grid.RowDefinitions>
 
         <!-- ================= top bar ================= -->
-        <Border Grid.Row="0" Background="{StaticResource Panel}"
+        <Border x:Name="TopBar" Grid.Row="0" Background="{StaticResource Panel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,9">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -430,7 +430,24 @@
                         </Ellipse.Style>
                     </Ellipse>
                     <TextBlock Text="{Binding ConnectionStatus}" FontSize="11"
-                               Foreground="{StaticResource Muted}" />
+                               Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+
+                    <!-- Lavish: comment on anything in the window; it goes to GitHub as an issue -->
+                    <Button x:Name="LavishButton" Style="{StaticResource LavishButton}" Margin="14,0,0,0"
+                            Click="OnLavishButtonClick"
+                            ToolTip="Lavish - click any part of the app and say what should change. It is filed as a GitHub issue you can follow to a release. (Ctrl+Shift+L)">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Lavish" Style="{StaticResource LavishMark}" FontSize="15"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                            <Border Background="{StaticResource LavishBrass}" CornerRadius="8" MinWidth="16" Height="16"
+                                    Padding="4,0" Margin="7,1,0,0" VerticalAlignment="Center"
+                                    Visibility="{Binding Lavish.OpenCount, Converter={StaticResource CountVis}}">
+                                <TextBlock Text="{Binding Lavish.OpenCount}" FontSize="10.5" FontWeight="Bold"
+                                           Foreground="{StaticResource LavishBrassInk}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </Grid>
         </Border>
@@ -1794,7 +1811,7 @@
         </Grid>
 
         <!-- ================= status bar ================= -->
-        <Border Grid.Row="2" Background="{StaticResource Panel}"
+        <Border x:Name="StatusBar" Grid.Row="2" Background="{StaticResource Panel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="14,7">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -2423,6 +2440,230 @@
                                FontSize="11" Foreground="{StaticResource Muted}" Margin="0,14,0,0" />
                 </Grid>
             </Border>
+        </Grid>
+
+        <!-- ================= Lavish =================
+             Comment mode, over everything: the mouse finds elements instead of
+             working them, a brass outline shows which, and a click opens a note
+             card under it. Notes go to GitHub as issues; the panel on the right
+             follows each one through branch, pull request, merge and release. -->
+        <Grid x:Name="LavishLayer" Grid.RowSpan="3"
+              Visibility="{Binding Lavish.IsAnnotating, Converter={StaticResource BoolVis}}">
+            <Canvas x:Name="LavishCanvas" Background="Transparent" ClipToBounds="True" Cursor="Cross"
+                    MouseMove="OnLavishMouseMove" MouseLeave="OnLavishMouseLeave"
+                    MouseLeftButtonDown="OnLavishMouseDown">
+
+                <Border x:Name="LavishHover" BorderBrush="{StaticResource LavishBrass}" BorderThickness="2"
+                        CornerRadius="4" Background="#14F4C95D" IsHitTestVisible="False" Visibility="Collapsed" />
+
+                <Border x:Name="LavishHoverChip" Background="{StaticResource LavishBrass}" CornerRadius="5"
+                        Padding="6,1,6,2" IsHitTestVisible="False" Visibility="Collapsed">
+                    <TextBlock x:Name="LavishHoverText" FontSize="11" FontWeight="SemiBold"
+                               Foreground="{StaticResource LavishBrassInk}" />
+                </Border>
+
+                <!-- the note card, placed under (or over) the picked element -->
+                <Border x:Name="LavishCard" Width="344" Cursor="Arrow"
+                        Background="{StaticResource LavishElevated}" BorderBrush="{StaticResource LavishBorder}"
+                        BorderThickness="1" CornerRadius="14" Padding="14,12,14,12"
+                        Visibility="{Binding Lavish.IsComposing, Converter={StaticResource BoolVis}}">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="40" ShadowDepth="10" Opacity="0.45" Color="Black" />
+                    </Border.Effect>
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock DockPanel.Dock="Right" Style="{StaticResource LavishCaps}" FontWeight="Normal"
+                                       Text="{Binding Lavish.Repo, StringFormat='to {0}'}" />
+                            <TextBlock Text="NOTE" Style="{StaticResource LavishCaps}" />
+                        </DockPanel>
+
+                        <!-- the anchor line: what the note is attached to -->
+                        <Border Background="{StaticResource LavishAnchor}" CornerRadius="8" Padding="9,5" Margin="0,0,0,10">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Lavish.TargetAnchor}" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="{StaticResource LavishBrassHover}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Lavish.TargetPath}" FontSize="11" Margin="0,1,0,0"
+                                           Foreground="{StaticResource LavishMuted}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Border>
+
+                        <Grid>
+                            <TextBox x:Name="LavishCommentBox" Style="{StaticResource LavishInput}"
+                                     MinHeight="84" MaxHeight="220" AcceptsReturn="True" TextWrapping="Wrap"
+                                     Text="{Binding Lavish.Comment, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Text="What should change?" Margin="11,8,0,0" FontSize="13" IsHitTestVisible="False"
+                                       Foreground="{StaticResource LavishLabel}"
+                                       Visibility="{Binding Lavish.Comment.Length, Converter={StaticResource CountVisInv}}" />
+                        </Grid>
+
+                        <CheckBox Style="{StaticResource LavishCheck}" Margin="0,10,0,0"
+                                  IsChecked="{Binding Lavish.IncludeText}"
+                                  Visibility="{Binding Lavish.HasTargetText, Converter={StaticResource BoolVis}}">
+                            <TextBlock FontSize="11.5" Foreground="{StaticResource LavishMuted}" TextWrapping="Wrap" MaxWidth="290">
+                                <Run Text="Include what it says:" />
+                                <Run Text="{Binding Lavish.TargetText, Mode=OneWay}" Foreground="{StaticResource LavishCream}" />
+                            </TextBlock>
+                        </CheckBox>
+
+                        <DockPanel Margin="0,12,0,0" LastChildFill="False">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource LavishPrimary}"
+                                    Command="{Binding Lavish.SendCommand}" Content="{Binding Lavish.SendLabel}" />
+                            <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="11"
+                                       Foreground="{StaticResource LavishLabel}"
+                                       Text="Ctrl+Enter to send · Esc to cancel" />
+                        </DockPanel>
+
+                        <TextBlock Margin="0,10,0,0" FontSize="10.5" TextWrapping="Wrap" Foreground="{StaticResource LavishLabel}"
+                                   Text="Issues are public. Mail is never included - text from a message only goes if you tick it above." />
+                    </StackPanel>
+                </Border>
+            </Canvas>
+
+            <!-- the banner: what comment mode is, and how to leave it -->
+            <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,44" IsHitTestVisible="False"
+                    Background="{StaticResource LavishBar}" BorderBrush="{StaticResource LavishBorder}" BorderThickness="1"
+                    CornerRadius="999" Padding="14,6,16,7"
+                    Visibility="{Binding Lavish.IsComposing, Converter={StaticResource BoolVisInv}}">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="30" ShadowDepth="6" Opacity="0.4" Color="Black" />
+                </Border.Effect>
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="7" Height="7" Fill="{StaticResource LavishBrass}" VerticalAlignment="Center" Margin="0,1,9,0" />
+                    <TextBlock Text="Lavish" Style="{StaticResource LavishMark}" FontSize="15" VerticalAlignment="Center" />
+                    <TextBlock FontSize="12" Foreground="{StaticResource LavishMuted}" VerticalAlignment="Center" Margin="10,1,0,0"
+                               Text="Click anything to comment on it · Esc to finish" />
+                </StackPanel>
+            </Border>
+
+            <!-- the notes panel, down the right like lavish-axi's -->
+            <Border x:Name="LavishPanel" HorizontalAlignment="Right" Width="340" Cursor="Arrow"
+                    Background="{StaticResource LavishBar}" BorderBrush="{StaticResource LavishBorderSubtle}"
+                    BorderThickness="1,0,0,0" MouseEnter="OnLavishPanelEnter"
+                    Visibility="{Binding Lavish.IsPanelOpen, Converter={StaticResource BoolVis}}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" BorderBrush="{StaticResource LavishBorderSubtle}" BorderThickness="0,0,0,1" Padding="16,12,8,10">
+                        <StackPanel>
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource LavishGhost}" Content="✕"
+                                        ToolTip="Finish commenting (Esc)" Click="OnLavishButtonClick" />
+                                <Button DockPanel.Dock="Right" Style="{StaticResource LavishGhost}" Content="›"
+                                        ToolTip="Fold the panel away" Command="{Binding Lavish.TogglePanelCommand}" />
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
+                                    <TextBlock Text="Lavish" Style="{StaticResource LavishMark}" FontSize="22" />
+                                    <TextBlock Text="FEEDBACK" Style="{StaticResource LavishCaps}" Foreground="{StaticResource LavishMuted}"
+                                               VerticalAlignment="Bottom" Margin="8,0,0,4" />
+                                </StackPanel>
+                            </DockPanel>
+                            <DockPanel Margin="0,4,0,0">
+                                <Button DockPanel.Dock="Right" Style="{StaticResource LavishGhost}" Content="All on GitHub ↗"
+                                        Command="{Binding Lavish.OpenBoardCommand}" />
+                                <TextBlock Text="{Binding Lavish.Repo}" FontSize="11.5" Foreground="{StaticResource LavishLabel}"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Grid.Row="1" Margin="18,18" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource LavishMuted}"
+                               Visibility="{Binding Lavish.Notes.Count, Converter={StaticResource CountVisInv}}"
+                               Text="No notes yet. Click any part of the window - a button, a label, a row - and say what should change. Each note becomes a GitHub issue, and this panel follows it through branch, pull request, merge and release." />
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="12,12,12,4"
+                                  Visibility="{Binding Lavish.Notes.Count, Converter={StaticResource CountVis}}">
+                        <ItemsControl ItemsSource="{Binding Lavish.Notes}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border x:Name="Note" Background="{StaticResource LavishInk}" BorderBrush="{StaticResource LavishBorderSubtle}"
+                                            BorderThickness="1" CornerRadius="12" Padding="12,10" Margin="0,0,0,8" Cursor="Hand"
+                                            ToolTip="Open on GitHub" MouseLeftButtonUp="OnLavishNoteClick">
+                                        <StackPanel>
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Right" Text="{Binding When}" FontSize="11"
+                                                           Foreground="{StaticResource LavishLabel}" />
+                                                <TextBlock Text="{Binding Number}" FontSize="12" FontWeight="Bold" Margin="0,0,6,0"
+                                                           Foreground="{StaticResource LavishBrass}" />
+                                                <TextBlock Text="{Binding Anchor}" FontSize="11.5" Foreground="{StaticResource LavishLabel}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding Comment}" FontSize="12.5" Margin="0,5,0,9" TextWrapping="Wrap"
+                                                       MaxHeight="54" TextTrimming="CharacterEllipsis"
+                                                       Foreground="{StaticResource LavishCream}" />
+
+                                            <!-- how far it has got: Filed › Branch › PR › Merged › Released -->
+                                            <ItemsControl x:Name="Steps" ItemsSource="{Binding Steps}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel Orientation="Horizontal" Margin="0,0,9,0">
+                                                            <Ellipse x:Name="Dot" Width="7" Height="7" Margin="0,1,5,0" VerticalAlignment="Center"
+                                                                     Fill="{StaticResource LavishBorder}" />
+                                                            <TextBlock x:Name="Step" Text="{Binding Label}" FontSize="10.5"
+                                                                       Foreground="{StaticResource LavishLabel}" />
+                                                        </StackPanel>
+                                                        <DataTemplate.Triggers>
+                                                            <DataTrigger Binding="{Binding Reached}" Value="True">
+                                                                <Setter TargetName="Dot" Property="Fill" Value="{StaticResource LavishBrass}" />
+                                                                <Setter TargetName="Step" Property="Foreground" Value="{StaticResource LavishCream}" />
+                                                            </DataTrigger>
+                                                        </DataTemplate.Triggers>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+
+                                            <TextBlock x:Name="Aside" Text="{Binding StageText}" FontSize="11" Margin="0,6,0,0"
+                                                       Foreground="{StaticResource LavishLabel}" Visibility="Collapsed" />
+                                        </StackPanel>
+                                    </Border>
+                                    <DataTemplate.Triggers>
+                                        <!-- not submitted yet: dashed, lavish-axi's word for "not delivered" -->
+                                        <DataTrigger Binding="{Binding Stage}" Value="Draft">
+                                            <Setter TargetName="Note" Property="Background" Value="Transparent" />
+                                            <Setter TargetName="Note" Property="BorderBrush" Value="{StaticResource LavishBorder}" />
+                                            <Setter TargetName="Steps" Property="Visibility" Value="Collapsed" />
+                                            <Setter TargetName="Aside" Property="Visibility" Value="Visible" />
+                                            <Setter TargetName="Aside" Property="Text" Value="Not submitted yet - press Submit on GitHub, then it shows up here" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Stage}" Value="Declined">
+                                            <Setter TargetName="Note" Property="Opacity" Value="0.6" />
+                                            <Setter TargetName="Steps" Property="Visibility" Value="Collapsed" />
+                                            <Setter TargetName="Aside" Property="Visibility" Value="Visible" />
+                                            <Setter TargetName="Aside" Property="Text" Value="Closed without a change" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <Border Grid.Row="2" BorderBrush="{StaticResource LavishBorderSubtle}" BorderThickness="0,1,0,0" Padding="16,10,16,12">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Lavish.Status}" FontSize="11.5" TextWrapping="Wrap"
+                                       Foreground="{StaticResource LavishMuted}" Margin="0,0,0,6"
+                                       Visibility="{Binding Lavish.Status.Length, Converter={StaticResource CountVis}}" />
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource LavishGhost}" Content="Refresh"
+                                        Command="{Binding Lavish.RefreshCommand}" />
+                                <TextBlock Text="Ctrl+Shift+L or Esc to finish" FontSize="11"
+                                           Foreground="{StaticResource LavishLabel}" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <!-- the panel folded away: a tab at the right edge brings it back -->
+            <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,64,0,0" Style="{StaticResource LavishButton}"
+                    Command="{Binding Lavish.TogglePanelCommand}" ToolTip="Show your notes"
+                    Visibility="{Binding Lavish.IsPanelOpen, Converter={StaticResource BoolVisInv}}">
+                <TextBlock Text="‹ Notes" FontSize="12" Foreground="{StaticResource LavishCream}" />
+            </Button>
         </Grid>
     </Grid>
 </Window>

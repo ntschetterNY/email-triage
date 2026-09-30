@@ -1,0 +1,163 @@
+# Lavish: comments sent from the app's Lavish button arrive as issues. This
+# moves each one along as work happens, so the app's Lavish panel (and the
+# issue itself) shows where it stands:
+#
+#   lavish: filed -> lavish: branch -> lavish: in review -> lavish: merged -> lavish: released
+#
+# An issue is linked to work by its number: a branch named `lavish-41-...` or
+# `41-...` (what GitHub's "Create a branch" button makes), or a pull request
+# into main that says `Fixes #41`.
+name: Lavish
+
+on:
+  issues:
+    types: [opened]
+  create:
+  # _target so pull requests from forks may label too; it never checks out their code.
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, closed]
+    branches: [main]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions:
+  issues: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: lavish
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'create' || github.event.ref_type == 'branch'
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const STAGES = ['lavish: filed', 'lavish: branch', 'lavish: in review', 'lavish: merged', 'lavish: released'];
+            const COLORS = ['d8deea', 'f4c95d', 'ffd877', '8fe39e', '315f3a'];
+            const TICKS = { 'lavish: branch': ['Branch'],
+                            'lavish: in review': ['Branch', 'Pull request'],
+                            'lavish: merged': ['Branch', 'Pull request', 'Merged into `main`'],
+                            'lavish: released': ['Branch', 'Pull request', 'Merged into `main`', 'Released'] };
+
+            async function ensureLabels() {
+              const wanted = [['lavish', 'f4c95d', 'Sent from the Lavish button in the app'],
+                              ...STAGES.map((s, i) => [s, COLORS[i], 'Where this Lavish note stands'])];
+              for (const [name, color, description] of wanted) {
+                try { await github.rest.issues.createLabel({ owner, repo, name, color, description }); }
+                catch (e) { if (e.status !== 422) throw e; } // already there
+              }
+            }
+
+            async function lavishIssue(number) {
+              try {
+                const { data } = await github.rest.issues.get({ owner, repo, issue_number: number });
+                if (data.pull_request) return null;
+                return data.labels.some(l => l.name === 'lavish') ? data : null;
+              } catch (e) { if (e.status === 404) return null; throw e; }
+            }
+
+            // Moves an issue forward to `stage` (never back), ticks its tracking list, and comments.
+            async function advance(issue, stage, comment) {
+              const current = issue.labels.map(l => l.name).filter(n => STAGES.includes(n));
+              const at = Math.max(-1, ...current.map(n => STAGES.indexOf(n)));
+              if (STAGES.indexOf(stage) <= at) return false;
+
+              for (const old of current)
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: issue.number, name: old }).catch(() => {});
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: [stage] });
+
+              let body = issue.body || '';
+              for (const item of TICKS[stage] || []) body = body.split(`- [ ] ${item}`).join(`- [x] ${item}`);
+              if (body !== (issue.body || ''))
+                await github.rest.issues.update({ owner, repo, issue_number: issue.number, body });
+
+              if (comment) await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: comment });
+              core.info(`#${issue.number} -> ${stage}`);
+              return true;
+            }
+
+            // `lavish-41-...`, `41-...`, `feature/lavish-41`: the issue a branch is for.
+            function fromBranch(ref) {
+              const m = /(?:^|\/)(?:lavish-)?(\d+)(?:-|$)/i.exec(ref || '');
+              return m ? [Number(m[1])] : [];
+            }
+
+            function fromText(text) {
+              const found = [];
+              const re = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b/gi;
+              for (let m; (m = re.exec(text || '')); ) found.push(Number(m[1]));
+              return found;
+            }
+
+            await ensureLabels();
+            const ev = context.eventName;
+            const p = context.payload;
+
+            if (ev === 'issues') {
+              // Notes filed in the browser carry the marker but may not get the label from the form.
+              const issue = p.issue;
+              if (!/<!--\s*lavish:[0-9a-f]{32}\s*-->/i.test(issue.body || '')) return;
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: ['lavish', 'lavish: filed'] });
+              return;
+            }
+
+            if (ev === 'create') {
+              for (const n of fromBranch(p.ref)) {
+                const issue = await lavishIssue(n);
+                if (issue) await advance(issue, 'lavish: branch',
+                  `🌿 Work has started on branch [\`${p.ref}\`](https://github.com/${owner}/${repo}/tree/${encodeURIComponent(p.ref)}).`);
+              }
+              return;
+            }
+
+            if (ev === 'pull_request_target') {
+              const pr = p.pull_request;
+              const numbers = [...new Set([...fromText(`${pr.title}\n${pr.body}`), ...fromBranch(pr.head.ref)])];
+              for (const n of numbers) {
+                const issue = await lavishIssue(n);
+                if (!issue) continue;
+
+                if (p.action === 'closed') {
+                  if (!pr.merged) continue;
+                  await advance(issue, 'lavish: merged',
+                    `✅ Merged into \`main\` in #${pr.number}. It goes out with the next release, and the app updates itself on its next launch.` +
+                    `\n<!-- lavish-merge:${pr.merge_commit_sha} -->`);
+                  if (issue.state === 'open')
+                    await github.rest.issues.update({ owner, repo, issue_number: n, state: 'closed', state_reason: 'completed' });
+                } else if (!pr.draft) {
+                  await advance(issue, 'lavish: in review', `🔍 Pull request #${pr.number} is up for this.`);
+                }
+              }
+              return;
+            }
+
+            if (ev === 'workflow_run') {
+              if (p.workflow_run.conclusion !== 'success') return;
+              let tag = '';
+              try { tag = (await github.rest.repos.getLatestRelease({ owner, repo })).data.tag_name; } catch {}
+              const merged = await github.paginate(github.rest.issues.listForRepo,
+                { owner, repo, labels: 'lavish: merged', state: 'all', per_page: 100 });
+              const shipped = p.workflow_run.head_sha;
+              for (const issue of merged) {
+                if (issue.pull_request) continue;
+
+                // Only if this release was built from a commit that has the merge in it.
+                const comments = await github.paginate(github.rest.issues.listComments,
+                  { owner, repo, issue_number: issue.number, per_page: 100 });
+                const sha = comments.map(c => /<!-- lavish-merge:([0-9a-f]{40}) -->/.exec(c.body || '')).find(Boolean)?.[1];
+                if (sha) {
+                  const { data } = await github.rest.repos.compareCommits({ owner, repo, base: sha, head: shipped });
+                  if (!['ahead', 'identical'].includes(data.status)) continue;
+                }
+
+                await advance(issue, 'lavish: released',
+                  `🚀 Released${tag ? ` in [${tag}](https://github.com/${owner}/${repo}/releases/tag/${tag})` : ''}. Installed copies pick it up the next time they start.`);
+              }
+            }

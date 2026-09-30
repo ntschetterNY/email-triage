@@ -116,4 +116,169 @@
         </Setter>
     </Style>
 
+    <!-- ================= Lavish =================
+         The comment layer borrows lavish-axi's look (github.com/kunchenguid/lavish-axi):
+         warm ink panels, a brass accent, cream text and an italic serif wordmark, so it
+         reads as a tool laid over the app rather than part of it. -->
+    <Color x:Key="LavishInkColor">#0F1115</Color>
+    <Color x:Key="LavishBarColor">#171A21</Color>
+    <Color x:Key="LavishElevatedColor">#1C212B</Color>
+    <Color x:Key="LavishBorderColor">#303745</Color>
+    <Color x:Key="LavishBrassColor">#F4C95D</Color>
+
+    <SolidColorBrush x:Key="LavishInk" Color="{StaticResource LavishInkColor}" />
+    <SolidColorBrush x:Key="LavishBar" Color="{StaticResource LavishBarColor}" />
+    <SolidColorBrush x:Key="LavishElevated" Color="{StaticResource LavishElevatedColor}" />
+    <SolidColorBrush x:Key="LavishBorder" Color="{StaticResource LavishBorderColor}" />
+    <SolidColorBrush x:Key="LavishBorderSubtle" Color="#2A2F3A" />
+    <SolidColorBrush x:Key="LavishCream" Color="#F7F3EA" />
+    <SolidColorBrush x:Key="LavishMuted" Color="#D8DEEA" />
+    <SolidColorBrush x:Key="LavishLabel" Color="#8C96AA" />
+    <SolidColorBrush x:Key="LavishBrass" Color="{StaticResource LavishBrassColor}" />
+    <SolidColorBrush x:Key="LavishBrassHover" Color="#FFD877" />
+    <SolidColorBrush x:Key="LavishBrassInk" Color="#17130A" />
+    <!-- The amber wash lavish-axi puts behind a note's anchor line. -->
+    <SolidColorBrush x:Key="LavishAnchor" Color="#805D4D1B" />
+
+    <FontFamily x:Key="LavishSerif">EB Garamond, Iowan Old Style, Georgia</FontFamily>
+
+    <!-- The wordmark: italic serif, as on lavish-axi's bar. -->
+    <Style x:Key="LavishMark" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource LavishSerif}" />
+        <Setter Property="FontStyle" Value="Italic" />
+        <Setter Property="FontSize" Value="17" />
+        <Setter Property="Foreground" Value="{StaticResource LavishCream}" />
+    </Style>
+
+    <!-- Small uppercase labels ("NOTE", "FEEDBACK"). -->
+    <Style x:Key="LavishCaps" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource LavishLabel}" />
+    </Style>
+
+    <!-- The top-bar button. Tag="on" while comment mode is on: brass, like lavish-axi's Annotate switch. -->
+    <Style x:Key="LavishButton" TargetType="Button">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Foreground" Value="{StaticResource LavishCream}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="B" Background="{StaticResource LavishBar}" BorderBrush="{StaticResource LavishBorder}"
+                            BorderThickness="1" CornerRadius="9" Padding="10,1,8,2">
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource LavishBrass}" />
+                        </Trigger>
+                        <Trigger Property="Tag" Value="on">
+                            <Setter TargetName="B" Property="Background" Value="{StaticResource LavishBrass}" />
+                            <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource LavishBrass}" />
+                            <Setter Property="Foreground" Value="{StaticResource LavishBrassInk}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- The one filled button: brass with dark ink, radius 10. -->
+    <Style x:Key="LavishPrimary" TargetType="Button">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="B" Background="{StaticResource LavishBrass}" CornerRadius="10" Padding="14,7">
+                        <TextBlock Text="{TemplateBinding Content}" FontSize="12.5" FontWeight="Bold"
+                                   Foreground="{StaticResource LavishBrassInk}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="{StaticResource LavishBrassHover}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="B" Property="Opacity" Value="0.55" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Quiet text buttons: close, open on GitHub. -->
+    <Style x:Key="LavishGhost" TargetType="Button">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="B" Background="Transparent" CornerRadius="8" Padding="8,4">
+                        <TextBlock x:Name="T" Text="{TemplateBinding Content}" FontSize="12"
+                                   Foreground="{StaticResource LavishLabel}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="{StaticResource LavishElevated}" />
+                            <Setter TargetName="T" Property="Foreground" Value="{StaticResource LavishCream}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- The comment box: ink well, radius 12, brass when focused. -->
+    <Style x:Key="LavishInput" TargetType="TextBox">
+        <Setter Property="Foreground" Value="{StaticResource LavishCream}" />
+        <Setter Property="CaretBrush" Value="{StaticResource LavishBrass}" />
+        <Setter Property="SelectionBrush" Value="{StaticResource LavishBrass}" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="B" Background="{StaticResource LavishInk}" BorderBrush="{StaticResource LavishBorder}"
+                            BorderThickness="1" CornerRadius="12" Padding="8,7">
+                        <ScrollViewer x:Name="PART_ContentHost" VerticalScrollBarVisibility="Auto" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource LavishBrass}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="LavishCheck" TargetType="CheckBox">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <StackPanel Orientation="Horizontal" Background="Transparent">
+                        <Border x:Name="Box" Width="14" Height="14" CornerRadius="4" VerticalAlignment="Top" Margin="0,1,8,0"
+                                BorderBrush="{StaticResource LavishBorder}" BorderThickness="1" Background="{StaticResource LavishInk}">
+                            <TextBlock x:Name="Tick" Text="✓" FontSize="10" FontWeight="Bold" Visibility="Collapsed"
+                                       Foreground="{StaticResource LavishBrassInk}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ContentPresenter />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Box" Property="Background" Value="{StaticResource LavishBrass}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource LavishBrass}" />
+                            <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
 </ResourceDictionary>
