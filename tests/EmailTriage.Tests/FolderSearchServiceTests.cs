@@ -131,6 +131,47 @@ public class FolderSearchServiceTests
     }
 
     [Fact]
+    public async Task Only_the_top_three_matching_parents_expand()
+    {
+        var (service, store, _) = Build();
+        // Five parents whose leaf name contains "site", each with one subfolder.
+        for (var i = 1; i <= 5; i++)
+        {
+            store.Folders.Add(Node($@"Mailbox\Sites\Site {i}", 2));
+            store.Folders.Add(Node($@"Mailbox\Sites\Site {i}\Docs", 3));
+        }
+        await service.EnsureIndexedAsync();
+
+        var results = service.Search("site");
+        var expandedParents = results
+            .Where(m => m.Indent == 0
+                && results.Any(c => c.Indent == 1
+                    && c.Folder.Path.StartsWith(m.Folder.Path + "\\", StringComparison.OrdinalIgnoreCase)))
+            .Count();
+
+        Assert.Equal(3, expandedParents);
+    }
+
+    [Fact]
+    public async Task No_more_than_sixty_subfolders_are_listed_under_a_parent()
+    {
+        var (service, store, _) = Build();
+        store.Folders.Add(Node(@"Mailbox\Projects\Portfolio", 2));
+        for (var i = 0; i < 75; i++)
+        {
+            store.Folders.Add(Node($@"Mailbox\Projects\Portfolio\Job {i:D3}", 3));
+        }
+        await service.EnsureIndexedAsync();
+
+        var results = service.Search("portfolio");
+        var subfolders = results.Count(m =>
+            m.Indent > 0
+            && m.Folder.Path.StartsWith(@"Mailbox\Projects\Portfolio\", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(60, subfolders);
+    }
+
+    [Fact]
     public async Task Returns_nothing_when_there_is_no_match()
     {
         var (service, _, _) = Build();
