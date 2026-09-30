@@ -46,7 +46,19 @@ public partial class MainWindow : Window
         viewModel.PropertyChanged += OnViewModelChanged;
         viewModel.SavePdfRequested += async (_, _) => await SavePdfAsync();
         viewModel.SettingsRequested += (_, _) => ShowSettings();
-        WireLavish();
+        LavishLayer.Attach(viewModel.Lavish, viewModel.Keys, AppRoot, LavishButton,
+            area: () => ViewModel.Section switch
+            {
+                Section.Actions => "Action items",
+                Section.Calendar => "Calendar",
+                _ => "Triage",
+            },
+            // The reading panes are pictures of mail while Lavish is on; never described.
+            privateKind: el => ReferenceEquals(el, BodySnapshot) || ReferenceEquals(el, ActionBodySnapshot) ? "Reading pane" : null);
+        viewModel.Lavish.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(LavishViewModel.IsAnnotating)) _ = UpdateAirspaceAsync();
+        };
         viewModel.Triage.PropertyChanged += OnTriageChanged;
         viewModel.Triage.Palette.PropertyChanged += OnPaletteChanged;
         viewModel.Triage.Capture.PropertyChanged += OnCaptureChanged;
@@ -584,9 +596,11 @@ public partial class MainWindow : Window
 
     private void OnSettingsClick(object sender, RoutedEventArgs e) => ShowSettings();
 
+    private void OnLavishButtonClick(object sender, RoutedEventArgs e) => LavishLayer.Toggle();
+
     private void ShowSettings()
     {
-        new SettingsWindow(ViewModel.CreateSettings()) { Owner = this }.ShowDialog();
+        new SettingsWindow(ViewModel.CreateSettings(), ViewModel.Lavish, ViewModel.Keys) { Owner = this }.ShowDialog();
     }
 
     // ---- calendar ------------------------------------------------------------
@@ -1241,18 +1255,9 @@ public partial class MainWindow : Window
         base.OnPreviewKeyDown(e);
         if (e.Handled) return;
 
-        // Lavish comment mode sits over everything, so it hears keys first.
-        if (IsLavishStroke(KeyStroke.FromEvent(e)))
-        {
-            ViewModel.Lavish.Toggle();
-            e.Handled = true;
-            return;
-        }
-        if (ViewModel.Lavish.IsAnnotating)
-        {
-            HandleLavishKey(e);
-            return;
-        }
+        // Lavish sits over everything, so it hears keys first: its chord works
+        // over any pop-up, and while it is on nothing else hears them.
+        if (LavishLayer.HandleKey(e)) return;
 
         // Typing in the action form: its own keys, never shortcuts.
         if (ViewModel.Section == Section.Actions && TryHandleFormKey(e, out var submit))

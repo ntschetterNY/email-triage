@@ -8,6 +8,7 @@
         Background="{StaticResource Panel}"
         BorderBrush="{StaticResource Border}" BorderThickness="1"
         UseLayoutRounding="True"
+        xmlns:views="clr-namespace:EmailTriage.App.Views"
         TextOptions.TextRenderingMode="ClearType">
 
     <Window.Resources>
@@ -40,6 +41,7 @@
         </Style>
     </Window.Resources>
 
+    <Grid x:Name="WindowRoot">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="18,16,18,18">
             <Button x:Name="JoinButton" Content="{Binding JoinText}" Click="OnJoinClick" IsDefault="True"
@@ -62,6 +64,12 @@
                 <Button Content="Open in Outlook" Click="OnOutlookClick" Margin="0,0,8,0" Style="{StaticResource ReportButton}" />
                 <Button Content="Show in Calendar" Click="OnCalendarClick" Margin="0,0,8,0" Style="{StaticResource ReportButton}" />
                 <Button Content="Close" Click="OnCloseClick" Style="{StaticResource ReportButton}" ToolTip="Esc" />
+                <Button x:Name="LavishButton" Style="{StaticResource LavishButton}" Margin="8,0,0,0"
+                        Click="OnLavishButtonClick"
+                        ToolTip="Lavish - comment on this card; it is filed as a GitHub issue. (Ctrl+Shift+L)">
+                    <TextBlock Text="Lavish" Style="{StaticResource LavishMark}" FontSize="14"
+                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                </Button>
             </StackPanel>
 
             <!-- who is coming -->
@@ -114,4 +122,8 @@
             </Border>
         </StackPanel>
     </ScrollViewer>
+
+    <!-- Lavish comment mode over the card; it grows to fit the note card while one is open -->
+    <views:LavishOverlay x:Name="LavishLayer" />
+    </Grid>
 </Window>

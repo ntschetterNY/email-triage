@@ -79,16 +79,25 @@ public sealed partial class LavishViewModel : ObservableObject
     /// <summary>The window drops a numbered pin on the element once its note is away.</summary>
     public event EventHandler<LavishNote>? NoteSent;
 
-    public void Toggle()
+    /// <summary>
+    /// The window comment mode is running in - the main window, Settings, a
+    /// meeting card. Each has its own Lavish layer; only this one's is shown.
+    /// </summary>
+    [ObservableProperty] private object? _host;
+
+    /// <summary>The Lavish button or Ctrl+Shift+L in <paramref name="host"/>: on there, or off wherever it is.</summary>
+    public void Toggle(object host)
     {
         if (IsAnnotating) Stop();
-        else Start();
+        else Start(host);
     }
 
-    public void Start()
+    public void Start(object host)
     {
+        Cancel();
+        Host = host;
         IsAnnotating = true;
-        Status = "Click anything to comment on it.";
+        Status = "Click anything to comment on it · Esc to finish";
         if (DateTimeOffset.Now - _refreshedAt > RefreshEvery) _ = RefreshAsync();
     }
 
