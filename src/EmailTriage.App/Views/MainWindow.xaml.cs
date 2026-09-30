@@ -689,11 +689,23 @@ public partial class MainWindow : Window
     private void OnCalendarNew(object sender, RoutedEventArgs e) => ViewModel.NewCalendarEntry();
 
     /// <summary>A meeting in the grid, the all-day row or a month cell: show it, joining it if it is on.</summary>
+    /// <summary>
+    /// A meeting in the grid, a month cell or the all-day row. The first click
+    /// selects it (and joins one about to start); a click on the meeting
+    /// already selected - or a double-click - expands it into its card.
+    /// </summary>
     private async void OnCalendarItemClick(object sender, MouseButtonEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is not CalendarItem item) return;
+        if (sender is not FrameworkElement { DataContext: CalendarItem item } element) return;
 
         e.Handled = true; // not also the month day underneath
+        if (item.IsSelected)
+        {
+            var card = ViewModel.Calendar.OpenCard(item.Event);
+            new MeetingWindow(ViewModel, card) { Owner = this }.ShowUnder(element);
+            return;
+        }
+
         Focus();
         await ViewModel.Calendar.ClickAsync(item.Event);
     }
