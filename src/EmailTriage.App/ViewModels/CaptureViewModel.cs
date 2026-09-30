@@ -93,8 +93,8 @@ public sealed partial class CaptureViewModel : ObservableObject
     public DateTimeOffset? Due => Parse(DueText);
 
     public string DuePreview => DueText.Trim().Length == 0
-        ? _existingDue is { } kept ? $"keeps {kept.ToLocalTime():ddd d MMM}" : "e.g. fri, 3d, 14 oct"
-        : Due is { } d ? d.ToLocalTime().ToString("dddd d MMM") : "not a date I understand";
+        ? _existingDue is { } kept ? $"keeps {When(kept)}" : "e.g. fri 2pm, 3d, 14 oct"
+        : Due is { } d ? When(d) : "not a date I understand";
 
     /// <summary>The chase day: typed, or worked out from the due date and settings.</summary>
     public DateTimeOffset? FollowUp => FollowUpText.Trim().Length > 0
@@ -105,8 +105,11 @@ public sealed partial class CaptureViewModel : ObservableObject
             : null;
 
     public string FollowUpPreview => FollowUpText.Trim().Length == 0
-        ? FollowUp is { } f ? $"{f.ToLocalTime():dddd d MMM} unless you say otherwise" : "no chase"
-        : FollowUp is { } d ? d.ToLocalTime().ToString("dddd d MMM") : "not a date I understand";
+        ? FollowUp is { } f ? $"{When(f)} unless you say otherwise" : "no chase"
+        : FollowUp is { } d ? When(d) : "not a date I understand";
+
+    /// <summary>"Friday 2 Oct 14:00": the time too, since that is when the mail comes back.</summary>
+    private static string When(DateTimeOffset when) => when.ToLocalTime().ToString("dddd d MMM HH:mm");
 
     public string PriorityLabel => $"Priority  {Priority}";
 
@@ -188,12 +191,12 @@ public sealed partial class CaptureViewModel : ObservableObject
     {
         if (DueText.Trim().Length > 0 && Due is null)
         {
-            Problem = "Due: not a date I understand - try \"fri\", \"14 oct\" or \"3d\"";
+            Problem = "Due: not a date I understand - try \"fri\", \"fri 2pm\", \"14 oct\" or \"3d\"";
             return null;
         }
         if (FollowUpText.Trim().Length > 0 && Parse(FollowUpText) is null)
         {
-            Problem = "Follow up: not a date I understand - try \"wed\", \"1 oct\" or \"2d\"";
+            Problem = "Follow up: not a date I understand - try \"wed\", \"wed 10am\", \"1 oct\" or \"2d\"";
             return null;
         }
 
