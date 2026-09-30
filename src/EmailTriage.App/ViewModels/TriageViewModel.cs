@@ -1429,7 +1429,11 @@ public sealed partial class TriageViewModel : ObservableObject
         ActionItem? existing = null;
         if (rows.Count == 1)
         {
-            try { existing = await _actions.GetByMessageIdAsync(rows[0].Summary.InternetMessageId).ConfigureAwait(true); }
+            try
+            {
+                var mail = await FlaggedMailAsync(rows[0]).ConfigureAwait(true);
+                existing = await _actions.GetByMessageIdAsync(mail.InternetMessageId).ConfigureAwait(true);
+            }
             catch { /* the popup works without it */ }
         }
 
@@ -1521,17 +1525,18 @@ public sealed partial class TriageViewModel : ObservableObject
 
         string? error = null;
         var results = new List<ActionItem>();
-        var changed = new List<(MailRowViewModel Row, ActionItem? Removed, ActionItem? Previous)>();
+        var changed = new List<(MailRowViewModel Row, IReadOnlyList<ActionItem> Removed, ActionItem? Previous)>();
         foreach (var row in rows)
         {
             try
             {
-                var outcome = await SetActionRequiredAsync(row.Summary, required, row, before[row], capture).ConfigureAwait(true);
+                var mail = required ? await FlaggedMailAsync(row).ConfigureAwait(true) : row.Summary;
+                var outcome = await SetActionRequiredAsync(mail, required, row, before[row], capture).ConfigureAwait(true);
                 if (outcome.Result is not null) results.Add(outcome.Result);
 
                 if (before[row] != required) changed.Add((row, outcome.Removed, null));
                 // Already flagged: the popup edited the card, so undo puts it back as it was.
-                else if (outcome.Previous is not null) changed.Add((row, null, outcome.Previous));
+                else if (outcome.Previous is not null) changed.Add((row, Array.Empty<ActionItem>(), outcome.Previous));
             }
             catch (Exception ex)
             {
@@ -1553,11 +1558,14 @@ public sealed partial class TriageViewModel : ObservableObject
                     }
 
                     row.IsActionRequired = !required;
-                    if (removed is not null)
+                    if (removed.Count > 0)
                     {
-                        // Put the task back as it was, notes and priority included.
-                        await _actions.UpsertAsync(removed).ConfigureAwait(true);
-                        _ = SetCategoryInBackgroundAsync(row, row.Summary.Ref, true, false);
+                        // Put the tasks back as they were, notes and priority included.
+                        foreach (var card in removed)
+                        {
+                            await _actions.UpsertAsync(card).ConfigureAwait(true);
+                            _ = SetCategoryInBackgroundAsync(row, MailOf(row, card).Ref, true, false);
+                        }
                     }
                     else
                     {
@@ -1572,16 +1580,38 @@ public sealed partial class TriageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// What flagging changed: the task that clearing the flag removed, the
+    /// What flagging changed: the tasks that clearing the flag removed, the
     /// card as it stood before the popup edited it, and the card as it is now.
     /// </summary>
-    private sealed record FlagOutcome(ActionItem? Removed, ActionItem? Previous, ActionItem? Result);
+    private sealed record FlagOutcome(IReadOnlyList<ActionItem> Removed, ActionItem? Previous, ActionItem? Result);
+
+    /// <summary>
+    /// The mail in the conversation the row's card hangs on. A reply after
+    /// flagging makes the newest mail a different one while the card stays on
+    /// the mail that was flagged; with no open card it is the newest mail.
+    /// </summary>
+    private async Task<MailSummary> FlaggedMailAsync(MailRowViewModel row)
+    {
+        foreach (var mail in row.InboxMessages)
+        {
+            if (mail.InternetMessageId.Length == 0) continue;
+            if (await _actions.GetByMessageIdAsync(mail.InternetMessageId).ConfigureAwait(true) is { IsComplete: false })
+                return mail;
+        }
+        return row.Summary;
+    }
+
+    /// <summary>The mail in the row a card was filed on, or the newest one.</summary>
+    private static MailSummary MailOf(MailRowViewModel row, ActionItem card) =>
+        row.InboxMessages.FirstOrDefault(m =>
+            string.Equals(m.InternetMessageId, card.InternetMessageId, StringComparison.OrdinalIgnoreCase))
+        ?? row.Summary;
 
     private async Task<FlagOutcome> SetActionRequiredAsync(
         MailSummary summary, bool required, MailRowViewModel? row = null, bool wasActionRequired = false,
         CaptureRequest? capture = null)
     {
-        ActionItem? removed = null;
+        var removed = new List<ActionItem>();
         ActionItem? previous = null;
         ActionItem? result = null;
 
@@ -1619,7 +1649,21 @@ public sealed partial class TriageViewModel : ObservableObject
             if (existing is not null)
             {
                 await _actions.DeleteAsync(existing.Id).ConfigureAwait(true);
-                removed = existing;
+                removed.Add(existing);
+            }
+
+            // The row is flagged by an open card on any of its mails, not only
+            // the newest, so clearing it has to clear those too.
+            foreach (var mail in row?.InboxMessages ?? Array.Empty<MailSummary>())
+            {
+                if (mail.InternetMessageId.Length == 0
+                    || string.Equals(mail.InternetMessageId, summary.InternetMessageId, StringComparison.OrdinalIgnoreCase)) continue;
+                if (await _actions.GetByMessageIdAsync(mail.InternetMessageId).ConfigureAwait(true) is not { IsComplete: false } card)
+                    continue;
+
+                await _actions.DeleteAsync(card.Id).ConfigureAwait(true);
+                removed.Add(card);
+                _ = SetCategoryInBackgroundAsync(row, mail.Ref, false, wasActionRequired);
             }
         }
 
