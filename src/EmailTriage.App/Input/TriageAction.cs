@@ -15,6 +15,10 @@ public enum TriageAction
     PageDown,
     PageUp,
 
+    /// <summary>Grow the multi-selection down or up (Shift+Down / Shift+Up).</summary>
+    ExtendSelectionDown,
+    ExtendSelectionUp,
+
     /// <summary>Flag as needing action and send it to the action list.</summary>
     MarkActionRequired,
 
@@ -52,7 +56,7 @@ public enum TriageAction
     Cancel,
     Confirm,
 
-    /// <summary>Reverses the last move, snooze or archive.</summary>
+    /// <summary>Reverses the last move, snooze, archive, flag, read change or calendar block.</summary>
     Undo,
 
     // Action-list specific
@@ -62,6 +66,9 @@ public enum TriageAction
     ToggleComplete,
     CyclePriority,
     OpenInOutlook,
+
+    /// <summary>Save the selected conversation, every message open, as a PDF.</summary>
+    SavePdf,
 
     // Action board
     PrevColumn,
@@ -87,8 +94,21 @@ public enum TriageAction
     /// <summary>Put the mail or task on the calendar: time for yourself, or a meeting with the people on it.</summary>
     ScheduleTime,
 
+    /// <summary>
+    /// Answer the mail with a meeting invitation to everyone on it, with
+    /// Teams, all day, repeat and show-as switches. Opens in Outlook to send.
+    /// </summary>
+    ReplyWithMeeting,
+
     /// <summary>Join the meeting under way or about to start, from anywhere.</summary>
     JoinMeeting,
+
+    /// <summary>Calendar tab views, on 1-5.</summary>
+    CalendarDay,
+    CalendarWorkWeek,
+    CalendarWeek,
+    CalendarMonth,
+    CalendarAgenda,
 
     /// <summary>The tab before this one; the reverse of SwitchSection.</summary>
     PrevSection,
@@ -104,4 +124,12 @@ public enum TriageAction
 
     /// <summary>Ask the inbox a question in plain language; Claude picks the matches.</summary>
     AiSearch,
+
+    // Folders
+
+    /// <summary>Pick a folder and show it in Outlook's window. Bound to Shift+V.</summary>
+    OpenFolderInOutlook,
+
+    /// <summary>The Settings page: folder naming, nesting and organizing. Bound to Ctrl+,.</summary>
+    OpenSettings,
 }

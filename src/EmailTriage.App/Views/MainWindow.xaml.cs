@@ -5,10 +5,12 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using EmailTriage.App.Input;
 using EmailTriage.App.Services;
 using EmailTriage.App.ViewModels;
+using EmailTriage.Core.Services;
 using Microsoft.Web.WebView2.Core;
 
 namespace EmailTriage.App.Views;
@@ -19,6 +21,9 @@ public partial class MainWindow : Window
 
     private bool _webViewReady;
     private string _pendingHtml = "";
+
+    /// <summary>The browser environment both mail views share, kept for printing to PDF.</summary>
+    private CoreWebView2Environment? _webEnv;
 
     // The action board's email view: a second WebView2 on the same browser profile.
     private bool _actionViewReady;
@@ -39,6 +44,8 @@ public partial class MainWindow : Window
         HintStrip.ItemsSource = BuildHints();
 
         viewModel.PropertyChanged += OnViewModelChanged;
+        viewModel.SavePdfRequested += async (_, _) => await SavePdfAsync();
+        viewModel.SettingsRequested += (_, _) => ShowSettings();
         viewModel.Triage.PropertyChanged += OnTriageChanged;
         viewModel.Triage.Palette.PropertyChanged += OnPaletteChanged;
         viewModel.Triage.Composer.PropertyChanged += OnComposerChanged;
@@ -49,11 +56,12 @@ public partial class MainWindow : Window
             RecipientField.Cc => CcBox,
             RecipientField.Bcc => BccBox,
             RecipientField.Subject => SubjectBox,
+            RecipientField.FollowUp => FollowUpBox,
             _ => ComposerBox,
         });
 
         // Suggestions belong to the line being typed in; moving elsewhere drops them.
-        foreach (var box in new[] { ToBox, CcBox, BccBox, SubjectBox, ComposerBox })
+        foreach (var box in new[] { ToBox, CcBox, BccBox, SubjectBox, ComposerBox, FollowUpBox })
             box.GotKeyboardFocus += (_, _) => viewModel.Triage.Composer.CloseSuggestions();
 
         // "@" in the message searches contacts. Text and caret both matter:
@@ -63,6 +71,14 @@ public partial class MainWindow : Window
         viewModel.Actions.PropertyChanged += OnActionsChanged;
         viewModel.Actions.FocusRequested += OnFocusRequested;
         viewModel.Calendar.PropertyChanged += OnCalendarChanged;
+        viewModel.Calendar.RangeChanged += (_, _) => ScrollCalendarToWorkday();
+
+        // The grid's day headings sit outside its scroller; leave room for its scroll bar so the columns line up.
+        var scrollBar = new Thickness(0, 0, SystemParameters.VerticalScrollBarWidth, 0);
+        CalendarHeader.Margin = scrollBar;
+        CalendarAllDay.Margin = scrollBar;
+        // Also when the tab or view first shows it: a hidden grid cannot be scrolled.
+        CalendarScroll.IsVisibleChanged += (_, e) => { if (e.NewValue is true) ScrollCalendarToWorkday(); };
 
         Loaded += async (_, _) => await InitialiseWebViewAsync();
     }
@@ -99,6 +115,7 @@ public partial class MainWindow : Window
                 Hint("archive", TriageAction.Archive),
                 Hint("later", TriageAction.Snooze),
                 Hint("schedule", TriageAction.ScheduleTime),
+                Hint("meeting", TriageAction.ReplyWithMeeting),
                 // Reply all lives on Enter (Confirm) in the Superhuman layout.
                 HintFirst("reply all", TriageAction.ReplyAll, TriageAction.Confirm),
                 Hint("reply", TriageAction.ReplySender),
@@ -113,7 +130,14 @@ public partial class MainWindow : Window
             },
             Section.Calendar => new[]
             {
-                Hint("next/prev", TriageAction.NextMail, TriageAction.PrevMail),
+                new
+                {
+                    Key = $"{keys.Describe(TriageAction.CalendarDay)}–{keys.Describe(TriageAction.CalendarAgenda)}",
+                    Label = "view",
+                },
+                Hint("prev/next", TriageAction.PrevColumn, TriageAction.NextColumn),
+                Hint("today", TriageAction.FirstMail),
+                Hint("next/prev meeting", TriageAction.NextMail, TriageAction.PrevMail),
                 Hint("join / open", TriageAction.Confirm),
                 Hint("outlook", TriageAction.OpenInOutlook),
                 Hint("answer", TriageAction.Rsvp),
@@ -160,6 +184,7 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(userData);
 
             var env = await CoreWebView2Environment.CreateAsync(BundledWebView2Folder(), userData);
+            _webEnv = env;
 
             await ConfigureMailViewAsync(BodyView, env);
             _webViewReady = true;
@@ -203,6 +228,97 @@ public partial class MainWindow : Window
         catch (WebView2RuntimeNotFoundException) { }
 
         return bundled;
+    }
+
+    // ---- saving a conversation as PDF ----------------------------------------
+
+    private async void OnSavePdf(object sender, RoutedEventArgs e) => await SavePdfAsync();
+
+    /// <summary>
+    /// The PDF button and Ctrl+P: renders the conversation for paper and
+    /// prints it in a browser nobody sees, so the reading pane stays as it is.
+    /// </summary>
+    private async Task SavePdfAsync()
+    {
+        var triage = ViewModel.Triage;
+        if (_webEnv is null)
+        {
+            triage.Status = "Saving as PDF needs the WebView2 runtime, which is not available";
+            return;
+        }
+
+        (string Html, string FileName)? page;
+        try
+        {
+            triage.Status = "Preparing the PDF...";
+            page = await triage.RenderSelectedForPdfAsync();
+        }
+        catch (Exception ex)
+        {
+            triage.Status = $"Could not read the conversation for the PDF: {ex.Message}";
+            return;
+        }
+
+        if (page is not { } p)
+        {
+            triage.Status = "Select a conversation to save it as a PDF";
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "Save the conversation as a PDF",
+            FileName = p.FileName,
+            DefaultExt = ".pdf",
+            Filter = "PDF document (*.pdf)|*.pdf",
+            AddExtension = true,
+            OverwritePrompt = true,
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            triage.Status = "";
+            return;
+        }
+
+        CoreWebView2Controller? controller = null;
+        try
+        {
+            triage.Status = "Saving the PDF...";
+            controller = await _webEnv.CreateCoreWebView2ControllerAsync(new WindowInteropHelper(this).Handle);
+            controller.IsVisible = false;
+
+            var core = controller.CoreWebView2;
+            core.Settings.IsScriptEnabled = false;
+            core.Settings.AreHostObjectsAllowed = false;
+            core.SetVirtualHostNameToFolderMapping(
+                MailImages.InlineImageHost, EmailTriage.Outlook.OutlookMailStore.DefaultInlineImageFolder,
+                CoreWebView2HostResourceAccessKind.DenyCors);
+
+            // Only the page itself loads; a link or refresh in the mail goes nowhere.
+            var loaded = new TaskCompletionSource<bool>();
+            var navigations = 0;
+            core.NavigationStarting += (_, e) => { if (++navigations > 1) e.Cancel = true; };
+            core.NavigationCompleted += (_, e) => loaded.TrySetResult(e.IsSuccess);
+            core.NavigateToString(p.Html);
+            if (!await loaded.Task) throw new InvalidOperationException("the page did not load");
+
+            var settings = _webEnv.CreatePrintSettings();
+            settings.ShouldPrintBackgrounds = true;
+            settings.ShouldPrintHeaderAndFooter = false;
+
+            var saved = await core.PrintToPdfAsync(dialog.FileName, settings);
+            triage.Status = saved
+                ? $"Saved {Path.GetFileName(dialog.FileName)} to {Path.GetDirectoryName(dialog.FileName)}"
+                : "Could not save the PDF - is the file open somewhere else?";
+        }
+        catch (Exception ex)
+        {
+            triage.Status = $"Could not save the PDF: {ex.Message}";
+        }
+        finally
+        {
+            controller?.Close();
+        }
     }
 
     /// <summary>
@@ -357,13 +473,18 @@ public partial class MainWindow : Window
 
     private async Task SubmitFormAsync(string form)
     {
-        switch (form)
+        var saved = form switch
         {
-            case "form:due": await ViewModel.Actions.SaveDueFromFormAsync(); break;
-            case "form:blocker": await ViewModel.Actions.AddBlockerFromFormAsync(); break;
-            case "form:assign": await ViewModel.Actions.AddAssignmentFromFormAsync(); break;
-            case "form:notes": await ViewModel.Actions.SaveNotesFromFormAsync(); break;
-        }
+            "form:due" => await ViewModel.Actions.SaveDueFromFormAsync(),
+            "form:blocker" => await ViewModel.Actions.AddBlockerFromFormAsync(),
+            "form:assign" => await ViewModel.Actions.AddAssignmentFromFormAsync(),
+            "form:notes" => await ViewModel.Actions.SaveNotesFromFormAsync(),
+            _ => false,
+        };
+
+        // Saved: back to the board, so its keys (chase, Ctrl+G) work at once.
+        // Not saved: stay in the field to fix what the status line says.
+        if (saved) Focus();
     }
 
     /// <summary>The form a focused field belongs to, from the Tag on it or an ancestor.</summary>
@@ -380,8 +501,10 @@ public partial class MainWindow : Window
     /// <summary>
     /// While typing in the action form, keys are text: Enter saves that form
     /// (Ctrl+Enter for the multi-line notes), Esc leaves the field, and
-    /// nothing else is taken as a shortcut. Decided synchronously, so the key
-    /// is marked handled before the field can also act on it.
+    /// nothing else is taken as a shortcut - except Ctrl+G, which a text box
+    /// has no use for, so Claude can draft straight from the form. Decided
+    /// synchronously, so the key is marked handled before the field can also
+    /// act on it.
     /// </summary>
     /// <returns>True when the form owns the key; <paramref name="submit"/> names a form to save.</returns>
     private bool TryHandleFormKey(KeyEventArgs e, out string? submit)
@@ -409,6 +532,8 @@ public partial class MainWindow : Window
             return true;
         }
 
+        if (ctrl && ViewModel.Keys.Resolve(KeyStroke.FromEvent(e)) == TriageAction.AiDraftReply) return false;
+
         return true; // the field has it; not a shortcut
     }
 
@@ -434,6 +559,8 @@ public partial class MainWindow : Window
         FocusLater(target);
     }
 
+    private void OnShowAllMail(object sender, RoutedEventArgs e) { ViewModel.Triage.ShowUnreadOnly = false; Focus(); }
+    private void OnShowUnreadMail(object sender, RoutedEventArgs e) { ViewModel.Triage.ShowUnreadOnly = true; Focus(); }
     private void OnShowBoard(object sender, RoutedEventArgs e) { ViewModel.Actions.IsByPerson = false; Focus(); }
     private void OnShowByPerson(object sender, RoutedEventArgs e) { ViewModel.Actions.IsByPerson = true; Focus(); }
     private void OnReportExport(object sender, RoutedEventArgs e) { ViewModel.Actions.ExportReport(); Focus(); }
@@ -448,15 +575,25 @@ public partial class MainWindow : Window
 
     private async void OnComposeClick(object sender, RoutedEventArgs e) => await ViewModel.ComposeAsync();
 
+    private void OnSettingsClick(object sender, RoutedEventArgs e) => ShowSettings();
+
+    private void ShowSettings()
+    {
+        new SettingsWindow(ViewModel.CreateSettings()) { Owner = this }.ShowDialog();
+    }
+
     // ---- calendar ------------------------------------------------------------
 
-    /// <summary>The strip in the top bar: show that meeting in the Calendar tab, joining it if it is on.</summary>
-    private async void OnStripClick(object sender, MouseButtonEventArgs e)
+    /// <summary>
+    /// A meeting pill in the top bar: opens the meeting's card under it. It
+    /// never joins by itself - that is the card's Join button, a second click.
+    /// </summary>
+    private void OnPillClick(object sender, MouseButtonEventArgs e)
     {
-        var ev = ViewModel.Calendar.StripEvent;
-        ViewModel.Section = Section.Calendar;
-        Focus();
-        if (ev is not null) await ViewModel.Calendar.ClickAsync(ev);
+        if (sender is not FrameworkElement { DataContext: MeetingPill { Event: { } ev } } pill) return;
+
+        var card = ViewModel.Calendar.OpenCard(ev);
+        new MeetingWindow(ViewModel, card) { Owner = this }.ShowUnder(pill);
     }
 
     // Keep the keyboard on the window, where the calendar keys live.
@@ -479,8 +616,85 @@ public partial class MainWindow : Window
 
         Dispatcher.BeginInvoke(() =>
         {
-            if (ViewModel.Calendar.Selected is { } row) AgendaList.ScrollIntoView(row);
+            var calendar = ViewModel.Calendar;
+            if (calendar.IsAgenda)
+            {
+                if (calendar.AgendaSelected is { } row) AgendaList.ScrollIntoView(row);
+            }
+            else if (calendar.IsTimeGrid) ScrollToSelectedBlock();
         });
+    }
+
+    /// <summary>Brings a meeting reached with j or k into view, with a little of the hour before it.</summary>
+    private void ScrollToSelectedBlock()
+    {
+        if (ViewModel.Calendar.SelectedBlock is not { } block) return;
+
+        var top = CalendarScroll.VerticalOffset;
+        var bottom = top + CalendarScroll.ViewportHeight;
+        if (block.Top < top || block.Top + block.Height > bottom)
+            CalendarScroll.ScrollToVerticalOffset(Math.Max(0, block.Top - CalendarViewModel.HourHeight / 2));
+    }
+
+    /// <summary>
+    /// The grid opens on the working day rather than midnight - unless the
+    /// selected meeting (one opened from the strip, say) is outside it.
+    /// </summary>
+    private void ScrollCalendarToWorkday()
+    {
+        if (!ViewModel.Calendar.IsTimeGrid) return;
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            CalendarScroll.ScrollToVerticalOffset(ViewModel.Calendar.WorkdayTop);
+            CalendarScroll.UpdateLayout();
+            ScrollToSelectedBlock();
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private void OnCalendarViewClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.CommandParameter is string name && Enum.TryParse<CalendarView>(name, out var view))
+            ViewModel.Calendar.SetView(view);
+        Focus();
+    }
+
+    private void OnCalendarPrev(object sender, RoutedEventArgs e) { ViewModel.Calendar.Step(-1); Focus(); }
+    private void OnCalendarNext(object sender, RoutedEventArgs e) { ViewModel.Calendar.Step(1); Focus(); }
+    private void OnCalendarToday(object sender, RoutedEventArgs e) { ViewModel.Calendar.GoToToday(); Focus(); }
+
+    private void OnCalendarNew(object sender, RoutedEventArgs e) => ViewModel.NewCalendarEntry();
+
+    /// <summary>A meeting in the grid, the all-day row or a month cell: show it, joining it if it is on.</summary>
+    private async void OnCalendarItemClick(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not CalendarItem item) return;
+
+        e.Handled = true; // not also the month day underneath
+        Focus();
+        await ViewModel.Calendar.ClickAsync(item.Event);
+    }
+
+    /// <summary>
+    /// A double-click on an empty stretch of a day column: a new entry there,
+    /// starting on the half hour clicked and running 30 minutes.
+    /// </summary>
+    private void OnCalendarColumnMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2 || sender is not FrameworkElement { DataContext: CalendarDayColumn day } column) return;
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is CalendarBlock) return; // on a meeting, not a gap
+
+        e.Handled = true;
+        var halfHours = Math.Clamp((int)(e.GetPosition(column).Y / (CalendarViewModel.HourHeight / 2)), 0, 47);
+        var start = new DateTimeOffset(DateTime.SpecifyKind(day.Date.Date.AddMinutes(halfHours * 30), DateTimeKind.Local));
+        ViewModel.NewCalendarEntryAt(start);
+    }
+
+    /// <summary>A month day, away from its meetings: open it in the Day view.</summary>
+    private void OnMonthDayClick(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MonthCell cell) ViewModel.Calendar.ShowDay(cell.Date);
+        Focus();
     }
 
     // ---- action board clicks -----------------------------------------------
@@ -523,7 +737,8 @@ public partial class MainWindow : Window
         e.Effects = ok ? DragDropEffects.Move : DragDropEffects.None;
         if (ok && (sender as FrameworkElement)?.Tag is BoardColumn column)
         {
-            foreach (var c in ViewModel.Actions.Columns) c.IsDropTarget = c == column;
+            if (column.IsFollowUps) e.Effects = DragDropEffects.None;
+            foreach (var c in ViewModel.Actions.Columns) c.IsDropTarget = c == column && !column.IsFollowUps;
         }
         e.Handled = true;
     }
@@ -540,7 +755,7 @@ public partial class MainWindow : Window
         if ((sender as FrameworkElement)?.Tag is BoardColumn column &&
             e.Data.GetData(typeof(EmailTriage.Core.Models.ActionItem)) is EmailTriage.Core.Models.ActionItem item)
         {
-            await ViewModel.Actions.MoveToStageAsync(item, column.Stage);
+            await ViewModel.Actions.MoveToColumnAsync(item, column);
         }
         Focus();
     }
@@ -723,6 +938,13 @@ public partial class MainWindow : Window
         ViewModel.Triage.Composer.AddAttachments(files);
     }
 
+    private void OnFollowUpButtonClick(object sender, RoutedEventArgs e)
+    {
+        var composer = ViewModel.Triage.Composer;
+        if (!composer.IsFollowingUp) composer.ToggleFollowUp();
+        composer.RequestFocus(RecipientField.FollowUp);
+    }
+
     private void OnComposeAttachmentRemoveClick(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is ComposeAttachment attachment)
@@ -803,6 +1025,8 @@ public partial class MainWindow : Window
 
     /// <summary>Private host the panes map onto the attachment cache, for in-app previews.</summary>
     private const string AttachmentHost = "attachments.example";
+
+    private void OnOpenPreviewExternally(object sender, RoutedEventArgs e) => ViewModel.Triage.OpenPreviewExternally();
 
     private void ShowPreviewOrBody()
     {

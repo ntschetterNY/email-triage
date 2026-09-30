@@ -9,10 +9,14 @@ using EmailTriage.Core.Services;
 namespace EmailTriage.App.ViewModels;
 
 /// <summary>A message away or scheduled: the status line, what it answered, and whether to archive that.</summary>
-public sealed record SentEventArgs(string Message, MailRef InReplyTo, bool MarkDone);
+public sealed record SentEventArgs(string Message, MailRef InReplyTo, bool MarkDone)
+{
+    /// <summary>The follow-up to file against the answered mail, when one was set.</summary>
+    public FollowUpRequest? FollowUp { get; init; }
+}
 
 /// <summary>Where suggestions are showing: a recipient line, or an @mention in the message.</summary>
-public enum RecipientField { None, To, Cc, Bcc, Body, Subject }
+public enum RecipientField { None, To, Cc, Bcc, Body, Subject, FollowUp }
 
 /// <summary>
 /// The inline reply and forward box. Outlook builds the draft - quoted history,
@@ -41,6 +45,18 @@ public sealed partial class ComposerViewModel : ObservableObject
     [ObservableProperty] private bool _isScheduling;
     [ObservableProperty] private string _scheduleText = "";
     [ObservableProperty] private bool _holdIfReplied = true;
+
+    // Follow-up row (Ctrl+Shift+F): who owes what, by when. An empty date means none.
+    [ObservableProperty] private bool _isFollowingUp;
+    [ObservableProperty] private string _followUpWhen = "";
+    [ObservableProperty] private string _followUpWho = "";
+    [ObservableProperty] private string _followUpWhat = "";
+    [ObservableProperty] private bool _trackAsTask = true;
+    [ObservableProperty] private bool _mentionInEmail = true;
+
+    // Who follows the first To recipient until the user types in it.
+    private bool _followUpWhoEdited;
+    private bool _settingWho;
 
     [ObservableProperty] private RecipientField _suggestingFor;
     [ObservableProperty] private ContactEntry? _selectedSuggestion;
@@ -92,11 +108,139 @@ public sealed partial class ComposerViewModel : ObservableObject
         Status = "";
     }
 
+    // ---- follow-up ------------------------------------------------------------
+
+    /// <summary>Shows or hides the follow-up row.</summary>
+    public void ToggleFollowUp()
+    {
+        IsFollowingUp = !IsFollowingUp;
+        Status = "";
+    }
+
+    public void ToggleTrackAsTask()
+    {
+        if (IsFollowingUp) TrackAsTask = !TrackAsTask;
+    }
+
+    public DateTimeOffset? FollowUpDue =>
+        NaturalDateParser.TryParse(FollowUpWhen, _clock.Now, out var when, _dayShape) ? when : null;
+
+    public bool HasFollowUp => IsFollowingUp && FollowUpWhen.Trim().Length > 0;
+
+    public string FollowUpWhenPreview => FollowUpWhen.Trim().Length == 0
+        ? "e.g. fri, 3d, 14 oct"
+        : FollowUpDue is { } d ? d.ToLocalTime().ToString("dddd d MMM") : "not a date I understand";
+
+    /// <summary>
+    /// Who the name box means. People on the message come first, so a first
+    /// name is usually enough; then the contact directory.
+    /// </summary>
+    public Recipient? FollowUpPerson
+    {
+        get
+        {
+            var onMessage = RecipientLine.Parse(ToLine).Concat(RecipientLine.Parse(CcLine))
+                .Select(text => PersonResolver.Resolve(text, Array.Empty<Recipient>()))
+                .Where(r => r is not null)
+                .Select(r => r!.Value);
+
+            var directory = FollowUpWho.Trim().Length == 0
+                ? Enumerable.Empty<Recipient>()
+                : _contacts.Search(FollowUpWho.Trim(), 5)
+                    .Where(c => c.Address.Length > 0)
+                    .Select(c => new Recipient(c.Name, c.Address));
+
+            return PersonResolver.Resolve(FollowUpWho, onMessage.Concat(directory).ToList());
+        }
+    }
+
+    public string FollowUpWhoPreview => FollowUpPerson switch
+    {
+        null => "who owes it?",
+        { Address.Length: 0 } p => $"{p.Name} - no address found, so no chase mail",
+        { } p when p.Name == p.Address => p.Address,
+        { } p => $"{p.Name} <{p.Address}>",
+    };
+
+    partial void OnFollowUpWhenChanged(string value)
+    {
+        OnPropertyChanged(nameof(FollowUpDue));
+        OnPropertyChanged(nameof(FollowUpWhenPreview));
+    }
+
+    partial void OnFollowUpWhoChanged(string value)
+    {
+        if (!_settingWho) _followUpWhoEdited = true;
+        OnPropertyChanged(nameof(FollowUpPerson));
+        OnPropertyChanged(nameof(FollowUpWhoPreview));
+    }
+
+    private void SetFollowUpWho(string value)
+    {
+        _settingWho = true;
+        try { FollowUpWho = value; }
+        finally { _settingWho = false; }
+    }
+
+    /// <summary>
+    /// Until the user types a name of their own, the follow-up is on whoever
+    /// the message goes to first.
+    /// </summary>
+    private void SyncFollowUpWho()
+    {
+        if (_followUpWhoEdited) return;
+
+        var first = ToLine.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault() ?? "";
+        SetFollowUpWho(first);
+    }
+
+    /// <summary>Adds someone to the To line unless they are on the message already.</summary>
+    public void EnsureRecipient(string name, string address)
+    {
+        if (address.Length == 0 || IsOnMessage(new Recipient(name, address))) return;
+
+        _settingLines = true;
+        try { ToLine = RecipientLine.Append(ToLine, new ContactEntry(name, address, 0)); }
+        finally { _settingLines = false; }
+    }
+
+    /// <summary>True when the person is on the To or Cc line, so the ask reaches them in this thread.</summary>
+    private bool IsOnMessage(Recipient person) =>
+        person.Address.Length > 0 &&
+        RecipientLine.Parse(ToLine).Concat(RecipientLine.Parse(CcLine))
+            .Any(a => string.Equals(a, person.Address, StringComparison.OrdinalIgnoreCase));
+
+    private string FollowUpTask =>
+        FollowUpWhat.Trim() is { Length: > 0 } what ? what : $"Reply about \"{Subject.Trim()}\"";
+
+    /// <summary>The line put under the message so the recipient sees the ask.</summary>
+    private string FollowUpLine(Recipient person, DateTimeOffset due)
+    {
+        static string Enc(string s) => System.Net.WebUtility.HtmlEncode(s);
+        var what = FollowUpWhat.Trim() is { Length: > 0 } w ? $" - {Enc(w)}" : "";
+        return $"""<div style="font-family:Calibri,sans-serif;font-size:11pt"><b>Follow-up:</b> {Enc(person.Display)}{what} by <b>{due.ToLocalTime():dddd d MMM}</b></div><br>""";
+    }
+
+    private void ResetFollowUp()
+    {
+        IsFollowingUp = false;
+        FollowUpWhen = FollowUpWhat = "";
+        SetFollowUpWho("");
+        _followUpWhoEdited = false;
+        TrackAsTask = true;
+        MentionInEmail = true;
+    }
+
     public ObservableCollection<ContactEntry> Suggestions { get; } = new();
 
     public bool HasSuggestions => Suggestions.Count > 0;
 
-    /// <summary>Files dropped on the composer, attached to the draft as it is sent.</summary>
+    /// <summary>
+    /// The files going out: any the draft already carries (a forward's
+    /// originals) and any dropped on the composer. Taking one off the list
+    /// leaves it out of the message.
+    /// </summary>
     public ObservableCollection<ComposeAttachment> Attachments { get; } = new();
 
     /// <summary>
@@ -112,7 +256,7 @@ public sealed partial class ComposerViewModel : ObservableObject
             if (!File.Exists(path)) continue;
             if (Attachments.Any(a => string.Equals(a.Path, path, StringComparison.OrdinalIgnoreCase))) continue;
 
-            Attachments.Add(new ComposeAttachment(path, new FileInfo(path).Length));
+            Attachments.Add(ComposeAttachment.FromFile(path, new FileInfo(path).Length));
         }
 
         Status = skippedFolders == 0 ? "" : "Folders can't be attached - drop the files inside, or zip it first.";
@@ -177,6 +321,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         IsScheduling = false;
         ScheduleText = "";
         HoldIfReplied = true;
+        ResetFollowUp();
 
         _settingLines = true;
         ToLine = _initialTo = RecipientLine.Format(draft.To);
@@ -184,8 +329,10 @@ public sealed partial class ComposerViewModel : ObservableObject
         SubjectLine = draft.Subject;
         BccLine = _initialBcc = "";
         _settingLines = false;
+        SyncFollowUpWho();
         _mentions.Clear();
         Attachments.Clear();
+        foreach (var carried in draft.Attachments) Attachments.Add(ComposeAttachment.Carried(carried));
         CloseSuggestions();
 
         OnPropertyChanged(nameof(Header));
@@ -200,7 +347,12 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     // ---- autocomplete -------------------------------------------------------
 
-    partial void OnToLineChanged(string value) => Suggest(RecipientField.To, value);
+    partial void OnToLineChanged(string value)
+    {
+        SyncFollowUpWho();
+        Suggest(RecipientField.To, value);
+    }
+
     partial void OnCcLineChanged(string value) => Suggest(RecipientField.Cc, value);
     partial void OnBccLineChanged(string value) => Suggest(RecipientField.Bcc, value);
 
@@ -324,7 +476,7 @@ public sealed partial class ComposerViewModel : ObservableObject
 
         // Forwarding with no note of your own is normal, as is sending just a
         // file; an empty reply is not.
-        var hasFiles = Attachments.Count > 0;
+        var hasFiles = Attachments.Any(a => a.Path is not null);
         if (IsNew)
         {
             if (string.IsNullOrWhiteSpace(SubjectLine) && string.IsNullOrWhiteSpace(BodyText) && !hasFiles)
@@ -357,6 +509,37 @@ public sealed partial class ComposerViewModel : ObservableObject
             }
         }
 
+        FollowUpRequest? followUp = null;
+        var followUpLine = "";
+        if (HasFollowUp)
+        {
+            // Refuse rather than silently drop a follow-up the user asked for.
+            if (FollowUpDue is not { } due)
+            {
+                Status = "When is the follow-up? Type a date like \"fri\", or Ctrl+Shift+F to close the row.";
+                return;
+            }
+            if (FollowUpPerson is not { } person)
+            {
+                Status = "Who is the follow-up for?";
+                return;
+            }
+
+            if (MentionInEmail) followUpLine = FollowUpLine(person, due);
+            if (TrackAsTask)
+            {
+                followUp = new FollowUpRequest
+                {
+                    Person = person,
+                    Task = FollowUpTask,
+                    DueUtc = due.ToUniversalTime(),
+                    ToldUtc = (sendAt ?? _clock.Now).ToUniversalTime(),
+                    Subject = IsNew ? SubjectLine.Trim() : Subject,
+                    InThread = IsOnMessage(person),
+                };
+            }
+        }
+
         // Only the lines the user changed are rewritten; the rest keep the
         // exact recipients Outlook resolved when it built the draft.
         var overrides = new RecipientOverrides(
@@ -365,18 +548,24 @@ public sealed partial class ComposerViewModel : ObservableObject
             BccLine != _initialBcc ? bcc : null)
         {
             Subject = IsNew ? SubjectLine.Trim() : null,
-            Attachments = Attachments.Select(a => a.Path).ToList(),
+            Attachments = Attachments.Where(a => a.Path is not null).Select(a => a.Path!).ToList(),
+            RemoveAttachments = Draft.Attachments
+                .Where(c => !Attachments.Any(a => a.CarriedIndex == c.Index))
+                .Select(c => c.Index)
+                .ToList(),
         };
-        var changes = overrides is { ChangesRecipients: false, Subject: null, Attachments.Count: 0 } ? null : overrides;
+        var changes = overrides is { ChangesRecipients: false, Subject: null, Attachments.Count: 0, RemoveAttachments.Count: 0 }
+            ? null
+            : overrides;
 
         IsSending = true;
         Status = sendAt is null ? "Sending..." : "Scheduling...";
 
         try
         {
-            var html = string.IsNullOrWhiteSpace(BodyText)
+            var html = (string.IsNullOrWhiteSpace(BodyText)
                 ? ""
-                : HtmlPresenter.ComposeReplyFragment(BodyText, _mentions);
+                : HtmlPresenter.ComposeReplyFragment(BodyText, _mentions)) + followUpLine;
 
             string done;
             if (sendAt is { } when)
@@ -403,7 +592,7 @@ public sealed partial class ComposerViewModel : ObservableObject
 
             var inReplyTo = Draft.InReplyTo;
             Reset();
-            Sent?.Invoke(this, new SentEventArgs(done, inReplyTo, markDone));
+            Sent?.Invoke(this, new SentEventArgs(done, inReplyTo, markDone) { FollowUp = followUp });
         }
         catch (Exception ex)
         {
@@ -434,6 +623,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         Status = "";
         IsScheduling = false;
         ScheduleText = "";
+        ResetFollowUp();
 
         _settingLines = true;
         ToLine = CcLine = BccLine = SubjectLine = "";
@@ -444,10 +634,25 @@ public sealed partial class ComposerViewModel : ObservableObject
     }
 }
 
-/// <summary>A file waiting to go out with the message being written.</summary>
-public sealed record ComposeAttachment(string Path, long Size)
+/// <summary>
+/// A file waiting to go out with the message being written: one dropped from
+/// disk (<see cref="Path"/>), or one the draft already carries
+/// (<see cref="CarriedIndex"/>, its position on the draft).
+/// </summary>
+public sealed record ComposeAttachment(string Name, long Size)
 {
-    public string Name => System.IO.Path.GetFileName(Path);
+    public string? Path { get; init; }
+
+    public int CarriedIndex { get; init; }
 
     public string SizeDisplay => MailAttachment.FormatSize(Size);
+
+    /// <summary>Where it comes from, for the chip's tooltip.</summary>
+    public string Where => Path ?? "From the message being forwarded";
+
+    public static ComposeAttachment FromFile(string path, long size) =>
+        new(System.IO.Path.GetFileName(path), size) { Path = path };
+
+    public static ComposeAttachment Carried(MailAttachment attachment) =>
+        new(attachment.Name, attachment.Size) { CarriedIndex = attachment.Index };
 }

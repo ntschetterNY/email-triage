@@ -13,8 +13,33 @@ public sealed class AppSettings
     /// <summary>Folder, relative to the mailbox root, that holds snoozed mail.</summary>
     public string SnoozeFolder { get; set; } = "Snoozed";
 
+    /// <summary>
+    /// How folders are named, with each part in {braces}. Edited on the
+    /// Settings page (Ctrl+,); see <see cref="FolderScheme"/>.
+    /// </summary>
+    public string FolderNamePattern { get; set; } = FolderScheme.DefaultNamePattern;
+
+    /// <summary>How those parts nest, one folder level per backslash.</summary>
+    public string FolderLayout { get; set; } = FolderScheme.DefaultLayout;
+
+    /// <summary>
+    /// Folder, from the top of the mailbox, the nested tree is built under
+    /// ("Inbox", "Projects"). Empty keeps each folder where it already is,
+    /// and puts new ones at the top of the mailbox.
+    /// </summary>
+    public string FolderHome { get; set; } = "";
+
+    /// <summary>A folder created from the move palette with a name in the scheme is made nested.</summary>
+    public bool NestNewFolders { get; set; } = true;
+
+    /// <summary>A method, not a property, so it stays out of settings.json.</summary>
+    public FolderScheme GetFolderScheme() => new(FolderNamePattern, FolderLayout);
+
     /// <summary>How many messages to pull into the triage list.</summary>
     public int InboxPageSize { get; set; } = 250;
+
+    /// <summary>Most messages a from:, to: or subject: search pulls in from beyond the Inbox page.</summary>
+    public int SearchResultLimit { get; set; } = 500;
 
     /// <summary>How many of your recent sent messages to fold into conversations.</summary>
     public int SentPageSize { get; set; } = 200;
@@ -49,8 +74,34 @@ public sealed class AppSettings
     /// <summary>Reminder on blocks made from mail; 0 for none.</summary>
     public int BlockReminderMinutes { get; set; } = 5;
 
+    /// <summary>Whether a reply with a meeting (Shift+S) starts with Teams switched on.</summary>
+    public bool TeamsByDefault { get; set; } = true;
+
     /// <summary>How soon before a meeting the join key picks it over the one you are in.</summary>
     public int JoinLeadMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// The view the Calendar tab opens on until you pick another (Day,
+    /// WorkWeek, Week, Month or Agenda); after that it remembers your last one.
+    /// </summary>
+    public string CalendarView { get; set; } = "WorkWeek";
+
+    /// <summary>
+    /// The hours AI drafts may offer people a meeting in. They offer time
+    /// right up to your existing meetings, with no gap either side.
+    /// </summary>
+    public int WorkdayStartHour { get; set; } = 7;
+    public int WorkdayEndHour { get; set; } = 16;
+
+    /// <summary>How many times a draft offers when the email is about meeting.</summary>
+    public int ProposedSlotCount { get; set; } = 3;
+
+    /// <summary>How many working days ahead, from tomorrow, drafts look for free time.</summary>
+    public int AvailabilityWorkingDays { get; set; } = 10;
+
+    /// <summary>Lunch, which drafts only offer when nothing else fits. Equal hours turn it off.</summary>
+    public int LunchStartHour { get; set; } = 12;
+    public int LunchEndHour { get; set; } = 13;
 
     /// <summary>
     /// Default model for every AI command. Anything the Claude Code CLI
@@ -60,10 +111,12 @@ public sealed class AppSettings
 
     /// <summary>
     /// Per-command overrides, so e.g. drafts can run on "sonnet" while
-    /// follow-up chases stay on "claude-opus-5". Empty means use AiModel.
+    /// replies stay on "claude-opus-5". Empty means use AiModel. Follow-up
+    /// chases are short and formulaic, so they start on "sonnet"; the
+    /// Settings page (Ctrl+,) picks another.
     /// </summary>
     public string AiDraftModel { get; set; } = "";
-    public string AiFollowUpModel { get; set; } = "";
+    public string AiFollowUpModel { get; set; } = "sonnet";
     public string AiSearchModel { get; set; } = "";
     public string AiStyleModel { get; set; } = "";
 
@@ -75,6 +128,13 @@ public sealed class AppSettings
 
     /// <summary>How long an AI command may run before it is given up on.</summary>
     public int AiTimeoutSeconds { get; set; } = 180;
+
+    /// <summary>
+    /// Let AI commands use an API key (ANTHROPIC_API_KEY, an apiKeyHelper, or
+    /// Bedrock/Vertex) when one is set. Off by default, so they always run on
+    /// your Claude login rather than on API credits.
+    /// </summary>
+    public bool AiAllowApiKey { get; set; }
 
     /// <summary>
     /// Days a blocker or hand-off may sit unchanged before the board flags it
@@ -103,6 +163,24 @@ public sealed class AppSettings
         Afternoon = TimeSpan.FromHours(AfternoonHour),
         Evening = TimeSpan.FromHours(EveningHour),
     };
+
+    /// <summary>The rules AI drafts follow when offering times you are free.</summary>
+    public AvailabilityRules Availability
+    {
+        get
+        {
+            var start = Math.Clamp(WorkdayStartHour, 0, 23);
+            return new()
+            {
+                DayStart = TimeSpan.FromHours(start),
+                DayEnd = TimeSpan.FromHours(Math.Clamp(WorkdayEndHour, start + 1, 24)),
+                WorkingDays = Math.Clamp(AvailabilityWorkingDays, 1, 30),
+                LunchStart = LunchEndHour > LunchStartHour ? TimeSpan.FromHours(LunchStartHour) : null,
+                LunchEnd = LunchEndHour > LunchStartHour ? TimeSpan.FromHours(LunchEndHour) : null,
+                SlotCount = Math.Clamp(ProposedSlotCount, 1, 6),
+            };
+        }
+    }
 
     public static string DefaultPath =>
         Path.Combine(

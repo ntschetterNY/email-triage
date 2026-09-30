@@ -13,11 +13,12 @@ fast filing, a real action list, and snooze.
 |---|---|
 | **Triage** | Walk the inbox, decide action / no action, file it, move on - without the mouse. |
 | **Move** | `v` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. |
+| **Folders** | Name folders your way (`Elara - Field Reports - Rimkus`) and they're kept nested (`Elara › Field Reports › Rimkus`). Settings (`Ctrl+,`) sets the scheme and tidies existing folders to match. `Shift+V` opens any folder in Outlook. |
 | **Snooze** | `h` parks a mail and puts it back in your inbox at a time you pick. |
-| **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. |
+| **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. Set a follow-up day as you send, and on that day the mail turns up in the board's Follow up column, ready for Claude to draft the nudge. |
 | **Write** | `Enter` reply-all, `r` reply-to-sender, `c` a new message, all sent from inside the app. |
-| **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. A Calendar tab lists what's coming, and the top bar counts down to your next meeting. |
-| **AI** (optional) | `Ctrl+G` has Claude draft the reply from the conversation - or from notes you type first. `Ctrl+/` asks your inbox a question in plain language. Runs through your own Claude Code sign-in; see below for what leaves the machine. |
+| **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. The Calendar tab shows your day, work week, week or month (keys `1`-`5`), and the top bar counts down to your next meeting. |
+| **AI** (optional) | `Ctrl+G` has Claude draft the reply from the conversation - or from notes you type first - offering times you're free when it's about meeting. `Ctrl+/` asks your inbox a question in plain language. Runs through your own Claude Code sign-in; see below for what leaves the machine. |
 
 ## Requirements
 
@@ -73,8 +74,8 @@ never checks. `dotnet build` and `dotnet run` builds never update.
 ## Build and run
 
 ```powershell
-git clone <this repo>
-cd Email_App
+git clone https://github.com/ntschetterNY/email-triage.git
+cd email-triage
 dotnet build -c Release
 dotnet run --project src\EmailTriage.App
 ```
@@ -106,11 +107,13 @@ their own letters.
 |---|---|
 | `j` / `↓` | Next message |
 | `k` / `↑` | Previous message |
+| `Shift+↓` / `Shift+↑` | Select several - `e`, `v`, `h`, `a` and `n` then act on all of them; `Esc` clears |
 | `Home` / `Ctrl+↑`, `End` / `Ctrl+↓` | First / last message |
 | `Tab` / `Shift+Tab` | Next / previous tab: Triage, Action items, Calendar |
 | `/` | Filter the list. While typing, `↑`/`↓` pick a result, `→` at the end of the query expands its conversation and `←` at the start folds it back |
 | `Ctrl+/` | **Ask your inbox** - AI search in plain language, `Esc` shows everything again |
 | `F5` | Refresh |
+| `Ctrl+,` | Settings (also the **⚙ Settings** button in the top bar) |
 
 ### Triage
 | Key | |
@@ -118,10 +121,12 @@ their own letters.
 | `a` | Needs action - flags it and adds it to the action list |
 | `n` | No action needed |
 | `v` | **Move to folder** - type to search, `Ctrl+Enter` creates and moves |
+| `Shift+V` | **Open a folder in Outlook** - type to search, `Enter` shows it in Outlook's window (any tab) |
 | `h` | **Remind me** (snooze) - presets, or type `tomorrow 9am` / `fri` / `3d` |
 | `e` | Archive |
 | `u` | Toggle read / unread |
 | `Ctrl+O` | Open an attachment |
+| `Ctrl+P` | **Save as PDF** - the whole conversation, every message open (also the **PDF** button in the reading pane) |
 | `z` / `Ctrl+Z` | Undo the last move or snooze |
 
 ### Replying
@@ -135,6 +140,8 @@ their own letters.
 | `Ctrl+Enter` | Send |
 | `Ctrl+Shift+Enter` | Send & mark done - archives the conversation |
 | `Ctrl+Shift+L` | Send later |
+| `Ctrl+Shift+F` | **Follow-up** - who owes what, by when; see below |
+| `Ctrl+Shift+T` | Follow-up: toggle tracking it as a task |
 | `Ctrl+Shift+O` / `C` / `B` / `M` | Jump to To / Cc / Bcc / the message |
 | `Esc` / `Ctrl+Shift+,` | Discard |
 | `@` | Mention someone in the message - pick with `↑↓` `Enter`/`Tab`; they are added to To if not already on it |
@@ -156,9 +163,14 @@ their own letters.
 |---|---|
 | `y` | Answer an invitation: `Enter` accepts, `↓` for maybe or decline. Type first to send a note with it. On a cancellation, takes it off your calendar |
 | `s` | Put the mail (or the card, on the board) on your calendar: `Enter` blocks the time for you, `Ctrl+Enter` invites the people on the thread |
+| `Shift+S` | Reply with a meeting to everyone on the thread. In the palette, `Ctrl+T` turns Teams on or off, `Ctrl+D` makes it all day, `Ctrl+R` cycles one time / weekly / fortnightly / monthly / daily / weekdays, `Ctrl+B` cycles how it shows (busy, tentative, free, out of office, working elsewhere). `Enter` opens it in Outlook to send |
 | `Ctrl+J` | Join the meeting on now or about to start, from any tab |
 | `Enter` | On the Calendar tab: join the meeting (Teams, Zoom, Meet, Webex), or open it in Outlook if it has no link |
 | `o` | On the Calendar tab: open the meeting in Outlook |
+| `s` / `n` | On the Calendar tab: new entry - type a title and a time together (`Site walk tomorrow 2pm 1h`). Also the `+ New` button |
+| `1` `2` `3` `4` `5` | On the Calendar tab: Day, Work week, Week, Month, Agenda |
+| `←` `→` / `Home` | On the Calendar tab: previous / next day, week or month / back to today |
+| `j` / `k` | On the Calendar tab: next / previous meeting. In the month, `Enter` opens the day |
 
 Every binding lives in `%APPDATA%\EmailTriage\keybindings.json`, written on first run.
 A file from before the Superhuman layout is upgraded on the next start: its copies of
@@ -175,6 +187,36 @@ habits fade. When nothing matches, `Ctrl+Enter` creates the folder you typed
 (`Clients\Acme\Q3` creates `Q3` under an existing `Clients\Acme`) and moves the mail
 there in the same keystroke.
 
+### Folder structure (Settings, `Ctrl+,`)
+Many people name folders with the whole hierarchy in the name -
+`Elara - Field Reports - Rimkus`. The Settings page takes that naming scheme and keeps
+the folders nested instead, as `Elara\Field Reports\Rimkus`:
+
+- **How your folders are named** - each part in braces, e.g.
+  `{Project} - {Type} - {Company}`. Whatever sits between the parts (` - `) is what splits
+  a name. A name may stop early (`Elara - Field Reports`); a name with one part is an
+  ordinary folder and is left alone.
+- **How they nest** - one level per `\`, e.g. `{Project}\{Type}\{Company}`. Reorder the
+  parts, drop one, or add a fixed folder: `Projects\{Project}\{Type}`.
+- **Build the tree under** - a folder from the top of the mailbox, such as `Inbox`. Empty
+  nests each folder where it already is, and puts new ones beside the Inbox.
+
+A **Try a name** box shows where any name would go before anything is saved.
+
+With the scheme set, typing `Elara - Field Reports - Rimkus` in the move palette finds
+`Elara\Field Reports\Rimkus`, and `Ctrl+Enter` creates the missing levels and files the
+mail there. (Untick the option in Settings to create flat folders instead.)
+
+**Organize existing folders** lists every folder named in the scheme that isn't nested
+yet and where it would go. Untick any you want left alone, then **Organize**. Each folder
+moves with its mail and subfolders. Where the nested folder already exists, the contents
+are merged into it and the emptied original goes to Deleted Items. Anything that won't
+move stays in the original, and the list says so. Folders under Deleted Items, Sent Items,
+Drafts, Outbox and Junk are never touched.
+
+The scheme is saved in `settings.json` as `FolderNamePattern`, `FolderLayout`,
+`FolderHome` and `NestNewFolders`.
+
 ### Snooze (`h`)
 Outlook has no snooze for received mail, so the app implements it: the message moves
 to a `Snoozed` folder and a return time is recorded locally. A background loop checks
@@ -184,6 +226,13 @@ every 30 seconds and moves it back, marked unread so it reads as new.
 closed is swept back the moment you next open it. That is the honest trade for not
 installing a background service.
 
+### Save as PDF (`Ctrl+P`)
+The **PDF** button above the reading pane (or `Ctrl+P`) saves the selected conversation
+as a PDF: the subject on top, then every message, newest first, with From, Sent, To, Cc and
+attachment names, on white paper. It asks where to save, suggesting the newest message's
+date and the subject as the file name. Conversations longer than `ThreadMessageLimit`
+note the older messages left out. Remote images follow `BlockRemoteImages`, as on screen.
+
 ### Action items
 Flagging a mail does two things: it applies an Outlook category (so the flag is
 visible in Outlook itself, not trapped in this app) and creates a local record for the
@@ -192,6 +241,30 @@ notes, blockers, and assignments.
 Assignments are **local by default**. Nothing is sent when you assign someone. When
 you want to actually tell them, the app opens a pre-filled draft in Outlook for you to
 review and send yourself.
+
+### Follow-ups from the reply box (`Ctrl+Shift+F`)
+`Ctrl+Shift+F` (or the **+ Follow up** button) opens a row under the message:
+**Follow up** (a date: `fri`, `3d`, `14 oct`), **Who** and **What**. `Tab` moves
+through them. Leave the date empty, or press `Esc`, and nothing happens.
+
+- **Who** is whoever the message goes to first, and follows the To line as you
+  edit it until you type a name of your own. A first name is enough: it
+  matches people on the message first, then your contacts.
+- **What** is optional ("send the revised drawings").
+- *Add a follow-up line to the email* (on by default) puts
+  `Follow-up: Sam Lee - send the revised drawings by Friday 3 Oct` under your text.
+- *Track it on the board* (on by default, `Ctrl+Shift+T`) puts the mail on the
+  board in **Waiting**, with a hand-off to that person dated that day. For a
+  reply it is the mail you answered; for a brand-new message it is your sent
+  copy, which the card picks up once Outlook has filed it in Sent Items.
+
+On the day, the card moves to the board's **Follow up** column (the tab reads
+`Action items · 2 to follow up`). Go through them there: `Shift+C` opens a reply
+in the same conversation with the person on it and Claude's nudge drafted - edit
+it and send, and the card goes back to Waiting. If they've already come back to
+you, `w` clears the wait instead. Nothing sends by itself, and a draft you
+discard leaves the card where it is. A blocker or `Shift+A` hand-off given a
+date lands in Follow up on that day too, and chases the usual way.
 
 ### Calendar
 Meeting invitations, cancellations and responses now show in the triage list, tagged
@@ -210,15 +283,42 @@ the whole series.
 `s` puts a mail on your calendar. Type a time the way you would for snooze, with an
 optional length or range: `tomorrow 2pm 1h`, `fri 10-11:30am`. Or type just a length
 (`45m`) to be offered free slots in your working day, which runs from `MorningHour` to
-`EveningHour` in settings. `Enter` blocks the time as an appointment with the email
+`EveningHour` in settings. On the Calendar tab, `s` (or `n`, or `+ New`) adds an entry
+of your own: type the title and the time in one go, either way round - `Site walk
+tomorrow 2pm 1h`, `fri 10-11am budget review`, or `Focus 2h` to pick a free slot. Tentative entries don't stop a slot being offered: they
+are holds you can book over, so the slot says `over a HOLD` and names it, and an
+invitation card says "Free apart from a HOLD" rather than calling it a clash. `Enter` blocks the time as an appointment with the email
 attached, and `z` removes it. `Ctrl+Enter` makes it a meeting with everyone on the
 thread instead. That opens in Outlook for you to check and send, because an invitation
 goes to other people.
 
+`Shift+S` replies with a meeting, as Outlook's Reply with Meeting does: everyone on the
+thread is invited, and the mail's text is quoted into the invitation. Pick a time the
+same way as `s`. The line under the subject shows the switches, and each has its own key:
+`Ctrl+T` for a Teams meeting (on by default; `TeamsByDefault` in settings), `Ctrl+D`
+for all day (the list then offers days rather than times, and it shows you as free, as
+Outlook does), `Ctrl+R` to make it a series, and `Ctrl+B` for how the time shows on
+your calendar. A series has no end date; set one in Outlook before sending if it needs
+one. `Enter` opens the invitation in Outlook to check and send.
+
+Outlook has no way for another program to add a Teams meeting, so the app presses the
+Teams Meeting button on the invitation for you. That needs the button to be there and
+named in English. If it can't find it, the status line says so and you press it
+yourself. If your Outlook already adds Teams to every new meeting, set `TeamsByDefault`
+to false: there's no need for the app to press the button as well.
+
 The top bar shows the meeting on now or next, with a countdown. It turns amber five
-minutes before a meeting. Click it to see the meeting in the Calendar tab. The Calendar
-tab lists the next `CalendarDaysAhead` days (14 by default), with attendees, their
-answers and the invitation text. Settings also cover `DefaultEventMinutes` (30),
+minutes before a meeting. Click it to see the meeting in the Calendar tab.
+
+The Calendar tab has five views. `1` Day, `2` Work week and `3` Week are a time grid:
+overlapping meetings sit side by side, time outside your working hours is shaded, and a
+red line marks now. `4` Month shows six weeks, a few meetings a day, and a click on a day
+opens it in the Day view. `5` Agenda lists the next `CalendarDaysAhead` days (14 by
+default). The arrow keys step a day, week or month, and `Home` comes back to today.
+An unanswered invitation has a dashed amber outline, a tentative one is striped, and a
+declined one is struck through. The pane on the right shows the selected meeting's
+attendees, their answers and the invitation text. The tab opens on the view you used
+last, or `CalendarView` (`WorkWeek`) the first time. Settings also cover `DefaultEventMinutes` (30),
 `BlockReminderMinutes` (5), and `JoinLeadMinutes` (10), which is how close a meeting
 must be for `Ctrl+J` to join it rather than the one you're in.
 
@@ -235,6 +335,20 @@ in the box: type rough notes - `say yes, ask for the revised SOV by Friday` -
 and `Ctrl+G` turns them into the full message. The draft only ever lands in the
 composer for you to edit; sending stays your keystroke, and `Ctrl+G` again
 redoes it.
+
+**Drafts know when you're free.** Every draft is given your free time for the
+next `AvailabilityWorkingDays` working days (10), starting tomorrow: gaps between
+`WorkdayStartHour` and `WorkdayEndHour` (07:00-16:00), right up to your meetings -
+no gap is kept either side. Busy and out-of-office time counts as taken. Tentative
+entries (shown as tentative, or answered "maybe") are holds: that time can be booked
+over, so it is offered, but it is marked `HOLD` and Claude prefers clear time first. When the email is about meeting - someone asks "when works?", or
+your notes say "offer a few times for an hour's walkthrough" - Claude offers
+`ProposedSlotCount` (3) times of the right length, on different days where it can.
+If they already proposed times, it says which of those suit you instead. Lunch
+(`LunchStartHour` to `LunchEndHour`, 12-1; set them equal to turn this off) is only
+offered when nothing else fits. For any other email, it ignores your free time. If Outlook
+can't give up the calendar, the draft goes ahead without it, Claude is told not to
+suggest times, and the status line says so.
 
 **`Ctrl+/` asks your inbox a question.** "what am I still waiting on from the
 architect?", "anything about the November invoice?" - Claude reads the list
@@ -264,15 +378,34 @@ sound like, or delete it to relearn from scratch.
 mail leaves the machine, and these two commands are the deliberate, opt-in
 exception. Nothing is sent anywhere until you press `Ctrl+G` or `Ctrl+/`; when
 you do, the conversation being answered (or the list being searched) goes to
-Anthropic through your own Claude account, under that account's data terms. If
+Anthropic through your own Claude account, under that account's data terms. A draft
+also carries your free time windows for the next two working weeks - times only,
+never what your meetings are or who is in them. If
 that trade isn't acceptable in your shop, don't install Claude Code - every
 other feature is unaffected.
 
 Settings: `AiModel` (default `claude-opus-5`; `sonnet` answers faster) sets the
 model for everything, and each job can override it - `AiDraftModel`,
 `AiFollowUpModel`, `AiSearchModel`, `AiStyleModel` - so "Sonnet for replies,
-Opus for follow-ups" is two lines in settings.json. Also `FollowUpAfterDays`,
+Opus for search" is two lines in settings.json. Follow-up chases start on
+`sonnet`; pick another model for them on the Settings page (`Ctrl+,`). Also `FollowUpAfterDays`,
 `ClaudeCliPath` (set it if `claude` isn't on PATH), and `AiTimeoutSeconds`.
+
+**Your login, not API credits.** Claude Code prefers an `ANTHROPIC_API_KEY` (or
+`ANTHROPIC_AUTH_TOKEN`, an `apiKeyHelper`, Bedrock/Vertex) over your Claude login
+whenever one is set, which would quietly bill every draft to API credits. So the app
+removes those from the CLI's environment and skips your Claude Code user settings,
+and every call goes through the account `claude` is logged into. Set
+`AiAllowApiKey: true` if you do want a key used. Each call also runs without Claude
+Code's tools, MCP servers, skills and agent prompt - about 450 tokens of overhead
+instead of about 30,000.
+
+**Usage in the top bar.** `AI today 4 · 38k tok · ~$0.31` counts today's calls; the
+dot is green on your Claude login and amber on an API key. Hover for which account
+it runs through, a per-command breakdown, the last 7 and 30 days, and the last
+failure. Cost is Claude Code's list-price estimate: on an API key it is billed, on a
+subscription it only measures how much of your plan's usage went. Every call is
+logged as a JSON line in `%LOCALAPPDATA%\EmailTriage\ai-usage.jsonl` (30 days kept).
 
 ### Identity
 Outlook `EntryID`s change whenever an item moves between stores, which is what breaks
@@ -331,3 +464,7 @@ is exactly why it sits behind `IMailStore` and everything else is tested against
 - Single inbox - the default account's. Folder search spans all stores.
 - Only the default calendar. Shared and secondary calendars aren't read, so they don't
   count toward clashes or free slots.
+
+## License
+
+[MIT](LICENSE)

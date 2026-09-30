@@ -22,10 +22,25 @@ public interface IMailStore : IAsyncDisposable
     /// </summary>
     event EventHandler? InboxChanged;
 
+    /// <summary>
+    /// Raised when the link to Outlook drops for longer than one quick
+    /// reconnect, and again when it comes back. Read <see cref="IsConnected"/>
+    /// for which. Fired on a background thread.
+    /// </summary>
+    event EventHandler? ConnectionChanged;
+
     Task<FolderRef> GetInboxAsync(CancellationToken ct = default);
 
     Task<IReadOnlyList<MailSummary>> GetMailAsync(
         FolderRef folder, int max, CancellationToken ct = default);
+
+    /// <summary>
+    /// Received mail matching a DASL <paramref name="filter"/> in every mail
+    /// folder - Inbox, Archive and anything filed away - newest first. Sent
+    /// Items, Drafts, Outbox, Junk and Deleted Items are left out.
+    /// </summary>
+    Task<IReadOnlyList<MailSummary>> SearchMailAsync(
+        string filter, int max, CancellationToken ct = default);
 
     Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default);
 
@@ -41,6 +56,18 @@ public interface IMailStore : IAsyncDisposable
 
     Task<FolderNode> CreateFolderAsync(
         FolderRef parent, string name, CancellationToken ct = default);
+
+    /// <summary>Shows a folder in Outlook's main window, opening one if none is.</summary>
+    Task ShowFolderAsync(FolderRef folder, CancellationToken ct = default);
+
+    /// <summary>
+    /// Moves a folder, with everything in it, to <paramref name="targetPath"/>
+    /// - measured from the top of the folder's own mailbox, leaf name last -
+    /// creating any folders on the way and renaming it to the leaf. When a
+    /// folder is already there, the contents are merged into it and the
+    /// emptied original goes to Deleted Items. Returns where it ended up.
+    /// </summary>
+    Task<FolderNode> MoveFolderAsync(FolderRef folder, string targetPath, CancellationToken ct = default);
 
     /// <summary>
     /// Moves an item and returns its new location: the EntryId changes, so the

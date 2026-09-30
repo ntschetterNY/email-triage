@@ -27,11 +27,21 @@ public sealed partial class OutlookMailStore : ICalendarStore
     private const int AttendeeOptional = 2;
     private const int AttendeeResource = 3;
 
+    // OlRecurrenceType, and olMonday | ... | olFriday for "every weekday"
+    private const int RecursDaily = 0;
+    private const int RecursWeekly = 1;
+    private const int RecursMonthly = 2;
+    private const int MondayToFriday = 2 | 4 | 8 | 16 | 32;
+
     /// <summary>olEmbeddeditem: attach an Outlook item itself rather than a file.</summary>
     private const int AttachEmbeddedItem = 5;
 
-    /// <summary>A runaway recurrence can expand forever; nobody reads past this.</summary>
-    private const int EventScanLimit = 500;
+    /// <summary>
+    /// A runaway recurrence can expand forever; nobody reads past this. Room
+    /// for six weeks of a packed calendar (the month view), since anything cut
+    /// off here would show - and be offered in drafts - as free time.
+    /// </summary>
+    private const int EventScanLimit = 2000;
 
     // Where a meeting message keeps its meeting's times when it has no calendar
     // entry to ask (a cancellation for something already removed). PSETID_Appointment.
@@ -256,7 +266,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
                 };
             }
             finally { ComUtil.ReleaseAll(appt, item); }
-        }, ct);
+        }, urgent: true, ct);
 
     /// <summary>PropertyAccessor hands date properties back in UTC, unlike the object model.</summary>
     private static DateTimeOffset? UtcProperty(object item, string dasl)
@@ -370,8 +380,9 @@ public sealed partial class OutlookMailStore : ICalendarStore
             finally { ComUtil.Release(appt); }
         }, ct);
 
-    public Task ShowNewMeetingAsync(NewCalendarEvent spec, CancellationToken ct = default) =>
-        RunAsync(() =>
+    public async Task<TeamsOutcome> ShowNewMeetingAsync(NewCalendarEvent spec, CancellationToken ct = default)
+    {
+        var window = await RunAsync(() =>
         {
             EnsureConnected();
             var me = MyAddresses();
@@ -399,18 +410,42 @@ public sealed partial class OutlookMailStore : ICalendarStore
                 // Shown, never sent, and not saved: closing it without
                 // sending leaves nothing behind on the calendar.
                 appt.Display(false);
+
+                if (!spec.AddTeams) return IntPtr.Zero;
+
+                dynamic? inspector = null;
+                try
+                {
+                    inspector = appt.GetInspector;
+                    return inspector is null ? IntPtr.Zero : TeamsButton.WindowOf((object)inspector);
+                }
+                finally { ComUtil.Release(inspector); }
             }
             finally { ComUtil.ReleaseAll(recipients, appt); }
-        }, ct);
+        }, ct).ConfigureAwait(false);
+
+        if (!spec.AddTeams) return TeamsOutcome.None;
+
+        // Off the Outlook thread: the ribbon takes a moment to appear, and
+        // waiting for it must not hold up every other call to Outlook.
+        var pressed = await Task.Run(() => TeamsButton.TryPress(window, ct), ct).ConfigureAwait(false);
+        return pressed ? TeamsOutcome.Added : TeamsOutcome.NotFound;
+    }
 
     private void Fill(object apptObj, NewCalendarEvent spec)
     {
         dynamic appt = apptObj;
 
         appt.Subject = spec.Subject;
+
+        // All day before the times: setting it moves Start and End to midnights.
+        if (spec.IsAllDay) appt.AllDayEvent = true;
         appt.Start = spec.Start.LocalDateTime;
         appt.End = spec.End.LocalDateTime;
-        appt.BusyStatus = (int)BusyStatus.Busy;
+        if (spec.Repeat != Repeat.Once) SetRecurrence((object)appt, spec);
+
+        // After all day, which otherwise switches it to free.
+        appt.BusyStatus = (int)spec.ShowAs;
         if (spec.Body.Length > 0) appt.Body = spec.Body;
 
         appt.ReminderSet = spec.ReminderMinutes > 0;
@@ -428,6 +463,53 @@ public sealed partial class OutlookMailStore : ICalendarStore
         }
         catch { }
         finally { ComUtil.ReleaseAll(attachments, source); }
+    }
+
+    /// <summary>Turns the appointment into a series from its first day, with no end date.</summary>
+    private static void SetRecurrence(object apptObj, NewCalendarEvent spec)
+    {
+        dynamic appt = apptObj;
+        dynamic? pattern = null;
+        try
+        {
+            var start = spec.Start.LocalDateTime;
+            var end = spec.End.LocalDateTime;
+            var day = 1 << (int)start.DayOfWeek; // OlDaysOfWeek: Sunday = 1, Monday = 2, ... Saturday = 64
+
+            pattern = appt.GetRecurrencePattern();
+            switch (spec.Repeat)
+            {
+                case Repeat.Daily:
+                    pattern!.RecurrenceType = RecursDaily;
+                    break;
+                case Repeat.Weekdays:
+                    pattern!.RecurrenceType = RecursWeekly;
+                    pattern.DayOfWeekMask = MondayToFriday;
+                    break;
+                case Repeat.Weekly:
+                case Repeat.Fortnightly:
+                    pattern!.RecurrenceType = RecursWeekly;
+                    pattern.DayOfWeekMask = day;
+                    if (spec.Repeat == Repeat.Fortnightly) pattern.Interval = 2;
+                    break;
+                case Repeat.Monthly:
+                    pattern!.RecurrenceType = RecursMonthly;
+                    pattern.DayOfMonth = start.Day;
+                    break;
+            }
+
+            pattern!.PatternStartDate = start.Date;
+            pattern.NoEndDate = true;
+
+            // Setting the pattern resets the times to the pattern's own; an
+            // all-day series takes its times from AllDayEvent instead.
+            if (!spec.IsAllDay)
+            {
+                pattern.StartTime = start;
+                pattern.EndTime = end;
+            }
+        }
+        finally { ComUtil.Release(pattern); }
     }
 
     public Task DeleteEventAsync(MailRef ev, CancellationToken ct = default) =>

@@ -25,9 +25,13 @@ public sealed partial class OutlookMailStore : IMailStore
     private int _lastSeenCount = -1;
     private int _pollInFlight;
 
+    /// <summary>Set once the first connect succeeds; after that, a lost link is always retried.</summary>
+    private bool _hasConnected;
+
     public bool IsConnected { get; private set; }
 
     public event EventHandler? InboxChanged;
+    public event EventHandler? ConnectionChanged;
 
     /// <summary>
     /// How often to re-check the Inbox as a backstop. Outlook's item events
@@ -65,6 +69,7 @@ public sealed partial class OutlookMailStore : IMailStore
         catch { /* already logged on */ }
 
         IsConnected = true;
+        _hasConnected = true;
         PruneInlineImages();
         StartWatching();
         StartPolling();
@@ -76,18 +81,25 @@ public sealed partial class OutlookMailStore : IMailStore
     /// COM pointer we hold is dead and each call fails with "The RPC server is
     /// unavailable". Rather than surface that on every keystroke until the app
     /// is restarted, drop the stale pointers, attach to Outlook again and run
-    /// the call once more.
+    /// the call once more. A reconnect that failed earlier (Outlook was still
+    /// closing or starting) is tried again first, rather than every call
+    /// failing with "not connected" until the app is restarted.
     /// </summary>
     private Task<T> RunAsync<T>(Func<T> work, CancellationToken ct = default) =>
+        RunAsync(work, urgent: false, ct);
+
+    private Task<T> RunAsync<T>(Func<T> work, bool urgent, CancellationToken ct = default) =>
         _sta.InvokeAsync(() =>
         {
+            if (!IsConnected && _hasConnected) Reconnect();
+
             try { return work(); }
             catch (Exception ex) when (IsOutlookGone(ex))
             {
                 Reconnect();
                 return work();
             }
-        }, ct);
+        }, urgent, ct);
 
     private Task RunAsync(Action work, CancellationToken ct = default) =>
         RunAsync<object?>(() => { work(); return null; }, ct);
@@ -119,6 +131,7 @@ public sealed partial class OutlookMailStore : IMailStore
     /// </summary>
     private void Reconnect()
     {
+        var wasConnected = IsConnected;
         ReleaseOpenDrafts();
         StopWatching();
         ComUtil.ReleaseAll(_session, _app);
@@ -126,7 +139,15 @@ public sealed partial class OutlookMailStore : IMailStore
         _app = null;
         IsConnected = false;
 
-        ConnectCore();
+        try { ConnectCore(); }
+        catch
+        {
+            // Cut off until a later try gets through; the poll keeps trying.
+            if (wasConnected) ConnectionChanged?.Invoke(this, EventArgs.Empty);
+            throw;
+        }
+
+        if (!wasConnected) ConnectionChanged?.Invoke(this, EventArgs.Empty);
 
         // Whatever happened while we were cut off, the list is stale.
         SignalInboxChanged();
@@ -147,7 +168,12 @@ public sealed partial class OutlookMailStore : IMailStore
         {
             try
             {
-                if (!IsConnected) return;
+                // An earlier reconnect failed: try again each tick until Outlook is back.
+                if (!IsConnected)
+                {
+                    try { Reconnect(); } catch { /* not back yet; next tick */ }
+                    return;
+                }
 
                 dynamic? inbox = null, items = null;
                 try
@@ -234,7 +260,7 @@ public sealed partial class OutlookMailStore : IMailStore
 
     public Task<IReadOnlyList<MailSummary>> GetMailAsync(
         FolderRef folder, int max, CancellationToken ct = default) =>
-        _sta.InvokeAsync<IReadOnlyList<MailSummary>>(() =>
+        RunAsync<IReadOnlyList<MailSummary>>(() =>
         {
             EnsureConnected();
 
@@ -250,6 +276,50 @@ public sealed partial class OutlookMailStore : IMailStore
             }
             finally { ComUtil.Release(f); }
         }, ct);
+
+    public Task<IReadOnlyList<MailSummary>> SearchMailAsync(
+        string filter, int max, CancellationToken ct = default) =>
+        _sta.InvokeAsync<IReadOnlyList<MailSummary>>(() =>
+        {
+            EnsureConnected();
+
+            // Your own mail and the bins are not "mail you have got".
+            var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var id in new[] { FolderSentMail, FolderDeletedItems, FolderDrafts, FolderOutbox, FolderJunk })
+            {
+                dynamic? f = null;
+                try
+                {
+                    f = ComUtil.Try<object?>(() => _session!.GetDefaultFolder(id));
+                    if (f is not null) skip.Add(ComUtil.Str(() => f!.EntryID));
+                }
+                finally { ComUtil.Release(f); }
+            }
+
+            var found = new List<MailSummary>();
+            foreach (var node in MailFolders(ct))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (skip.Contains(node.Ref.EntryId)) continue;
+
+                dynamic? folder = null;
+                try
+                {
+                    folder = _session!.GetFolderFromID(node.Ref.EntryId, node.Ref.StoreId);
+                    found.AddRange(ReadViaTable((object)folder!, node.Ref.StoreId, max, filter));
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { /* a folder that will not filter should not sink the rest */ }
+                finally { ComUtil.Release(folder); }
+            }
+
+            return found.OrderByDescending(m => m.ReceivedUtc).Take(max).ToList();
+        }, ct);
+
+    // olFolderDrafts = 16, olFolderOutbox = 4, olFolderJunk = 23
+    private const int FolderDrafts = 16;
+    private const int FolderOutbox = 4;
+    private const int FolderJunk = 23;
 
     private const string PropHasAttach = "http://schemas.microsoft.com/mapi/proptag/0x0E1B000B";
 
@@ -281,7 +351,8 @@ public sealed partial class OutlookMailStore : IMailStore
             finally { ComUtil.Release(sent); }
         }, ct);
 
-    private static IReadOnlyList<MailSummary> ReadViaTable(object folderObj, string storeId, int max)
+    private static IReadOnlyList<MailSummary> ReadViaTable(
+        object folderObj, string storeId, int max, string? filter = null)
     {
         dynamic folder = folderObj;
         dynamic? table = null, columns = null;
@@ -289,7 +360,9 @@ public sealed partial class OutlookMailStore : IMailStore
 
         try
         {
-            table = folder.GetTable(Type.Missing, Type.Missing);
+            table = filter is null
+                ? folder.GetTable(Type.Missing, Type.Missing)
+                : folder.GetTable(filter, 0 /* olUserItems */);
             columns = table!.Columns;
 
             columns!.RemoveAll();
@@ -438,7 +511,7 @@ public sealed partial class OutlookMailStore : IMailStore
                 };
             }
             finally { ComUtil.Release(item); }
-        }, ct);
+        }, urgent: true, ct);
 
     public Task<IReadOnlyDictionary<string, MailRecipients>> GetRecipientsAsync(
         IReadOnlyList<MailRef> mail, CancellationToken ct = default) =>

@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:vm="clr-namespace:EmailTriage.App.ViewModels"
+        xmlns:views="clr-namespace:EmailTriage.App.Views"
         Title="Email Triage"
         Height="820" Width="1400"
         MinHeight="560" MinWidth="960"
@@ -171,31 +172,6 @@
             </DataTemplate.Triggers>
         </DataTemplate>
 
-        <!-- Small action buttons on the action tab; Tag="on" marks the active toggle. -->
-        <Style x:Key="ReportButton" TargetType="Button">
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Focusable" Value="False" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="B" Background="{StaticResource Raised}" BorderBrush="{StaticResource Border}"
-                                BorderThickness="1" CornerRadius="4" Padding="10,3">
-                            <TextBlock x:Name="T" Text="{TemplateBinding Content}" FontSize="11.5" Foreground="{StaticResource Text}" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource Accent}" />
-                            </Trigger>
-                            <Trigger Property="Tag" Value="on">
-                                <Setter TargetName="B" Property="Background" Value="#337AA2F7" />
-                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource Accent}" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
         <!-- Light yellow selection that is easy to find at a glance: the triage list,
              the move/snooze palette and contact suggestions. Their templates darken
              the text of the selected row to match. -->
@@ -226,6 +202,16 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <!-- The triage list adds the Shift+arrow multi-selection: marked rows get a
+             faint wash of the selection yellow, and the caret row keeps the full one. -->
+        <Style x:Key="TriageRowContainer" TargetType="ListBoxItem" BasedOn="{StaticResource MailRowContainer}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMarked}" Value="True">
+                    <Setter Property="Background" Value="#45FFF1A8" />
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="RowContainer" TargetType="ListBoxItem">
@@ -290,7 +276,7 @@
                         </TextBlock.Style>
                     </TextBlock>
 
-                    <TextBlock Text="Action items" FontSize="12" Padding="12,6">
+                    <TextBlock Text="{Binding ActionsTabTitle}" FontSize="12" Padding="12,6">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SectionTab}">
                                 <Style.Triggers>
@@ -329,72 +315,95 @@
                             </TextBlock>
                         </Button.ToolTip>
                     </Button>
+
+                    <Button Content="⚙ Settings" Margin="6,0,0,0" Click="OnSettingsClick"
+                            Style="{StaticResource ReportButton}">
+                        <Button.ToolTip>
+                            <TextBlock>
+                                <Run Text="How your folders are named and nested, and organizing them ·" />
+                                <Run Text="{Binding SettingsKey, Mode=OneWay}" />
+                            </TextBlock>
+                        </Button.ToolTip>
+                    </Button>
                 </StackPanel>
 
-                <!-- today strip: what is on now or next; click opens it in the Calendar tab and joins it if on -->
-                <Border Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Margin="16,0" Padding="10,3" CornerRadius="11" BorderThickness="1" Cursor="Hand"
-                        MouseLeftButtonUp="OnStripClick"
-                        Visibility="{Binding Calendar.StripText, Converter={StaticResource NullVis}}">
-                    <Border.ToolTip>
-                        <TextBlock>
-                            <Run Text="Click to open it in the Calendar tab, and join if it is on ·" />
-                            <Run Text="{Binding JoinKey, Mode=OneWay}" />
-                            <Run Text="joins" />
-                        </TextBlock>
-                    </Border.ToolTip>
-                    <Border.Style>
-                        <Style TargetType="Border">
-                            <Setter Property="Background" Value="{StaticResource Raised}" />
-                            <Setter Property="BorderBrush" Value="{StaticResource Border}" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Calendar.StripState}" Value="Clear">
-                                    <Setter Property="Background" Value="Transparent" />
-                                    <Setter Property="BorderBrush" Value="Transparent" />
+                <!-- today strip: one pill per meeting on now or coming up shortly; a click opens its card -->
+                <ItemsControl Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="16,0"
+                              ItemsSource="{Binding Calendar.Pills}" Focusable="False">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border x:Name="Pill" Margin="3,0" Padding="10,3" CornerRadius="11" BorderThickness="1"
+                                    MouseLeftButtonUp="OnPillClick">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="{StaticResource Raised}" />
+                                        <Setter Property="BorderBrush" Value="{StaticResource Border}" />
+                                        <Setter Property="Cursor" Value="Hand" />
+                                        <Setter Property="ToolTip" Value="{Binding Hint}" />
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse x:Name="Dot" Width="6" Height="6" Margin="0,1,7,0" VerticalAlignment="Center">
+                                        <Ellipse.Style>
+                                            <Style TargetType="Ellipse">
+                                                <Setter Property="Fill" Value="{StaticResource Accent}" />
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock x:Name="Label" Text="{Binding Text}" FontSize="11.5"
+                                               MaxWidth="{Binding DataContext.Calendar.PillMaxWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Border>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding State}" Value="Clear">
+                                    <Setter TargetName="Pill" Property="Background" Value="Transparent" />
+                                    <Setter TargetName="Pill" Property="BorderBrush" Value="Transparent" />
+                                    <Setter TargetName="Pill" Property="Cursor" Value="Arrow" />
+                                    <Setter TargetName="Pill" Property="ToolTip" Value="{x:Null}" />
+                                    <Setter TargetName="Dot" Property="Fill" Value="{StaticResource Ok}" />
+                                    <Setter TargetName="Label" Property="Foreground" Value="{StaticResource Muted}" />
                                 </DataTrigger>
-                                <DataTrigger Binding="{Binding Calendar.StripState}" Value="Now">
-                                    <Setter Property="Background" Value="#1F7AA2F7" />
-                                    <Setter Property="BorderBrush" Value="#667AA2F7" />
+                                <DataTrigger Binding="{Binding State}" Value="Now">
+                                    <Setter TargetName="Pill" Property="Background" Value="#1F7AA2F7" />
+                                    <Setter TargetName="Pill" Property="BorderBrush" Value="#667AA2F7" />
                                 </DataTrigger>
-                                <DataTrigger Binding="{Binding Calendar.StripState}" Value="Soon">
-                                    <Setter Property="Background" Value="#2EE0AF68" />
-                                    <Setter Property="BorderBrush" Value="{StaticResource Warn}" />
+                                <DataTrigger Binding="{Binding State}" Value="Soon">
+                                    <Setter TargetName="Pill" Property="Background" Value="#2EE0AF68" />
+                                    <Setter TargetName="Pill" Property="BorderBrush" Value="{StaticResource Warn}" />
+                                    <Setter TargetName="Dot" Property="Fill" Value="{StaticResource Warn}" />
                                 </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Border.Style>
-                    <StackPanel Orientation="Horizontal">
-                        <Ellipse Width="6" Height="6" Margin="0,1,7,0" VerticalAlignment="Center">
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <!-- AI usage: green dot on your Claude login, amber on an API key; hover for the breakdown -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,14,0" Background="Transparent"
+                                ToolTip="{Binding AiUsageDetail}" ToolTipService.ShowDuration="60000"
+                                Visibility="{Binding AiUsageText, Converter={StaticResource NullVis}}">
+                        <Ellipse Width="6" Height="6" Margin="0,0,5,0" VerticalAlignment="Center">
                             <Ellipse.Style>
                                 <Style TargetType="Ellipse">
-                                    <Setter Property="Fill" Value="{StaticResource Accent}" />
+                                    <Setter Property="Fill" Value="{StaticResource Muted}" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Calendar.StripState}" Value="Clear">
+                                        <DataTrigger Binding="{Binding AiAuthState}" Value="Login">
                                             <Setter Property="Fill" Value="{StaticResource Ok}" />
                                         </DataTrigger>
-                                        <DataTrigger Binding="{Binding Calendar.StripState}" Value="Soon">
+                                        <DataTrigger Binding="{Binding AiAuthState}" Value="ApiKey">
                                             <Setter Property="Fill" Value="{StaticResource Warn}" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </Ellipse.Style>
                         </Ellipse>
-                        <TextBlock Text="{Binding Calendar.StripText}" FontSize="11.5" MaxWidth="560"
-                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Calendar.StripState}" Value="Clear">
-                                            <Setter Property="Foreground" Value="{StaticResource Muted}" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
+                        <TextBlock Text="{Binding AiUsageText}" FontSize="11" Foreground="{StaticResource Muted}" />
                     </StackPanel>
-                </Border>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <TextBlock Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,14,0"
                                ToolTip="Sent while this app is running. Delete the draft in Outlook to cancel."
                                Visibility="{Binding PendingScheduledCount, Converter={StaticResource CountVis}}">
@@ -441,10 +450,40 @@
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0" Padding="10,8"
+                        <!-- list filter: every conversation, or only the unread ones -->
+                        <Border Grid.Row="0" Padding="10,8,10,6"
+                                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="All" Click="OnShowAllMail" ToolTip="Show every conversation">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource ReportButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Triage.ShowUnreadOnly}" Value="False">
+                                                    <Setter Property="Tag" Value="on" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Content="Unread" Margin="4,0,0,0" Click="OnShowUnreadMail" ToolTip="Show only unread conversations">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource ReportButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Triage.ShowUnreadOnly}" Value="True">
+                                                    <Setter Property="Tag" Value="on" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="1" Padding="10,8"
                                 Visibility="{Binding Triage.IsSearching, Converter={StaticResource BoolVis}}">
                             <DockPanel>
                                 <!-- ask mode: the box holds a question for Claude, not a filter -->
@@ -469,19 +508,25 @@
                             </DockPanel>
                         </Border>
 
-                        <ListBox Grid.Row="1"
+                        <ListBox Grid.Row="2"
                                  x:Name="MailList"
                                  ItemsSource="{Binding Triage.Rows}"
                                  SelectedItem="{Binding Triage.Selected, Mode=TwoWay}"
                                  ItemTemplate="{StaticResource MailRowTemplate}"
-                                 ItemContainerStyle="{StaticResource MailRowContainer}"
+                                 ItemContainerStyle="{StaticResource TriageRowContainer}"
                                  Background="Transparent" BorderThickness="0"
                                  Focusable="False"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                  VirtualizingPanel.IsVirtualizing="True"
                                  VirtualizingPanel.VirtualizationMode="Recycling" />
 
-                        <TextBlock Grid.Row="1" Text="Inbox is clear" FontSize="13"
+                        <!-- a load in progress: a stalled Outlook must not pass for an empty inbox -->
+                        <ProgressBar Grid.Row="2" IsIndeterminate="True" Height="2" VerticalAlignment="Top"
+                                     Background="Transparent" BorderThickness="0"
+                                     Foreground="{StaticResource Accent}"
+                                     Visibility="{Binding Triage.IsLoading, Converter={StaticResource BoolVis}}" />
+
+                        <TextBlock Grid.Row="2" Text="{Binding Triage.EmptyListText}" FontSize="13"
                                    Foreground="{StaticResource Muted}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Visibility="{Binding Triage.Rows.Count, Converter={StaticResource CountVisInv}}" />
@@ -502,8 +547,13 @@
                             BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1"
                             Visibility="{Binding Triage.OpenBody, Converter={StaticResource NullVis}}">
                         <StackPanel>
-                            <TextBlock Text="{Binding Triage.OpenBody.Subject}" FontSize="17"
-                                       FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="PDF" Click="OnSavePdf" Margin="12,0,0,0"
+                                        VerticalAlignment="Top" Style="{StaticResource ReportButton}"
+                                        ToolTip="Save this conversation as a PDF (Ctrl+P)" />
+                                <TextBlock Text="{Binding Triage.OpenBody.Subject}" FontSize="17"
+                                           FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </DockPanel>
                             <Grid Margin="0,7,0,0">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding Triage.OpenBody.SenderName}" FontSize="12" />
@@ -613,15 +663,19 @@
                             </ItemsControl>
 
                             <!-- previewing an attachment instead of the email -->
-                            <Border Background="#337AA2F7" CornerRadius="4" Padding="10,5" Margin="0,4,0,0"
-                                    HorizontalAlignment="Left"
-                                    Visibility="{Binding Triage.IsPreviewing, Converter={StaticResource BoolVis}}">
-                                <TextBlock FontSize="12" Foreground="{StaticResource Text}">
-                                    <Run Text="Previewing" />
-                                    <Run Text="{Binding Triage.PreviewName, Mode=OneWay}" FontWeight="SemiBold" />
-                                    <Run Text="· Esc back to the email" Foreground="{StaticResource Muted}" />
-                                </TextBlock>
-                            </Border>
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0"
+                                        Visibility="{Binding Triage.IsPreviewing, Converter={StaticResource BoolVis}}">
+                                <Border Background="#337AA2F7" CornerRadius="4" Padding="10,5">
+                                    <TextBlock FontSize="12" Foreground="{StaticResource Text}">
+                                        <Run Text="Previewing" />
+                                        <Run Text="{Binding Triage.PreviewName, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text="· Esc back to the email" Foreground="{StaticResource Muted}" />
+                                    </TextBlock>
+                                </Border>
+                                <Button Content="Open in System Viewer" Click="OnOpenPreviewExternally" Margin="8,0,0,0"
+                                        VerticalAlignment="Center" Style="{StaticResource ReportButton}"
+                                        ToolTip="Open this attachment in its usual program" />
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
@@ -891,6 +945,12 @@
                                                                         <Run Text="due" /><Run Text=" " /><Run Text="{Binding DueDisplay, Mode=OneWay}" />
                                                                     </TextBlock>
                                                                 </Border>
+                                                                <!-- its follow-up day has come: Shift+C drafts the follow-up -->
+                                                                <Border x:Name="FollowUpChip" CornerRadius="3" Padding="5,0" Margin="6,0,0,0" Background="#337AA2F7"
+                                                                        Visibility="{Binding IsInFollowUp, Converter={StaticResource BoolVis}}">
+                                                                    <TextBlock x:Name="FollowUpText" FontSize="10" Foreground="{StaticResource Accent}"
+                                                                               Text="{Binding ScheduledFollowUp}" />
+                                                                </Border>
                                                                 <!-- the wait has gone stale: c drafts the chase -->
                                                                 <Border CornerRadius="3" Padding="5,0" Margin="6,0,0,0" Background="#33E5C07B"
                                                                         Visibility="{Binding IsFollowUpDue, Converter={StaticResource BoolVis}}">
@@ -917,6 +977,7 @@
                                                         <Setter TargetName="CardWaiting" Property="Foreground" Value="#8A5A00" />
                                                         <Setter TargetName="DueText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
                                                         <Setter TargetName="NotesMark" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                                        <Setter TargetName="FollowUpText" Property="Foreground" Value="{StaticResource SelectedText}" />
                                                     </DataTrigger>
                                                 </DataTemplate.Triggers>
                                             </DataTemplate>
@@ -929,6 +990,14 @@
                                     <Setter TargetName="ColumnFrame" Property="BorderBrush" Value="{StaticResource Accent}" />
                                     <Setter TargetName="ColumnTitle" Property="Foreground" Value="{StaticResource Accent}" />
                                 </DataTrigger>
+                                <!-- Follow up takes no drops: it fills itself on each follow-up day -->
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsFollowUps}" Value="True" />
+                                        <Condition Binding="{Binding IsActive}" Value="False" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter TargetName="ColumnTitle" Property="Foreground" Value="{StaticResource Accent}" />
+                                </MultiDataTrigger>
                                 <DataTrigger Binding="{Binding IsDropTarget}" Value="True">
                                     <Setter TargetName="ColumnFrame" Property="BorderBrush" Value="{StaticResource Warn}" />
                                     <Setter TargetName="ColumnFrame" Property="BorderThickness" Value="2" />
@@ -1175,18 +1244,314 @@
                             <PropertyGroupDescription PropertyName="Day" />
                         </CollectionViewSource.GroupDescriptions>
                     </CollectionViewSource>
+
+                    <!-- tentative meetings are striped, as in Outlook -->
+                    <LinearGradientBrush x:Key="TentativeStripes" StartPoint="0,0" EndPoint="7,7"
+                                         MappingMode="Absolute" SpreadMethod="Repeat">
+                        <GradientStop Color="#00000000" Offset="0" />
+                        <GradientStop Color="#00000000" Offset="0.5" />
+                        <GradientStop Color="#387AA2F7" Offset="0.5" />
+                        <GradientStop Color="#387AA2F7" Offset="1" />
+                    </LinearGradientBrush>
+
+                    <!-- a meeting in a month cell or the all-day row -->
+                    <DataTemplate x:Key="CalendarChip">
+                        <Border x:Name="Chip" Background="#1F7AA2F7" CornerRadius="3" Padding="5,1" Margin="0,0,0,2"
+                                Cursor="Hand" MouseLeftButtonUp="OnCalendarItemClick" ToolTip="{Binding Row.Subject}">
+                            <TextBlock x:Name="ChipText" Text="{Binding Text}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                        </Border>
+                        <DataTemplate.Triggers>
+                            <DataTrigger Binding="{Binding Event.IsAllDay}" Value="True">
+                                <Setter TargetName="Chip" Property="Background" Value="#33E0AF68" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Event.NeedsResponse}" Value="True">
+                                <Setter TargetName="ChipText" Property="Foreground" Value="{StaticResource Warn}" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Event.IsDeclined}" Value="True">
+                                <Setter TargetName="ChipText" Property="TextDecorations" Value="Strikethrough" />
+                                <Setter TargetName="Chip" Property="Opacity" Value="0.55" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter TargetName="Chip" Property="Background" Value="{StaticResource SelectedRow}" />
+                                <Setter TargetName="ChipText" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                <Setter TargetName="Chip" Property="Opacity" Value="1" />
+                            </DataTrigger>
+                        </DataTemplate.Triggers>
+                    </DataTemplate>
                 </Grid.Resources>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="400" MinWidth="280" />
+                    <ColumnDefinition Width="*" MinWidth="360" />
                     <ColumnDefinition Width="4" />
-                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="380" MinWidth="260" />
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0" Background="{StaticResource Panel}">
+                <!-- views (1-5), back / today / forward, and the span shown -->
+                <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource Panel}"
+                        BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="12,7">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Day" CommandParameter="Day" Click="OnCalendarViewClick" ToolTip="1" Margin="0,0,4,0"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=Day}" />
+                        <Button Content="Work week" CommandParameter="WorkWeek" Click="OnCalendarViewClick" ToolTip="2" Margin="0,0,4,0"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=WorkWeek}" />
+                        <Button Content="Week" CommandParameter="Week" Click="OnCalendarViewClick" ToolTip="3" Margin="0,0,4,0"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=Week}" />
+                        <Button Content="Month" CommandParameter="Month" Click="OnCalendarViewClick" ToolTip="4" Margin="0,0,4,0"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=Month}" />
+                        <Button Content="Agenda" CommandParameter="Agenda" Click="OnCalendarViewClick" ToolTip="5"
+                                Style="{StaticResource ReportButton}"
+                                Tag="{Binding View, Converter={StaticResource MatchTag}, ConverterParameter=Agenda}" />
+
+                        <Button Content="+ New" Click="OnCalendarNew" ToolTip="New calendar entry (s or n)"
+                                Margin="18,0,0,0" Style="{StaticResource ReportButton}" />
+
+                        <StackPanel Orientation="Horizontal" Margin="18,0,0,0"
+                                    Visibility="{Binding IsAgenda, Converter={StaticResource BoolVisInv}}">
+                            <Button Content="‹" Click="OnCalendarPrev" ToolTip="Back (Left)" Margin="0,0,4,0" Style="{StaticResource ReportButton}" />
+                            <Button Content="Today" Click="OnCalendarToday" ToolTip="Home" Margin="0,0,4,0" Style="{StaticResource ReportButton}" />
+                            <Button Content="›" Click="OnCalendarNext" ToolTip="Forward (Right)" Style="{StaticResource ReportButton}" />
+                        </StackPanel>
+
+                        <TextBlock Text="{Binding RangeTitle}" FontSize="13" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="14,0,0,0" />
+                        <TextBlock Text="reading your calendar..." FontSize="11.5" Foreground="{StaticResource Muted}"
+                                   VerticalAlignment="Center" Margin="12,0,0,0"
+                                   Visibility="{Binding IsLoading, Converter={StaticResource BoolVis}}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 1-3 · day, work week, week: a time grid, overlapping meetings side by side -->
+                <Grid Grid.Row="1" Grid.Column="0" Background="{StaticResource Bg}"
+                      Visibility="{Binding IsTimeGrid, Converter={StaticResource BoolVis}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- the day headings and all-day row leave room for the grid's scroll bar, so the columns line up -->
+                    <Grid Grid.Row="0" x:Name="CalendarHeader">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="52" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ItemsControl Grid.Column="1" ItemsSource="{Binding Days}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock x:Name="Heading" Text="{Binding Header}" FontSize="12" Padding="8,8,0,6"
+                                               Foreground="{StaticResource Muted}" />
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsToday}" Value="True">
+                                            <Setter TargetName="Heading" Property="Foreground" Value="{StaticResource Accent}" />
+                                            <Setter TargetName="Heading" Property="FontWeight" Value="Bold" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Grid>
+
+                    <Grid Grid.Row="1" x:Name="CalendarAllDay">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="52" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="all day" FontSize="10" Foreground="{StaticResource Muted}"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,4,8,6" />
+                        <ItemsControl Grid.Column="1" ItemsSource="{Binding Days}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,1" Padding="3,3,3,1" MinHeight="24">
+                                        <ItemsControl ItemsSource="{Binding AllDay}" ItemTemplate="{StaticResource CalendarChip}" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="2" x:Name="CalendarScroll" VerticalScrollBarVisibility="Visible"
+                                  HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                        <Grid Height="{Binding GridHeight}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="52" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <ItemsControl Grid.Column="0" ItemsSource="{x:Static vm:CalendarViewModel.HourLabels}" IsHitTestVisible="False">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" Height="{x:Static vm:CalendarViewModel.HourHeight}" FontSize="10"
+                                                   Foreground="{StaticResource Muted}" HorizontalAlignment="Right" Margin="0,2,8,0" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <ItemsControl Grid.Column="1" ItemsSource="{Binding Days}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border x:Name="Column" BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0" Background="Transparent"
+                                                MouseLeftButtonDown="OnCalendarColumnMouseDown">
+                                            <Grid ClipToBounds="True">
+                                                <!-- outside working hours -->
+                                                <Border VerticalAlignment="Top" Height="{Binding OffBefore}" Background="#33000000" IsHitTestVisible="False" />
+                                                <Border VerticalAlignment="Bottom" Height="{Binding OffAfter}" Background="#33000000" IsHitTestVisible="False" />
+
+                                                <!-- hour lines -->
+                                                <ItemsControl ItemsSource="{x:Static vm:CalendarViewModel.HourLabels}" IsHitTestVisible="False">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border Height="{x:Static vm:CalendarViewModel.HourHeight}" BorderBrush="#222A3040" BorderThickness="0,1,0,0" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <ItemsControl ItemsSource="{Binding Blocks}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate><views:TimeGridPanel /></ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemContainerStyle>
+                                                        <Style TargetType="ContentPresenter">
+                                                            <Setter Property="views:TimeGridPanel.Top" Value="{Binding Top}" />
+                                                            <Setter Property="views:TimeGridPanel.BlockHeight" Value="{Binding Height}" />
+                                                            <Setter Property="views:TimeGridPanel.Lane" Value="{Binding Lane}" />
+                                                            <Setter Property="views:TimeGridPanel.Lanes" Value="{Binding Lanes}" />
+                                                        </Style>
+                                                    </ItemsControl.ItemContainerStyle>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border x:Name="Block" Background="#2E7AA2F7" BorderBrush="{StaticResource Accent}"
+                                                                    BorderThickness="3,0,0,0" CornerRadius="3" Margin="1,1,2,1"
+                                                                    Cursor="Hand" MouseLeftButtonUp="OnCalendarItemClick" ToolTip="{Binding Row.Subject}">
+                                                                <Grid>
+                                                                    <Border x:Name="Stripes" Background="{StaticResource TentativeStripes}" Visibility="Collapsed" />
+                                                                    <!-- not answered yet: a dashed amber outline -->
+                                                                    <Rectangle x:Name="Dashed" Stroke="{StaticResource Warn}" StrokeThickness="1"
+                                                                               StrokeDashArray="3 2" RadiusX="2" RadiusY="2" Visibility="Collapsed" />
+                                                                    <StackPanel Margin="5,1,4,1">
+                                                                        <TextBlock x:Name="Subject" Text="{Binding Row.Subject}" FontSize="11.5" FontWeight="SemiBold"
+                                                                                   TextTrimming="CharacterEllipsis" />
+                                                                        <TextBlock x:Name="Caption" Text="{Binding Caption}" FontSize="10.5" Margin="0,1,0,0"
+                                                                                   Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"
+                                                                                   Visibility="{Binding IsRoomy, Converter={StaticResource BoolVis}}" />
+                                                                    </StackPanel>
+                                                                </Grid>
+                                                            </Border>
+                                                            <DataTemplate.Triggers>
+                                                                <DataTrigger Binding="{Binding Row.IsPast}" Value="True">
+                                                                    <Setter TargetName="Block" Property="Opacity" Value="0.6" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsTentative}" Value="True">
+                                                                    <Setter TargetName="Stripes" Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Event.NeedsResponse}" Value="True">
+                                                                    <Setter TargetName="Dashed" Property="Visibility" Value="Visible" />
+                                                                    <Setter TargetName="Block" Property="BorderBrush" Value="{StaticResource Warn}" />
+                                                                    <Setter TargetName="Block" Property="Background" Value="#1FE0AF68" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Event.IsDeclined}" Value="True">
+                                                                    <Setter TargetName="Subject" Property="TextDecorations" Value="Strikethrough" />
+                                                                    <Setter TargetName="Block" Property="Opacity" Value="0.5" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                    <Setter TargetName="Block" Property="Background" Value="{StaticResource SelectedRow}" />
+                                                                    <Setter TargetName="Block" Property="Opacity" Value="1" />
+                                                                    <Setter TargetName="Subject" Property="Foreground" Value="{StaticResource SelectedText}" />
+                                                                    <Setter TargetName="Caption" Property="Foreground" Value="{StaticResource SelectedMuted}" />
+                                                                </DataTrigger>
+                                                            </DataTemplate.Triggers>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <!-- now -->
+                                                <Canvas IsHitTestVisible="False" Visibility="{Binding IsToday, Converter={StaticResource BoolVis}}">
+                                                    <Border Canvas.Top="{Binding NowTop}" Height="2" Background="{StaticResource Danger}"
+                                                            Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=Canvas}}" />
+                                                </Canvas>
+                                            </Grid>
+                                        </Border>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsWeekend}" Value="True">
+                                                <Setter TargetName="Column" Property="Background" Value="#26000000" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- 4 · month: six weeks; a click on a day opens it in the Day view -->
+                <Grid Grid.Row="1" Grid.Column="0" Background="{StaticResource Bg}"
+                      Visibility="{Binding IsMonth, Converter={StaticResource BoolVis}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <ItemsControl Grid.Row="0" ItemsSource="{x:Static vm:CalendarViewModel.WeekdayNames}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="11" Padding="8,8,0,6" Foreground="{StaticResource Muted}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <ItemsControl Grid.Row="1" ItemsSource="{Binding MonthCells}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><UniformGrid Rows="6" Columns="7" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border x:Name="Cell" BorderBrush="{StaticResource Border}" BorderThickness="1,1,0,0"
+                                        Background="Transparent" ClipToBounds="True" Cursor="Hand"
+                                        MouseLeftButtonUp="OnMonthDayClick" ToolTip="Open this day">
+                                    <StackPanel Margin="5,4,5,2">
+                                        <TextBlock x:Name="DayNumber" Text="{Binding DayText}" FontSize="11.5" Margin="1,0,0,3" />
+                                        <ItemsControl ItemsSource="{Binding Entries}" ItemTemplate="{StaticResource CalendarChip}" />
+                                        <TextBlock Text="{Binding More}" FontSize="10.5" Margin="3,0,0,0" Foreground="{StaticResource Muted}"
+                                                   Visibility="{Binding More, Converter={StaticResource NullVis}}" />
+                                    </StackPanel>
+                                </Border>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsOtherMonth}" Value="True">
+                                        <Setter TargetName="Cell" Property="Opacity" Value="0.45" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsToday}" Value="True">
+                                        <Setter TargetName="DayNumber" Property="Foreground" Value="{StaticResource Accent}" />
+                                        <Setter TargetName="DayNumber" Property="FontWeight" Value="Bold" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+
+                <!-- 5 · agenda: the fortnight ahead as a list -->
+                <Border Grid.Row="1" Grid.Column="0" Background="{StaticResource Panel}"
+                        Visibility="{Binding IsAgenda, Converter={StaticResource BoolVis}}">
                     <Grid>
                         <ListBox x:Name="AgendaList"
                                  ItemsSource="{Binding Source={StaticResource AgendaDays}}"
-                                 SelectedItem="{Binding Selected, Mode=TwoWay}"
+                                 SelectedItem="{Binding AgendaSelected, Mode=TwoWay}"
                                  ItemContainerStyle="{StaticResource MailRowContainer}"
                                  Background="Transparent" BorderThickness="0" Focusable="False"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -1265,10 +1630,10 @@
                     </Grid>
                 </Border>
 
-                <GridSplitter Grid.Column="1" Width="4" Background="{StaticResource Border}" HorizontalAlignment="Stretch" />
+                <GridSplitter Grid.Row="1" Grid.Column="1" Width="4" Background="{StaticResource Border}" HorizontalAlignment="Stretch" />
 
                 <!-- the selected meeting -->
-                <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" Padding="22,18"
+                <ScrollViewer Grid.Row="1" Grid.Column="2" VerticalScrollBarVisibility="Auto" Padding="22,18"
                               Visibility="{Binding Selected, Converter={StaticResource NullVis}}">
                     <StackPanel MaxWidth="760" HorizontalAlignment="Left">
                         <TextBlock Text="{Binding Selected.Subject}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
@@ -1340,7 +1705,7 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <TextBlock Grid.Column="2" Text="Select a meeting" Foreground="{StaticResource Muted}" FontSize="13"
+                <TextBlock Grid.Row="1" Grid.Column="2" Text="Select a meeting" Foreground="{StaticResource Muted}" FontSize="13"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            Visibility="{Binding Selected, Converter={StaticResource NullVisInv}}" />
             </Grid>
@@ -1403,6 +1768,10 @@
                                    FontWeight="SemiBold" Foreground="{StaticResource Muted}" />
                         <TextBlock Text="{Binding Triage.Palette.ContextLine}" FontSize="12.5"
                                    Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Triage.Palette.OptionsLine}" FontSize="12"
+                                   Margin="0,4,0,0" Foreground="{StaticResource Accent}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Visibility="{Binding Triage.Palette.OptionsLine, Converter={StaticResource NullVis}}" />
                     </StackPanel>
 
                     <TextBox Grid.Row="1" x:Name="PaletteBox" Margin="16,12,16,10"
@@ -1420,7 +1789,7 @@
                                 <StackPanel Margin="{Binding Padding}">
                                     <TextBlock x:Name="PrimaryText" Text="{Binding Primary}" FontSize="13.5"
                                                Foreground="{StaticResource Text}"
-                                               TextTrimming="CharacterEllipsis" />
+                                               TextWrapping="Wrap" />
                                     <TextBlock x:Name="SecondaryText" Text="{Binding Secondary}" FontSize="11"
                                                Foreground="{StaticResource Muted}" Margin="0,2,0,0"
                                                TextTrimming="CharacterEllipsis"
@@ -1556,7 +1925,7 @@
                         </ListBox>
                     </Border>
 
-                    <!-- files to attach: dropped on the composer, ✕ to take one off -->
+                    <!-- files going out: a forward's originals and any dropped on the composer, ✕ to take one off -->
                     <ItemsControl Grid.Row="2" ItemsSource="{Binding Triage.Composer.Attachments}" Margin="18,0,18,8"
                                   Visibility="{Binding Triage.Composer.Attachments.Count, Converter={StaticResource CountVis}}">
                         <ItemsControl.ItemsPanel>
@@ -1565,7 +1934,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Margin="0,0,6,6" Background="{StaticResource Raised}" BorderBrush="{StaticResource Border}"
-                                        BorderThickness="1" CornerRadius="5" Padding="9,4,4,4" ToolTip="{Binding Path}">
+                                        BorderThickness="1" CornerRadius="5" Padding="9,4,4,4" ToolTip="{Binding Where}">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="📎" FontSize="11" Margin="0,0,5,0" Foreground="{StaticResource Muted}" />
                                         <TextBlock Text="{Binding Name}" FontSize="12" MaxWidth="260"
@@ -1606,6 +1975,62 @@
                     <Border Grid.Row="3" Background="{StaticResource Raised}"
                             CornerRadius="0,0,9,9" Padding="18,10">
                         <StackPanel>
+                            <!-- follow-up (Ctrl+Shift+F): Tab runs by, who, what, then the two toggles -->
+                            <Grid Margin="0,0,0,10"
+                                  Visibility="{Binding Triage.Composer.IsFollowingUp, Converter={StaticResource BoolVis}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="72" />
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="Follow up" FontSize="12" VerticalAlignment="Center"
+                                           Foreground="{StaticResource Accent}" FontWeight="SemiBold" />
+                                <TextBox Grid.Column="1" x:Name="FollowUpBox" Style="{StaticResource FlatInput}" FontSize="13"
+                                         Text="{Binding Triage.Composer.FollowUpWhen, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Column="2" Text="{Binding Triage.Composer.FollowUpWhenPreview}" FontSize="12"
+                                           Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
+
+                                <TextBlock Grid.Row="1" Text="Who" FontSize="12" Margin="0,6,0,0" VerticalAlignment="Center"
+                                           Foreground="{StaticResource Muted}" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Margin="0,6,0,0" Style="{StaticResource FlatInput}" FontSize="13"
+                                         Text="{Binding Triage.Composer.FollowUpWho, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Triage.Composer.FollowUpWhoPreview}" FontSize="12"
+                                           Margin="10,6,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                           Foreground="{StaticResource Muted}" />
+
+                                <TextBlock Grid.Row="2" Text="What" FontSize="12" Margin="0,6,0,0" VerticalAlignment="Center"
+                                           Foreground="{StaticResource Muted}" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0"
+                                         Style="{StaticResource FlatInput}" FontSize="13"
+                                         ToolTip="Optional - e.g. send the revised drawings"
+                                         Text="{Binding Triage.Composer.FollowUpWhat, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <StackPanel Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,8,0,0">
+                                    <CheckBox IsChecked="{Binding Triage.Composer.TrackAsTask}" VerticalAlignment="Center"
+                                              Foreground="{StaticResource Text}" FontSize="12"
+                                              ToolTip="On the day, it moves to the board's Follow up column for a chase">
+                                        Track it on the board (Ctrl+Shift+T)
+                                    </CheckBox>
+                                    <CheckBox IsChecked="{Binding Triage.Composer.MentionInEmail}" VerticalAlignment="Center"
+                                              Margin="18,0,0,0" Foreground="{StaticResource Text}" FontSize="12">
+                                        Add a follow-up line to the email
+                                    </CheckBox>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- the way in for the mouse; Ctrl+Shift+F from the keyboard -->
+                            <Button Content="+ Follow up" HorizontalAlignment="Left" Margin="0,0,0,8"
+                                    Style="{StaticResource ReportButton}" Click="OnFollowUpButtonClick"
+                                    ToolTip="Pick a day to follow up and who it's waiting on (Ctrl+Shift+F)"
+                                    Visibility="{Binding Triage.Composer.IsFollowingUp, Converter={StaticResource BoolVisInv}}" />
+
                             <!-- send later (Ctrl+Shift+L) -->
                             <DockPanel Margin="0,0,0,10"
                                        Visibility="{Binding Triage.Composer.IsScheduling, Converter={StaticResource BoolVis}}">
@@ -1622,10 +2047,10 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Esc discard · @ mentions · drop files to attach"
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Esc discard · @ mentions · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+S subject · Esc discard · @ mentions · drop files to attach"
+                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Esc discard · @ mentions · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"

@@ -59,6 +59,60 @@ public static partial class HtmlPresenter
         return Document(sb.ToString(), blockRemoteImages, darkTheme);
     }
 
+    /// <summary>
+    /// The conversation as a document to keep: light, on white paper, the
+    /// subject on top and every message open with its full header, newest
+    /// first as in the reading pane.
+    /// </summary>
+    public static string RenderThreadForPdf(
+        string subject, IReadOnlyList<MailBody> bodies, bool blockRemoteImages, int hiddenOlder = 0)
+    {
+        static string E(string s) => WebUtility.HtmlEncode(s);
+
+        var sb = new StringBuilder();
+        sb.Append("<h1 class=\"subject\">").Append(E(subject.Length > 0 ? subject : "(no subject)")).Append("</h1>");
+        sb.Append($"<p class=\"count\">{bodies.Count + hiddenOlder} message{(bodies.Count + hiddenOlder == 1 ? "" : "s")}</p>");
+
+        var shown = 0;
+        foreach (var body in bodies)
+        {
+            var content = PrepareContent(body, darkTheme: false);
+            if (shown > 0 && sb.Length + content.Length > MaxDocumentChars) break;
+
+            var from = string.IsNullOrWhiteSpace(body.SenderName)
+                ? body.SenderAddress
+                : $"{body.SenderName} <{body.SenderAddress}>";
+
+            sb.Append("<details class=\"msg\" open><summary><table class=\"head\">");
+            sb.Append("<tr><th>From</th><td>").Append(E(from)).Append("</td></tr>");
+            sb.Append("<tr><th>Sent</th><td>").Append(E(body.ReceivedDisplay)).Append("</td></tr>");
+            if (body.ToDetail.Length > 0) sb.Append("<tr><th>To</th><td>").Append(E(body.ToDetail)).Append("</td></tr>");
+            if (body.HasCc) sb.Append("<tr><th>Cc</th><td>").Append(E(body.CcDetail)).Append("</td></tr>");
+            if (body.HasAttachments)
+                sb.Append("<tr><th>Attached</th><td>").Append(E(string.Join(", ", body.Attachments.Select(a => a.Name)))).Append("</td></tr>");
+            sb.Append("</table></summary>");
+            sb.Append("<div class=\"msg-body\">").Append(content).Append("</div></details>");
+            shown++;
+        }
+
+        var hidden = hiddenOlder + bodies.Count - shown;
+        if (hidden > 0)
+            sb.Append($"<p class=\"older\">{hidden} older message{(hidden == 1 ? "" : "s")} in this conversation not included.</p>");
+
+        return Document(sb.ToString(), blockRemoteImages, darkTheme: false);
+    }
+
+    /// <summary>"2026-09-28 Level 3 punch list.pdf": the newest message's date, then the subject, safe as a file name.</summary>
+    public static string PdfFileName(string subject, DateTimeOffset newest)
+    {
+        var bad = System.IO.Path.GetInvalidFileNameChars().Concat(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }).ToHashSet();
+        var name = new string(subject.Select(c => bad.Contains(c) || char.IsControl(c) ? ' ' : c).ToArray());
+        name = string.Join(' ', name.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Trim(' ', '.');
+        if (name.Length > 80) name = name[..80].TrimEnd(' ', '.');
+        if (name.Length == 0) name = "Email";
+        return $"{newest.ToLocalTime():yyyy-MM-dd} {name}.pdf";
+    }
+
     private static string MessageHeader(MailBody body)
     {
         static string E(string s) => WebUtility.HtmlEncode(s);
@@ -157,6 +211,19 @@ public static partial class HtmlPresenter
               details.msg[open] .snippet { display: none; }
               details.msg > .msg-body { padding: 12px 16px; }
               p.older { opacity: .6; font-size: 12.5px; }
+              /* the PDF copy of a conversation */
+              h1.subject { font-size: 20px; margin: 0 0 2px; }
+              p.count { opacity: .6; font-size: 12px; margin: 0 0 14px; }
+              table.head { border-collapse: collapse; font-size: 12.5px; }
+              table.head th { text-align: left; font-weight: 600; padding: 1px 12px 1px 0; vertical-align: top; white-space: nowrap; }
+              table.head td { padding: 1px 0; }
+              details.msg > summary:has(table.head)::before { display: none; }
+              @media print {
+                html, body { padding: 0; }
+                .mail { max-width: none; }
+                details.msg { break-inside: auto; }
+                details.msg > summary { break-after: avoid; }
+              }
             </style>
             </head>
             <body><div class="mail">{{content}}</div></body>

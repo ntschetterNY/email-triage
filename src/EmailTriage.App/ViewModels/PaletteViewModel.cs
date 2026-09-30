@@ -17,7 +17,7 @@ public sealed record PaletteEntry(
     public System.Windows.Thickness Padding => new(10 + Indent * 20, 7, 10, 7);
 }
 
-public enum PaletteMode { Folder, Snooze, Attachment, Rsvp, Schedule }
+public enum PaletteMode { Folder, Snooze, Attachment, Rsvp, Schedule, OpenFolder }
 
 /// <summary>
 /// The type-and-pick overlay shared by the move (`k`) and snooze (`g`)
@@ -33,6 +33,9 @@ public sealed partial class PaletteViewModel : ObservableObject
     [ObservableProperty] private string _hint = "";
     [ObservableProperty] private PaletteMode _mode;
     [ObservableProperty] private string _contextLine = "";
+
+    /// <summary>Switches on what is being made, such as a meeting's Teams and repeat; empty hides the line.</summary>
+    [ObservableProperty] private string _optionsLine = "";
 
     /// <summary>
     /// Shown when nothing matches, offering to create the typed folder. Null
@@ -57,6 +60,7 @@ public sealed partial class PaletteViewModel : ObservableObject
         Title = title;
         Hint = hint;
         ContextLine = contextLine;
+        OptionsLine = "";
         Query = "";
         SelectedIndex = 0;
         CreatePrompt = null;

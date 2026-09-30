@@ -66,7 +66,7 @@ public sealed partial class WritingStyleService
         var samples = await CollectSamplesAsync(ct).ConfigureAwait(false);
         if (samples.Count < 3) return "";
 
-        var guide = (await _assistant.AskAsync(BuildPrompt(samples), model, ct).ConfigureAwait(false)).Trim();
+        var guide = (await _assistant.AskAsync(BuildPrompt(samples), model, "style", ct).ConfigureAwait(false)).Trim();
         if (guide.Length == 0) return "";
 
         try

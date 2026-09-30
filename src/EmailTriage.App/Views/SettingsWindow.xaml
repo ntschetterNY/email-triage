@@ -1,0 +1,185 @@
+<Window x:Class="EmailTriage.App.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings"
+        Height="760" Width="780"
+        MinHeight="480" MinWidth="560"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{StaticResource Bg}"
+        UseLayoutRounding="True"
+        TextOptions.TextRenderingMode="ClearType">
+
+    <Window.Resources>
+        <Style x:Key="Heading" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+        <Style x:Key="Label" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,16,0,5" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Foreground" Value="{StaticResource Muted}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,5,0,0" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="28,22,28,24">
+
+                <!-- ============ which model drafts follow-up chases ============ -->
+                <TextBlock Text="Follow-ups" Style="{StaticResource Heading}" />
+                <TextBlock Style="{StaticResource Hint}" Margin="0">
+                    The model Claude drafts follow-up chases with (c on the board, and hand-off mails).
+                </TextBlock>
+
+                <TextBlock Text="Model" Style="{StaticResource Label}" />
+                <ComboBox Width="320" HorizontalAlignment="Left" FontSize="12.5"
+                          ItemsSource="{Binding FollowUpModels}" DisplayMemberPath="Label"
+                          SelectedItem="{Binding FollowUpModel}" />
+
+                <Border Height="1" Background="{StaticResource Border}" Margin="0,26,0,22" />
+
+                <!-- ============ how folders are named and nested ============ -->
+                <TextBlock Text="Folder structure" Style="{StaticResource Heading}" />
+                <TextBlock Style="{StaticResource Hint}" Margin="0">
+                    Tell the app how you name folders, and it keeps them in a nested tree instead:
+                    a folder named "Elara - Field Reports - Rimkus" lives at Elara › Field Reports › Rimkus.
+                </TextBlock>
+
+                <TextBlock Text="How your folders are named" Style="{StaticResource Label}" />
+                <TextBox Style="{StaticResource FlatInput}"
+                         Text="{Binding NamePattern, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Style="{StaticResource Hint}">
+                    Put each part of the name in {braces}. The text between the parts, like " - ", is what splits a name.
+                    A name can stop early: "Elara - Field Reports" still counts.
+                </TextBlock>
+
+                <TextBlock Text="How they nest" Style="{StaticResource Label}" />
+                <TextBox Style="{StaticResource FlatInput}"
+                         Text="{Binding Layout, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Style="{StaticResource Hint}">
+                    One folder level per \, outermost first. Reorder the parts, leave one out, or add a fixed
+                    folder: Projects\{Project}\{Type}\{Company}.
+                </TextBlock>
+
+                <TextBlock Text="Build the tree under (optional)" Style="{StaticResource Label}" />
+                <TextBox Style="{StaticResource FlatInput}"
+                         Text="{Binding Home, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Style="{StaticResource Hint}">
+                    A folder from the top of your mailbox, such as Inbox. Leave it empty to nest each folder where it
+                    already is; new folders then go at the top of the mailbox, beside the Inbox.
+                </TextBlock>
+
+                <CheckBox IsChecked="{Binding NestNewFolders}" Margin="0,16,0,0" VerticalContentAlignment="Center">
+                    <TextBlock FontSize="12.5" TextWrapping="Wrap"
+                               Text="When I create a folder from the move palette (v) with a name like this, make it nested" />
+                </CheckBox>
+
+                <!-- try it -->
+                <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Border}" BorderThickness="1"
+                        CornerRadius="6" Padding="14,12" Margin="0,18,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Try a name" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,0,0,5" />
+                        <TextBox Style="{StaticResource FlatInput}"
+                                 Text="{Binding Example, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Text="{Binding Preview}" FontSize="13" Margin="0,9,0,0"
+                                   Foreground="{StaticResource Accent}" TextWrapping="Wrap"
+                                   Visibility="{Binding Preview, Converter={StaticResource NullVis}}" />
+                        <TextBlock Text="{Binding SchemeError}" FontSize="12.5" Margin="0,9,0,0"
+                                   Foreground="{StaticResource Danger}" TextWrapping="Wrap"
+                                   Visibility="{Binding SchemeError, Converter={StaticResource NullVis}}" />
+                    </StackPanel>
+                </Border>
+
+                <Button Content="Reset to defaults" Click="OnResetClick" HorizontalAlignment="Left"
+                        Margin="0,12,0,0" Style="{StaticResource ReportButton}" />
+
+                <Border Height="1" Background="{StaticResource Border}" Margin="0,26,0,22" />
+
+                <!-- ============ organize what is already in Outlook ============ -->
+                <TextBlock Text="Organize existing folders" Style="{StaticResource Heading}" />
+                <TextBlock Style="{StaticResource Hint}" Margin="0">
+                    Finds folders named this way that are not nested yet, and moves each, with its mail and
+                    subfolders, to its place in the tree. Where that folder already exists, the contents are merged
+                    into it and the emptied original goes to Deleted Items. Nothing moves until you press Organize.
+                </TextBlock>
+
+                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                    <Button Content="Find folders to organize" Click="OnFindClick" Style="{StaticResource ReportButton}" />
+                    <Button Content="{Binding OrganizeLabel}" Click="OnOrganizeClick" Margin="8,0,0,0" Tag="on"
+                            Style="{StaticResource ReportButton}"
+                            Visibility="{Binding HasPlan, Converter={StaticResource BoolVis}}" />
+                    <Button Content="Tick all" Click="OnTickAllClick" Margin="18,0,0,0" Style="{StaticResource ReportButton}"
+                            Visibility="{Binding HasPlan, Converter={StaticResource BoolVis}}" />
+                    <Button Content="Untick all" Click="OnUntickAllClick" Margin="6,0,0,0" Style="{StaticResource ReportButton}"
+                            Visibility="{Binding HasPlan, Converter={StaticResource BoolVis}}" />
+                </StackPanel>
+
+                <ItemsControl ItemsSource="{Binding Plan}" Margin="0,12,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="2,8">
+                                <DockPanel>
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsChecked}"
+                                              VerticalAlignment="Top" Margin="0,2,10,0" />
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding From}" FontSize="11.5" Foreground="{StaticResource Muted}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                            <TextBlock Text="→ " FontSize="13" Foreground="{StaticResource Muted}" />
+                                            <TextBlock Text="{Binding To}" FontSize="13" TextTrimming="CharacterEllipsis" />
+                                            <Border Background="#2EE0AF68" CornerRadius="3" Padding="6,0" Margin="8,1,0,0"
+                                                    VerticalAlignment="Center"
+                                                    Visibility="{Binding Merges, Converter={StaticResource BoolVis}}"
+                                                    ToolTip="A folder is already there; the contents are merged into it.">
+                                                <TextBlock Text="merges" FontSize="10.5" Foreground="{StaticResource Warn}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Outcome}" FontSize="11.5" Margin="0,3,0,0" TextWrapping="Wrap"
+                                                   Visibility="{Binding Outcome, Converter={StaticResource NullVis}}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Setter Property="Foreground" Value="{StaticResource Ok}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Failed}" Value="True">
+                                                            <Setter Property="Foreground" Value="{StaticResource Danger}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ============ footer ============ -->
+        <Border Grid.Row="1" Background="{StaticResource Panel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="28,10">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Save" Click="OnSaveClick" Tag="on" Style="{StaticResource ReportButton}" />
+                    <Button Content="Close" Click="OnCloseClick" Margin="8,0,0,0" Style="{StaticResource ReportButton}" />
+                </StackPanel>
+                <TextBlock Text="{Binding Status}" FontSize="11.5" Foreground="{StaticResource Muted}"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,16,0" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

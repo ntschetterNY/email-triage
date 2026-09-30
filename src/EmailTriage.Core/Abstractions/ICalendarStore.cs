@@ -33,9 +33,11 @@ public interface ICalendarStore
 
     /// <summary>
     /// Opens a meeting invitation in Outlook for the user to check and send.
-    /// Never sent from here: an invitation goes to other people.
+    /// Never sent from here: an invitation goes to other people. When
+    /// <see cref="NewCalendarEvent.AddTeams"/> is set, it also presses the
+    /// Teams button, since Outlook offers no other way to add one.
     /// </summary>
-    Task ShowNewMeetingAsync(NewCalendarEvent spec, CancellationToken ct = default);
+    Task<TeamsOutcome> ShowNewMeetingAsync(NewCalendarEvent spec, CancellationToken ct = default);
 
     Task DeleteEventAsync(MailRef ev, CancellationToken ct = default);
 

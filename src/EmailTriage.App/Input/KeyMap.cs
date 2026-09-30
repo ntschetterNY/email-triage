@@ -45,11 +45,16 @@ public sealed class KeyMap
         ("ctrl+down",   TriageAction.LastMail),
         ("pagedown",    TriageAction.PageDown),
         ("pageup",      TriageAction.PageUp),
+        ("shift+down",  TriageAction.ExtendSelectionDown),
+        ("shift+j",     TriageAction.ExtendSelectionDown),
+        ("shift+up",    TriageAction.ExtendSelectionUp),
+        ("shift+k",     TriageAction.ExtendSelectionUp),
 
         // Triage decisions
         ("a",           TriageAction.MarkActionRequired),
         ("n",           TriageAction.MarkNoAction),
         ("v",           TriageAction.MoveToFolder),
+        ("shift+v",     TriageAction.OpenFolderInOutlook),
         ("h",           TriageAction.Snooze),
         ("e",           TriageAction.Archive),
         ("u",           TriageAction.ToggleRead),
@@ -72,6 +77,7 @@ public sealed class KeyMap
         ("x",           TriageAction.ToggleComplete),
         ("shift+p",     TriageAction.CyclePriority),
         ("o",           TriageAction.OpenInOutlook),
+        ("ctrl+p",      TriageAction.SavePdf),
 
         // Action board: arrows between columns, [ ] or Shift+arrows move the card
         ("left",        TriageAction.PrevColumn),
@@ -85,10 +91,19 @@ public sealed class KeyMap
         ("shift+c",     TriageAction.Chase),
         ("g",           TriageAction.ToggleBoardView),
 
-        // Calendar: y answers an invitation, s schedules time for a mail or task
+        // Calendar: y answers an invitation, s schedules time for a mail or
+        // task, Shift+S replies with a meeting invitation
         ("y",           TriageAction.Rsvp),
         ("s",           TriageAction.ScheduleTime),
+        ("shift+s",     TriageAction.ReplyWithMeeting),
         ("ctrl+j",      TriageAction.JoinMeeting),
+
+        // Calendar tab: 1-5 pick the view; arrows step a day, week or month, Home is today
+        ("1",           TriageAction.CalendarDay),
+        ("2",           TriageAction.CalendarWorkWeek),
+        ("3",           TriageAction.CalendarWeek),
+        ("4",           TriageAction.CalendarMonth),
+        ("5",           TriageAction.CalendarAgenda),
 
         // AI: Ctrl+G drafts the open (or a new reply-all) message with Claude,
         // Ctrl+/ asks the inbox a question. Both go through the user's own
@@ -102,6 +117,7 @@ public sealed class KeyMap
         ("/",           TriageAction.Search),
         ("f5",          TriageAction.Refresh),
         ("shift+oem2",  TriageAction.ShowHelp),
+        ("ctrl+oemcomma", TriageAction.OpenSettings),
         ("z",           TriageAction.Undo),
         ("ctrl+z",      TriageAction.Undo),
         ("escape",      TriageAction.Cancel),

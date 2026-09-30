@@ -18,6 +18,7 @@ public sealed class FakeMailStore : IMailStore
 {
     public bool IsConnected { get; private set; }
     public event EventHandler? InboxChanged;
+    public event EventHandler? ConnectionChanged { add { } remove { } }
 
     public List<FolderNode> Folders { get; } = new();
     public Dictionary<string, MailRef> ByMessageId { get; } = new();
@@ -86,8 +87,18 @@ public sealed class FakeMailStore : IMailStore
         return Task.FromResult(node);
     }
 
+    public Task ShowFolderAsync(FolderRef folder, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by these tests.");
+
+    public Task<FolderNode> MoveFolderAsync(FolderRef folder, string targetPath, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by these tests.");
+
     public Task<IReadOnlyList<MailSummary>> GetMailAsync(
         FolderRef folder, int max, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<MailSummary>>(Array.Empty<MailSummary>());
+
+    public Task<IReadOnlyList<MailSummary>> SearchMailAsync(
+        string filter, int max, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<MailSummary>>(Array.Empty<MailSummary>());
 
     public Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default)

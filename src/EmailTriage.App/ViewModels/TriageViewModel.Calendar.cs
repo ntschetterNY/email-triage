@@ -15,13 +15,26 @@ public sealed record RsvpTarget(
     bool IsSeries = false,
     bool ArchiveAfter = false);
 
-/// <summary>What the schedule palette (s) is putting on the calendar, and who would be invited.</summary>
+/// <summary>
+/// What the schedule palette is putting on the calendar, and who would be
+/// invited: time for yourself (s), or, as a meeting, a reply with an
+/// invitation to everyone on the mail (Shift+S). Start and Length, when
+/// set, are the time offered until another is typed - a double-click in
+/// the calendar grid.
+/// </summary>
 public sealed record ScheduleTarget(
     string Subject,
     MailRef? Mail,
     IReadOnlyList<string> People,
     string Note,
-    bool OfferUndo = true);
+    bool OfferUndo = true,
+    bool AsMeeting = false,
+    bool TitleFromQuery = false,
+    DateTimeOffset? Start = null,
+    TimeSpan? Length = null);
+
+/// <summary>A switch on the meeting palette, each on its own Ctrl key.</summary>
+public enum MeetingSwitch { Teams, AllDay, Repeat, ShowAs }
 
 /// <summary>A pick in the answer palette; no response means "remove from calendar".</summary>
 internal sealed record RsvpChoice(InviteResponse? Response);
@@ -49,8 +62,21 @@ public sealed partial class TriageViewModel
     private CancellationTokenSource? _inviteLoad;
     private RsvpTarget? _rsvp;
     private ScheduleTarget? _schedule;
+
+    /// <summary>The title typed with the time, for a new entry made on the Calendar tab.</summary>
+    private string _scheduleTitle = "";
     private IReadOnlyList<CalendarEvent> _scheduleEvents = Array.Empty<CalendarEvent>();
     private DateTimeOffset? _scheduleCheckedUntil;
+    private MeetingOptions _meeting = new();
+
+    /// <summary>How many days ahead an all-day meeting offers when no day is typed.</summary>
+    private const int AllDayChoices = 7;
+
+    /// <summary>
+    /// Most of the mail's text quoted into the invitation, as Outlook's own
+    /// Reply with Meeting does; a long thread is cut here, not dropped.
+    /// </summary>
+    private const int MeetingQuoteLimit = 4000;
 
     public bool HasInvite => Invite is not null;
     public bool HasInviteAction => InviteAction.Length > 0;
@@ -95,11 +121,13 @@ public sealed partial class TriageViewModel
             var events = await _calendar.GetEventsAsync(invite.Start, invite.End).ConfigureAwait(true);
             if (cts.IsCancellationRequested) return;
 
-            var clash = CalendarMath.Conflicts(events, invite.Start, invite.End, invite.Appointment);
+            var overlap = CalendarMath.Conflicts(events, invite.Start, invite.End, invite.Appointment);
+            var clash = overlap.Where(e => !e.IsHold).ToList();
+            var holds = overlap.Where(e => e.IsHold).ToList();
             var first = invite.IsRecurring ? " (first one)" : "";
             InviteHasClash = clash.Count > 0;
-            InviteClash = clash.Count > 0
-                ? $"Clashes with {DescribeClash(clash)}{first}"
+            InviteClash = clash.Count > 0 ? $"Clashes with {DescribeClash(clash)}{first}"
+                : holds.Count > 0 ? $"Free apart from a HOLD: {DescribeClash(holds)}{first}"
                 : $"You're free then{first}";
         }
         catch (Exception) when (cts.IsCancellationRequested) { }
@@ -287,6 +315,51 @@ public sealed partial class TriageViewModel
     {
         if (Selected is not { } row) return;
 
+        var summary = row.Summary;
+        OpenSchedulePalette(new ScheduleTarget(
+            ConversationGrouper.StripPrefixes(row.Subject),
+            summary.Ref,
+            PeopleOnSelected(row),
+            $"From {summary.DisplaySender}, {summary.ReceivedUtc.ToLocalTime():ddd d MMM HH:mm}. The email is attached."));
+    }
+
+    /// <summary>
+    /// Shift+S in the triage list: answer the mail with a meeting invitation
+    /// to everyone on it, as Outlook's Reply with Meeting does.
+    /// </summary>
+    public void OpenReplyWithMeetingForSelected()
+    {
+        if (Selected is not { } row) return;
+
+        var people = PeopleOnSelected(row);
+        if (people.Count == 0)
+        {
+            Status = "Nobody on this mail can be invited - s blocks the time for you instead";
+            return;
+        }
+
+        // The mail's own text, when the reading pane holds it, so the
+        // invitation carries the context; otherwise the mail is attached.
+        var summary = row.Summary;
+        var body = OpenBody is { } b && row.Thread.Messages.Any(m => m.Ref.EntryId == b.Ref.EntryId) ? b : null;
+        var quote = body?.PlainText.Trim() ?? "";
+        if (quote.Length > MeetingQuoteLimit) quote = quote[..MeetingQuoteLimit].TrimEnd() + "\n[...]";
+
+        var note = quote.Length > 0
+            ? $"\n\n-----\nFrom: {body!.SenderName}\nSent: {body.ReceivedDisplay}\nSubject: {body.Subject}\n\n{quote}"
+            : $"From {summary.DisplaySender}, {summary.ReceivedUtc.ToLocalTime():ddd d MMM HH:mm}. The email is attached.";
+
+        OpenSchedulePalette(new ScheduleTarget(
+            ConversationGrouper.StripPrefixes(row.Subject),
+            quote.Length > 0 ? null : summary.Ref,
+            people,
+            note,
+            AsMeeting: true));
+    }
+
+    /// <summary>The sender, and everyone on the thread when the reading pane holds it: real addresses only.</summary>
+    private List<string> PeopleOnSelected(MailRowViewModel row)
+    {
         var people = new List<string>();
         void Add(string address)
         {
@@ -303,25 +376,51 @@ public sealed partial class TriageViewModel
             foreach (var r in body.To.Concat(body.Cc)) Add(r.Address);
         }
 
-        var summary = row.Summary;
-        OpenSchedulePalette(new ScheduleTarget(
-            ConversationGrouper.StripPrefixes(row.Subject),
-            summary.Ref,
-            people.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            $"From {summary.DisplaySender}, {summary.ReceivedUtc.ToLocalTime():ddd d MMM HH:mm}. The email is attached."));
+        return people.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     public void OpenSchedulePalette(ScheduleTarget target)
     {
         _schedule = target;
+        _scheduleTitle = "";
         _scheduleEvents = Array.Empty<CalendarEvent>();
         _scheduleCheckedUntil = null;
+        _meeting = new MeetingOptions { Teams = target.AsMeeting && _settings.TeamsByDefault };
 
-        var hint = target.People.Count > 0
-            ? "Enter blocks the time for you · Ctrl+Enter invites the people on it · type \"tomorrow 2pm 1h\" · Esc cancel"
-            : "Enter blocks the time · type \"tomorrow 2pm 1h\", \"fri 10-11am\" or \"1h\" · Esc cancel";
+        if (target.AsMeeting)
+        {
+            var who = target.People.Count == 1 ? target.People[0] : $"{target.People.Count} people";
+            Palette.Open(
+                PaletteMode.Schedule,
+                "Reply with a meeting",
+                "Enter opens it in Outlook to send · Ctrl+T Teams · Ctrl+D all day · Ctrl+R repeat · Ctrl+B show as · Esc cancel",
+                $"{target.Subject}  ·  with {who}");
+        }
+        else if (target is { TitleFromQuery: true, Start: { } at })
+        {
+            Palette.Open(
+                PaletteMode.Schedule,
+                "New calendar entry",
+                $"Type a title - Enter adds it {CalendarMath.DayLabel(at.Date, _clock.Now.Date)} at {at:HH:mm}, or type another time · Esc cancel",
+                "");
+        }
+        else if (target.TitleFromQuery)
+        {
+            Palette.Open(
+                PaletteMode.Schedule,
+                "New calendar entry",
+                "Type a title and a time - \"Site walk tomorrow 2pm 1h\", \"fri 10-11am budget review\" or \"Focus 2h\" · Enter adds it · Esc cancel",
+                "");
+        }
+        else
+        {
+            var hint = target.People.Count > 0
+                ? "Enter blocks the time for you · Ctrl+Enter invites the people on it · type \"tomorrow 2pm 1h\" · Esc cancel"
+                : "Enter blocks the time · type \"tomorrow 2pm 1h\", \"fri 10-11am\" or \"1h\" · Esc cancel";
 
-        Palette.Open(PaletteMode.Schedule, "Put it on your calendar", hint, target.Subject);
+            Palette.Open(PaletteMode.Schedule, "Put it on your calendar", hint, target.Subject);
+        }
+
         RefreshSchedulePalette();
         _ = LoadScheduleEventsAsync();
     }
@@ -352,10 +451,19 @@ public sealed partial class TriageViewModel
     {
         var now = _clock.Now;
         var query = Palette.Query.Trim();
-        var length = TimeSpan.FromMinutes(Math.Max(5, _settings.DefaultEventMinutes));
+        var length = _schedule?.Length ?? TimeSpan.FromMinutes(Math.Max(5, _settings.DefaultEventMinutes));
         DateTimeOffset? start = null;
 
-        if (query.Length > 0)
+        if (_schedule is { TitleFromQuery: true })
+        {
+            // Title and time in one box; no time yet just means "offer free slots",
+            // or the slot double-clicked in the grid.
+            EventTimeParser.TryParseWithTitle(query, now, out _scheduleTitle, out start, out var typed, _settings.DayShape);
+            start ??= _schedule.Start;
+            length = typed ?? length;
+            Palette.ContextLine = _scheduleTitle.Length > 0 ? _scheduleTitle : "(type a title)";
+        }
+        else if (query.Length > 0)
         {
             if (!EventTimeParser.TryParse(query, now, out start, out var typed, _settings.DayShape))
             {
@@ -368,7 +476,15 @@ public sealed partial class TriageViewModel
 
         var entries = new List<PaletteEntry>();
 
-        if (start is { } s)
+        if (IsMeetingAllDay)
+        {
+            // Whole days: the typed one, or the week ahead.
+            var first = start ?? now;
+            var count = start is null ? AllDayChoices : 1;
+            for (var i = 0; i < count; i++)
+                entries.Add(DayEntry(MeetingOptions.WholeDays(first.AddDays(i)), now));
+        }
+        else if (start is { } s)
         {
             entries.Add(SlotEntry(new TimeSlot(s, s + length), now));
         }
@@ -386,10 +502,61 @@ public sealed partial class TriageViewModel
             entries.AddRange(slots.Select(slot => SlotEntry(slot, now)));
         }
 
+        var keep = Palette.SelectedIndex;
         Palette.SetEntries(entries);
         Palette.CreatePrompt = entries.Count == 0
             ? $"No free {(int)length.TotalMinutes} minutes in your working hours soon - type a time instead"
             : null;
+
+        // Flipping a switch rebuilds the list; the day picked stays picked.
+        if (keep > 0 && keep < entries.Count) Palette.SelectedIndex = keep;
+        UpdateMeetingOptionsLine();
+    }
+
+    private bool IsMeetingAllDay => _schedule is { AsMeeting: true } && _meeting.AllDay;
+
+    /// <summary>The switches, described from the day picked ("every Tuesday").</summary>
+    public void UpdateMeetingOptionsLine()
+    {
+        if (_schedule is not { AsMeeting: true } || Palette.Mode != PaletteMode.Schedule) return;
+
+        var start = (Palette.Selected?.Payload as TimeSlot?)?.Start;
+        Palette.OptionsLine = _meeting.Describe(start);
+    }
+
+    /// <summary>Ctrl+T, Ctrl+D, Ctrl+R or Ctrl+B in the meeting palette. False when it is not the meeting palette.</summary>
+    public bool ToggleMeetingSwitch(MeetingSwitch which)
+    {
+        if (!Palette.IsOpen || Palette.Mode != PaletteMode.Schedule || _schedule is not { AsMeeting: true }) return false;
+
+        _meeting = which switch
+        {
+            MeetingSwitch.Teams => _meeting.ToggleTeams(),
+            MeetingSwitch.AllDay => _meeting.ToggleAllDay(),
+            MeetingSwitch.Repeat => _meeting.NextRepeat(),
+            _ => _meeting.NextShowAs(),
+        };
+
+        // All day swaps the list between times and days; the rest only reword it.
+        if (which == MeetingSwitch.AllDay) RefreshSchedulePalette();
+        else UpdateMeetingOptionsLine();
+        return true;
+    }
+
+    private PaletteEntry DayEntry(TimeSlot day, DateTimeOffset now)
+    {
+        var primary = $"{CalendarMath.DayLabel(day.Start.Date, now.Date)} · all day";
+
+        string secondary;
+        if (_scheduleCheckedUntil is null) secondary = "checking your calendar...";
+        else if (day.End > _scheduleCheckedUntil) secondary = "further out than the calendar was read";
+        else
+        {
+            var busy = CalendarMath.Conflicts(_scheduleEvents, day.Start, day.End);
+            secondary = busy.Count == 0 ? "nothing else that day" : $"also that day: {DescribeClash(busy)}";
+        }
+
+        return new PaletteEntry(primary, secondary, day, Array.Empty<int>());
     }
 
     private PaletteEntry SlotEntry(TimeSlot slot, DateTimeOffset now)
@@ -401,10 +568,12 @@ public sealed partial class TriageViewModel
         else if (slot.End > _scheduleCheckedUntil) secondary = "further out than the calendar was read - clashes not checked";
         else
         {
-            var clash = CalendarMath.Conflicts(_scheduleEvents, slot.Start, slot.End);
-            secondary = clash.Count == 0
-                ? $"free · {CalendarMath.Countdown(slot.Start - now)}"
-                : $"clashes with {DescribeClash(clash)}";
+            var overlap = CalendarMath.Conflicts(_scheduleEvents, slot.Start, slot.End);
+            var clash = overlap.Where(e => !e.IsHold).ToList();
+            var holds = overlap.Where(e => e.IsHold).ToList();
+            secondary = clash.Count > 0 ? $"clashes with {DescribeClash(clash)}"
+                : holds.Count > 0 ? $"over a HOLD: {DescribeClash(holds)} · {CalendarMath.Countdown(slot.Start - now)}"
+                : $"free · {CalendarMath.Countdown(slot.Start - now)}";
         }
 
         return new PaletteEntry(primary, secondary, slot, Array.Empty<int>());
@@ -413,6 +582,12 @@ public sealed partial class TriageViewModel
     private async Task ConfirmScheduleAsync(bool invite)
     {
         if (_schedule is not { } t || Palette.Selected?.Payload is not TimeSlot slot) return;
+
+        if (t.AsMeeting)
+        {
+            await ConfirmReplyWithMeetingAsync(t, slot).ConfigureAwait(true);
+            return;
+        }
 
         if (invite && t.People.Count == 0)
         {
@@ -426,7 +601,8 @@ public sealed partial class TriageViewModel
         var when = $"{CalendarMath.DayLabel(slot.Start.Date, _clock.Now.Date)} {CalendarMath.TimeRange(slot.Start, slot.End)}";
         var spec = new NewCalendarEvent
         {
-            Subject = t.Subject.Length > 0 ? t.Subject : "Follow up",
+            Subject = t.TitleFromQuery ? (_scheduleTitle.Length > 0 ? _scheduleTitle : "Busy")
+                    : t.Subject.Length > 0 ? t.Subject : "Follow up",
             Start = slot.Start,
             End = slot.End,
             Body = t.Note,
@@ -459,6 +635,52 @@ public sealed partial class TriageViewModel
         catch (Exception ex)
         {
             Status = $"Could not add it to your calendar: {ex.Message}";
+        }
+    }
+
+    private async Task ConfirmReplyWithMeetingAsync(ScheduleTarget t, TimeSlot slot)
+    {
+        var options = _meeting;
+        Palette.Close();
+
+        var when = options.AllDay
+            ? $"{CalendarMath.DayLabel(slot.Start.Date, _clock.Now.Date)} all day"
+            : $"{CalendarMath.DayLabel(slot.Start.Date, _clock.Now.Date)} {CalendarMath.TimeRange(slot.Start, slot.End)}";
+
+        var spec = new NewCalendarEvent
+        {
+            Subject = t.Subject.Length > 0 ? t.Subject : "Meeting",
+            Start = slot.Start,
+            End = slot.End,
+            Body = t.Note,
+            AttachMail = t.Mail,
+            Attendees = t.People,
+            IsAllDay = options.AllDay,
+            ShowAs = options.ShowAs,
+            Repeat = options.Repeat,
+            AddTeams = options.Teams,
+
+            // Outlook's own defaults: the evening before for a whole day, else a quarter hour.
+            ReminderMinutes = options.AllDay ? 18 * 60 : 15,
+        };
+
+        try
+        {
+            // Other people get this, so it goes out from Outlook after a look, never from here.
+            Status = options.Teams ? "Opening the invitation in Outlook and adding Teams..." : "Opening the invitation in Outlook...";
+            var teams = await _calendar.ShowNewMeetingAsync(spec).ConfigureAwait(true);
+
+            var repeat = options.Repeat == Repeat.Once ? "" : $", {MeetingOptions.DescribeRepeat(options.Repeat, slot.Start)}";
+            Status = teams switch
+            {
+                TeamsOutcome.Added => $"Invitation for {when}{repeat} is open in Outlook with Teams - check it and press Send",
+                TeamsOutcome.NotFound => $"Invitation for {when}{repeat} is open in Outlook, but the Teams button was not found - press Teams Meeting there, then Send",
+                _ => $"Invitation for {when}{repeat} is open in Outlook - check it and press Send",
+            };
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not open the invitation: {ex.Message}";
         }
     }
 }

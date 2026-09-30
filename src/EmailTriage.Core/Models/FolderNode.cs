@@ -18,4 +18,18 @@ public sealed record FolderNode
 
     /// <summary>Name of the owning store, so multi-account users can tell folders apart.</summary>
     public required string StoreName { get; init; }
+
+    /// <summary>
+    /// The path from the top folder down to this one, without the mailbox
+    /// root: "Mailbox\Clients\Acme\Invoices" reads "Clients -> Acme -> Invoices".
+    /// Just the name for a folder at the top.
+    /// </summary>
+    public string Breadcrumb
+    {
+        get
+        {
+            var levels = Path.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+            return levels.Length > 1 ? string.Join(" -> ", levels[1..]) : Name;
+        }
+    }
 }

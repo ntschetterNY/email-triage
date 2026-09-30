@@ -104,6 +104,29 @@ public class CalendarMathTests
     }
 
     [Fact]
+    public void Free_slots_book_over_holds()
+    {
+        var events = new[]
+        {
+            Event("Pencilled", At(11, 10), At(11, 12), busy: BusyStatus.Tentative),
+            Event("Maybe", At(11, 12), At(11, 13), response: MeetingResponse.Tentative),
+            Event("Firm", At(11, 13), At(11, 17)),
+        };
+
+        var slots = Slots(events, Now, 60, max: 1);
+
+        Assert.Equal(new TimeSlot(At(11, 10), At(11, 11)), Assert.Single(slots));
+    }
+
+    [Fact]
+    public void Holds_still_show_as_overlaps_so_they_can_be_named()
+    {
+        var hold = Event("Pencilled", At(11, 14), At(11, 15), busy: BusyStatus.Tentative);
+
+        Assert.True(Assert.Single(CalendarMath.Conflicts(new[] { hold }, At(11, 14), At(11, 15))).IsHold);
+    }
+
+    [Fact]
     public void Weekends_are_skipped()
     {
         // Friday 13 March at 16:50: nothing fits today, and the weekend is not offered.
@@ -152,6 +175,36 @@ public class CalendarMathTests
 
         Assert.Equal("Starting", CalendarMath.Joinable(events, Now, TimeSpan.FromMinutes(10))?.Subject);
         Assert.Equal("Ending", CalendarMath.Joinable(events, Now, TimeSpan.FromMinutes(2))?.Subject);
+    }
+
+    [Fact]
+    public void Upcoming_gives_each_meeting_on_now_or_starting_soon_its_own_pill()
+    {
+        var events = new[]
+        {
+            Event("Later", At(11, 12), At(11, 13)),
+            Event("Standup", At(11, 9, 45), At(11, 10, 15)),
+            Event("Declined", At(11, 10, 20), At(11, 11), response: MeetingResponse.Declined),
+            Event("Offsite", At(11, 0), At(12, 0), allDay: true),
+            Event("1:1", At(11, 10, 30), At(11, 11)),
+            Event("Review", At(11, 10, 15), At(11, 10, 45)),
+        };
+
+        var pills = CalendarMath.Upcoming(events, Now, TimeSpan.FromMinutes(60), max: 4);
+
+        Assert.Equal(new[] { "Standup", "Review", "1:1" }, pills.Select(e => e.Subject));
+    }
+
+    [Fact]
+    public void Upcoming_falls_back_to_the_next_meeting_and_stops_at_the_limit()
+    {
+        var far = new[] { Event("Later", At(11, 15), At(11, 16)) };
+        Assert.Equal("Later", Assert.Single(CalendarMath.Upcoming(far, Now, TimeSpan.FromMinutes(60), max: 4)).Subject);
+
+        var busy = Enumerable.Range(1, 6).Select(i => Event($"M{i}", At(11, 10, i * 5), At(11, 11))).ToArray();
+        Assert.Equal(3, CalendarMath.Upcoming(busy, Now, TimeSpan.FromMinutes(60), max: 3).Count);
+
+        Assert.Empty(CalendarMath.Upcoming(Array.Empty<CalendarEvent>(), Now, TimeSpan.FromMinutes(60), max: 4));
     }
 
     [Theory]

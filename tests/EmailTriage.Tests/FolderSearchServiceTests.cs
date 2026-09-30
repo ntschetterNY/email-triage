@@ -35,6 +35,14 @@ public class FolderSearchServiceTests
     }
 
     [Fact]
+    public void Breadcrumb_runs_from_the_top_folder_down_without_the_mailbox()
+    {
+        Assert.Equal("Clients -> Acme -> Invoices", Node(@"Mailbox\Clients\Acme\Invoices", 3).Breadcrumb);
+        Assert.Equal("Archive", Node(@"Mailbox\Archive").Breadcrumb);
+        Assert.Equal("Mailbox", Node("Mailbox", 0).Breadcrumb);
+    }
+
+    [Fact]
     public async Task Empty_query_lists_folders_without_filtering()
     {
         var (service, _, _) = Build();
@@ -129,6 +137,16 @@ public class FolderSearchServiceTests
         await service.EnsureIndexedAsync();
 
         Assert.Empty(service.Search("zzzzqqq"));
+    }
+
+    [Fact]
+    public async Task The_store_name_does_not_make_every_folder_match()
+    {
+        var (service, _, _) = Build();
+        await service.EnsureIndexedAsync();
+
+        // Every letter of "mbx" is in the "Mailbox" root, and in no folder below it.
+        Assert.Empty(service.Search("mbx"));
     }
 
     [Fact]

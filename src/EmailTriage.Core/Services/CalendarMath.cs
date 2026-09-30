@@ -10,7 +10,8 @@ namespace EmailTriage.Core.Services;
 public static class CalendarMath
 {
     /// <summary>
-    /// Events that take up any of [start, end). <paramref name="exclude"/>
+    /// Events that take up any of [start, end), holds included - callers tell
+    /// a real clash from a hold with <see cref="CalendarEvent.IsHold"/>. <paramref name="exclude"/>
     /// leaves out a meeting's own entry - Outlook pencils an invitation in as
     /// soon as it arrives, and it would otherwise clash with itself.
     /// </summary>
@@ -25,13 +26,14 @@ public static class CalendarMath
     /// <summary>
     /// Gaps of at least <paramref name="length"/> in the working day, soonest
     /// first, starting no earlier than the next half hour. At most one per gap,
-    /// so a free afternoon is one suggestion rather than eight.
+    /// so a free afternoon is one suggestion rather than eight. Holds do not
+    /// count as busy: tentative time can be booked over.
     /// </summary>
     public static IReadOnlyList<TimeSlot> FreeSlots(
         IEnumerable<CalendarEvent> events, DateTimeOffset now, TimeSpan length,
         TimeSpan dayStart, TimeSpan dayEnd, int days, int max)
     {
-        var busy = events.Where(e => e.BlocksTime).OrderBy(e => e.Start).ToList();
+        var busy = events.Where(e => e.IsFirm).OrderBy(e => e.Start).ToList();
         var slots = new List<TimeSlot>();
         var earliest = RoundUp(now, TimeSpan.FromMinutes(30));
 
@@ -77,6 +79,23 @@ public static class CalendarMath
         var next = Next(list, now);
         if (next is not null && next.Start - now <= lead) return next;
         return Current(list, now).OrderByDescending(e => e.Start).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// The meetings the top bar shows, one pill each: every one under way,
+    /// then every one starting within <paramref name="soon"/>, in time order.
+    /// When nothing is that close, the next one alone. At most <paramref name="max"/>.
+    /// </summary>
+    public static IReadOnlyList<CalendarEvent> Upcoming(
+        IEnumerable<CalendarEvent> events, DateTimeOffset now, TimeSpan soon, int max)
+    {
+        var list = events as IReadOnlyCollection<CalendarEvent> ?? events.ToList();
+        var current = list.Where(IsTimed).Where(e => e.Start <= now && e.End > now).OrderBy(e => e.Start);
+        var coming = list.Where(IsTimed).Where(e => e.Start > now && e.Start - now <= soon).OrderBy(e => e.Start);
+
+        var pills = current.Concat(coming).Take(Math.Max(1, max)).ToList();
+        if (pills.Count == 0 && Next(list, now) is { } next) pills.Add(next);
+        return pills;
     }
 
     /// <summary>"now", "in 1 min", "in 25 min", "in 2 h", "in 1 h 5 min".</summary>

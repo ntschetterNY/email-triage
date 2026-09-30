@@ -198,5 +198,11 @@ public sealed class Database
             -- flagged again once the follow-up interval has passed anew.
             ALTER TABLE action_items ADD COLUMN last_follow_up_utc TEXT NULL;
             """),
+
+        (5, """
+            -- Hand-offs asked for in the sent email itself (a follow-up set in
+            -- the composer), whose chase replies in that same conversation.
+            ALTER TABLE assignments ADD COLUMN in_thread INTEGER NOT NULL DEFAULT 0;
+            """),
     };
 }

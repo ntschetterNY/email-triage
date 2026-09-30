@@ -17,12 +17,18 @@ namespace EmailTriage.Outlook;
 public sealed class StaDispatcher : IDisposable
 {
     private readonly BlockingCollection<Action> _queue = new(new ConcurrentQueue<Action>());
+
+    // Work the user is looking at (the reading pane) jumps ahead of background
+    // writes, so opening the next message never waits behind a queue of moves.
+    private readonly BlockingCollection<Action> _urgent = new(new ConcurrentQueue<Action>());
+    private readonly BlockingCollection<Action>[] _lanes;
     private readonly Thread _thread;
     private readonly CancellationTokenSource _shutdown = new();
     private volatile bool _disposed;
 
     public StaDispatcher(string name = "Outlook STA")
     {
+        _lanes = new[] { _urgent, _queue };
         _thread = new Thread(Pump)
         {
             IsBackground = true,
@@ -41,15 +47,16 @@ public sealed class StaDispatcher : IDisposable
             // A short timeout lets us service the Windows message queue between
             // work items. Outlook is an out-of-process COM server, and an STA
             // that never pumps can stall cross-apartment calls.
-            if (_queue.TryTake(out var work, 50))
+            // TryTakeFromAny scans the lanes in order, so urgent work goes first.
+            if (BlockingCollection<Action>.TryTakeFromAny(_lanes, out var work, 50) >= 0 && work is not null)
             {
                 try { work(); }
                 catch { /* the Task carries the failure back to the caller */ }
             }
-            else
-            {
-                DrainMessageQueue();
-            }
+
+            // After each item as well as when idle: Outlook's item events arrive
+            // as window messages, and a steady run of work would hold them off.
+            DrainMessageQueue();
         }
     }
 
@@ -62,7 +69,10 @@ public sealed class StaDispatcher : IDisposable
         }
     }
 
-    public Task<T> InvokeAsync<T>(Func<T> work, CancellationToken ct = default)
+    public Task<T> InvokeAsync<T>(Func<T> work, CancellationToken ct = default) =>
+        InvokeAsync(work, urgent: false, ct);
+
+    public Task<T> InvokeAsync<T>(Func<T> work, bool urgent, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -84,7 +94,7 @@ public sealed class StaDispatcher : IDisposable
 
         try
         {
-            _queue.Add(() =>
+            (urgent ? _urgent : _queue).Add(() =>
             {
                 if (ct.IsCancellationRequested) { tcs.TrySetCanceled(ct); return; }
                 try { tcs.TrySetResult(work()); }
@@ -109,6 +119,7 @@ public sealed class StaDispatcher : IDisposable
 
         _shutdown.Cancel();
         _queue.CompleteAdding();
+        _urgent.CompleteAdding();
 
         // Give in-flight Outlook calls a moment to unwind cleanly rather than
         // tearing down the apartment underneath them.
@@ -118,6 +129,7 @@ public sealed class StaDispatcher : IDisposable
         }
 
         _queue.Dispose();
+        _urgent.Dispose();
         _shutdown.Dispose();
     }
 

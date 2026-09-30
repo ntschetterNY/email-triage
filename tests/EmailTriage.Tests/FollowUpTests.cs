@@ -125,6 +125,99 @@ public class FollowUpPlannerTests
         Assert.Contains("9 days", brief);
         Assert.Contains("follow-up", brief);
     }
+
+    // ---- scheduled follow-ups: the board's Follow up column ----------------
+
+    // Noon on Thu 24 Sep, in a zone five hours behind UTC.
+    private static readonly DateTimeOffset LocalNow = new(2026, 9, 24, 12, 0, 0, TimeSpan.FromHours(-5));
+
+    private static Assignment Dated(DateTimeOffset due, string who = "Sam Ortiz") => new()
+    {
+        PersonName = who,
+        Task = "send the revised SOV",
+        CreatedUtc = LocalNow.AddDays(-3),
+        NotifiedUtc = LocalNow.AddDays(-3),
+        DueUtc = due,
+    };
+
+    [Fact]
+    public void Scheduled_ShowsOnTheDayNotBefore()
+    {
+        var today = Item(); today.Assignments.Add(Dated(LocalNow.AddHours(5))); // 5pm today
+        var tomorrow = Item(2); tomorrow.Assignments.Add(Dated(LocalNow.AddDays(1)));
+        var undated = Item(3); undated.Assignments.Add(new Assignment { PersonName = "Sam", Task = "x", CreatedUtc = LocalNow.AddDays(-9) });
+
+        var due = Assert.Single(FollowUpPlanner.FindScheduled(new[] { today, tomorrow, undated }, LocalNow));
+        Assert.Equal(1, due.Item.Id);
+        Assert.Equal("Sam Ortiz", due.Who);
+        Assert.Equal(3, due.DaysWaiting);
+        Assert.Same(today.Assignments[0], due.Handoff);
+    }
+
+    [Fact]
+    public void Scheduled_UsesTheLocalDayNotTheUtcOne()
+    {
+        // 02:00 UTC on the 25th is still the evening of the 24th locally.
+        var item = Item(); item.Assignments.Add(Dated(new DateTimeOffset(2026, 9, 25, 2, 0, 0, TimeSpan.Zero)));
+
+        Assert.NotNull(FollowUpPlanner.Scheduled(item, LocalNow));
+    }
+
+    [Fact]
+    public void Scheduled_StaysUntilChasedOnOrAfterTheDay()
+    {
+        var item = Item(); item.Assignments.Add(Dated(LocalNow.AddDays(-2)));
+
+        item.LastFollowUpUtc = LocalNow.AddDays(-3); // an early nudge, before the date
+        Assert.NotNull(FollowUpPlanner.Scheduled(item, LocalNow));
+
+        item.LastFollowUpUtc = LocalNow.AddHours(-1); // chased this morning
+        Assert.Null(FollowUpPlanner.Scheduled(item, LocalNow));
+    }
+
+    [Fact]
+    public void Scheduled_ClearedWaitsAndFinishedItemsDropOut()
+    {
+        var delivered = Item(); delivered.Assignments.Add(Dated(LocalNow.AddDays(-1)));
+        delivered.Assignments[0].DoneUtc = LocalNow;
+
+        var finished = Item(2); finished.Blockers.Add(new BlockingTask
+        {
+            Description = "signed letter", WaitingOn = "Dana", CreatedUtc = LocalNow.AddDays(-5), DueUtc = LocalNow.AddDays(-1),
+        });
+        finished.CompletedUtc = LocalNow;
+
+        Assert.Empty(FollowUpPlanner.FindScheduled(new[] { delivered, finished }, LocalNow));
+    }
+
+    [Fact]
+    public void Scheduled_DatedBlockersCountToo_EarliestFirst()
+    {
+        var item = Item();
+        item.Assignments.Add(Dated(LocalNow.AddDays(-1)));
+        item.Blockers.Add(new BlockingTask
+        {
+            Description = "signed letter", WaitingOn = "Dana Reyes", CreatedUtc = LocalNow.AddDays(-6), DueUtc = LocalNow.AddDays(-4),
+        });
+
+        var due = FollowUpPlanner.Scheduled(item, LocalNow)!;
+        Assert.Equal("Dana Reyes", due.Who);
+        Assert.Null(due.Handoff);
+    }
+
+    [Fact]
+    public void Label_SaysTodayOrTheDateItWasDue()
+    {
+        var item = Item();
+        item.Assignments.Add(Dated(LocalNow.AddHours(2)));
+        Assert.Equal("follow up with Sam Ortiz today",
+            FollowUpPlanner.Label(FollowUpPlanner.Scheduled(item, LocalNow)!, LocalNow));
+
+        item.Assignments[0].DueUtc = new DateTimeOffset(2026, 9, 21, 9, 0, 0, TimeSpan.FromHours(-5));
+        Assert.Equal("follow up with Sam Ortiz · due Mon 21 Sep",
+            FollowUpPlanner.Label(FollowUpPlanner.Scheduled(item, LocalNow)!, LocalNow));
+    }
+
 }
 
 public class WritingStyleTests

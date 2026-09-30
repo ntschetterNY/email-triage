@@ -4,7 +4,14 @@ namespace EmailTriage.Core.Services;
 
 /// <summary>One overdue wait: who has the ball, what they owe, and for how long.</summary>
 public sealed record FollowUpDue(
-    ActionItem Item, string Who, string What, DateTimeOffset SinceUtc, int DaysWaiting);
+    ActionItem Item, string Who, string What, DateTimeOffset SinceUtc, int DaysWaiting)
+{
+    /// <summary>The follow-up date the wait was given, for a scheduled one.</summary>
+    public DateTimeOffset? DueUtc { get; init; }
+
+    /// <summary>The hand-off being chased, when it is one rather than a blocker.</summary>
+    public Assignment? Handoff { get; init; }
+}
 
 /// <summary>
 /// Decides which waiting action items are owed a follow-up. Purely local
@@ -63,6 +70,60 @@ public static class FollowUpPlanner
         return new FollowUpDue(
             item, oldest.Who, oldest.What, oldest.Since,
             Math.Max(0, (int)(nowUtc - oldest.Since).TotalDays));
+    }
+
+    /// <summary>
+    /// The waits whose follow-up day has come: a blocker or hand-off dated
+    /// today or earlier (in <paramref name="now"/>'s time zone) that has not
+    /// been chased on or after that day. Earliest date first. These fill the
+    /// board's Follow up column; chasing or clearing the wait takes them out.
+    /// </summary>
+    public static IReadOnlyList<FollowUpDue> FindScheduled(IEnumerable<ActionItem> items, DateTimeOffset now) =>
+        items
+            .Select(i => Scheduled(i, now))
+            .Where(d => d is not null)
+            .Select(d => d!)
+            .OrderBy(d => d.DueUtc)
+            .ToList();
+
+    /// <summary>The item's earliest dated wait whose follow-up day has come, or null.</summary>
+    public static FollowUpDue? Scheduled(ActionItem item, DateTimeOffset now)
+    {
+        if (item.IsComplete) return null;
+
+        DateTime Day(DateTimeOffset t) => t.ToOffset(now.Offset).Date;
+        var today = now.Date;
+
+        // A chase made on or after the follow-up day answers it; one made
+        // before (an early nudge) does not.
+        bool Pending(DateTimeOffset due) =>
+            Day(due) <= today && (item.LastFollowUpUtc is not { } chased || Day(chased) < Day(due));
+
+        var blockers = item.Blockers
+            .Where(b => !b.IsResolved && b.DueUtc is { } due && Pending(due))
+            .Select(b => new FollowUpDue(item, b.WaitingOn, b.Description, b.CreatedUtc,
+                Math.Max(0, (int)(now - b.CreatedUtc).TotalDays)) { DueUtc = b.DueUtc });
+
+        var handoffs = item.Assignments
+            .Where(a => !a.IsDone && a.DueUtc is { } due && Pending(due))
+            .Select(a =>
+            {
+                var since = a.NotifiedUtc ?? a.CreatedUtc;
+                return new FollowUpDue(item, a.PersonName, a.Task, since,
+                    Math.Max(0, (int)(now - since).TotalDays)) { DueUtc = a.DueUtc, Handoff = a };
+            });
+
+        return blockers.Concat(handoffs).OrderBy(d => d.DueUtc).FirstOrDefault();
+    }
+
+    /// <summary>The card's line for a scheduled follow-up, e.g. "follow up with Sam · due Mon 28 Sep".</summary>
+    public static string Label(FollowUpDue due, DateTimeOffset now)
+    {
+        var with = due.Who.Trim().Length > 0 ? $"follow up with {due.Who.Trim()}" : "follow up";
+        if (due.DueUtc is not { } d) return with;
+
+        var day = d.ToOffset(now.Offset).Date;
+        return day == now.Date ? $"{with} today" : $"{with} · due {day:ddd d MMM}";
     }
 
     /// <summary>

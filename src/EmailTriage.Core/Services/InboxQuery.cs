@@ -67,6 +67,58 @@ public sealed class InboxQuery
     public bool NeedsAddresses => Terms.Any(t =>
         t.Field is QueryField.From or QueryField.To && t.Value.Contains('@'));
 
+    /// <summary>
+    /// The field terms as an Outlook DASL filter, so the search can reach mail
+    /// the list never loaded - older than the Inbox page, or already filed.
+    /// Null when there is nothing Outlook can narrow on (bare words only, or
+    /// only placeholders). Outlook cannot see recipient addresses, so a
+    /// <c>to:</c> address is left out here and settled by <see cref="Matches"/>
+    /// once addresses are read.
+    /// </summary>
+    public string? OutlookFilter
+    {
+        get
+        {
+            var clauses = new List<string>();
+            foreach (var term in Terms)
+            {
+                if (term.Field == QueryField.Text || IsPlaceholder(term.Value)) continue;
+
+                var props = term.Field switch
+                {
+                    QueryField.From => FromProps,
+                    QueryField.Subject => SubjectProps,
+                    _ when term.Value.Contains('@') => null,
+                    _ => ToProps,
+                };
+                if (props is null) continue;
+
+                var like = Like(term.Value);
+                clauses.Add("(" + string.Join(" OR ", props.Select(p => $"\"{p}\" LIKE '{like}'")) + ")");
+            }
+
+            return clauses.Count == 0 ? null : "@SQL=" + string.Join(" AND ", clauses);
+        }
+    }
+
+    // from: is the sender - name, address, or SMTP address for Exchange
+    // senders - or anyone copied, as in Matches.
+    private static readonly string[] FromProps =
+    {
+        "urn:schemas:httpmail:fromname",
+        "urn:schemas:httpmail:fromemail",
+        "http://schemas.microsoft.com/mapi/proptag/0x5D01001F",
+        "urn:schemas:httpmail:displaycc",
+    };
+
+    private static readonly string[] ToProps = { "urn:schemas:httpmail:displayto" };
+
+    private static readonly string[] SubjectProps = { "urn:schemas:httpmail:subject" };
+
+    /// <summary>A value as a DASL LIKE pattern: anywhere in the field, <c>*</c> as <c>%</c>.</summary>
+    private static string Like(string value) =>
+        "%" + value.Replace("'", "''").Replace('*', '%') + "%";
+
     private InboxQuery(string freeText, IReadOnlyList<QueryTerm> terms)
     {
         FreeText = freeText;

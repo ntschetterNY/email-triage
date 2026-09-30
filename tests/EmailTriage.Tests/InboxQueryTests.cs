@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using EmailTriage.Core.Services;
 using Xunit;
 
@@ -73,4 +74,38 @@ public class InboxQueryTests
         Assert.False(InboxQuery.Parse("to:bob").NeedsAddresses);
         Assert.False(InboxQuery.Parse("subject:a@b").NeedsAddresses);
     }
+
+    [Theory]
+    [InlineData("from: *@bimtech")]
+    [InlineData("from:*@bimtech")]
+    [InlineData("from:@BIMTECH")]
+    public void SenderDomainSearchesReachOutlook(string query)
+    {
+        var filter = InboxQuery.Parse(query).OutlookFilter;
+
+        Assert.NotNull(filter);
+        Assert.StartsWith("@SQL=", filter);
+        Assert.Matches(new Regex("\"urn:schemas:httpmail:fromemail\" LIKE '%+@bimtech%'", RegexOptions.IgnoreCase), filter);
+    }
+
+    [Fact]
+    public void FieldTermsAreAndedAndQuotesEscaped()
+    {
+        var filter = InboxQuery.Parse("from:o'brien subject:site walk").OutlookFilter!;
+
+        Assert.Contains("LIKE '%o''brien%'", filter);
+        Assert.Contains(") AND (\"urn:schemas:httpmail:subject\" LIKE '%site walk%')", filter);
+    }
+
+    [Theory]
+    [InlineData("invoice")]          // bare words stay local
+    [InlineData("2:*@acme")]         // Outlook cannot see recipient addresses
+    [InlineData("from:* subject:")]  // unfilled template
+    [InlineData("")]
+    public void NothingForOutlookToNarrowOn(string query) =>
+        Assert.Null(InboxQuery.Parse(query).OutlookFilter);
+
+    [Fact]
+    public void ToNamesStillReachOutlook() =>
+        Assert.Contains("displayto\" LIKE '%bob%'", InboxQuery.Parse("to:bob").OutlookFilter);
 }

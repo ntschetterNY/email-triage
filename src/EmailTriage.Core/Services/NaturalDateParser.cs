@@ -11,8 +11,12 @@ namespace EmailTriage.Core.Services;
 /// </summary>
 public static partial class NaturalDateParser
 {
+    /// <param name="strict">
+    /// Refuse words it cannot read in front of a time, rather than dropping
+    /// them - so "site walk 2pm" is not a time, and a title can be told apart.
+    /// </param>
     public static bool TryParse(
-        string input, DateTimeOffset now, out DateTimeOffset result, SnoozeDayShape? shape = null)
+        string input, DateTimeOffset now, out DateTimeOffset result, SnoozeDayShape? shape = null, bool strict = false)
     {
         shape ??= SnoozeDayShape.Default;
         result = default;
@@ -58,6 +62,7 @@ public static partial class NaturalDateParser
         // A bare time ("6pm") means today, or tomorrow if that moment has passed.
         if (day is null && time is not null)
         {
+            if (strict && dayPart is not null) return false;
             var todayAt = new DateTimeOffset(now.Date + time.Value, now.Offset);
             result = todayAt > now ? todayAt : todayAt.AddDays(1);
             return true;

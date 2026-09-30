@@ -82,7 +82,8 @@ public sealed class ActionItemRepository : IActionItemRepository
         var assignments = await conn.QueryAsync<Assignment>(new CommandDefinition("""
             SELECT id AS Id, action_item_id AS ActionItemId, person_name AS PersonName,
                    person_email AS PersonEmail, task AS Task, due_utc AS DueUtc,
-                   created_utc AS CreatedUtc, done_utc AS DoneUtc, notified_utc AS NotifiedUtc
+                   created_utc AS CreatedUtc, done_utc AS DoneUtc, notified_utc AS NotifiedUtc,
+                   in_thread AS InThread
             FROM assignments WHERE action_item_id IN @ids
             ORDER BY done_utc IS NOT NULL, created_utc
             """, new { ids }, cancellationToken: ct)).ConfigureAwait(false);
@@ -229,9 +230,9 @@ public sealed class ActionItemRepository : IActionItemRepository
         assignment.Id = await conn.ExecuteScalarAsync<long>(new CommandDefinition("""
             INSERT INTO assignments
                 (action_item_id, person_name, person_email, task, due_utc,
-                 created_utc, done_utc, notified_utc)
+                 created_utc, done_utc, notified_utc, in_thread)
             VALUES (@ActionItemId, @PersonName, @PersonEmail, @Task, @DueUtc,
-                    @CreatedUtc, @DoneUtc, @NotifiedUtc)
+                    @CreatedUtc, @DoneUtc, @NotifiedUtc, @InThread)
             RETURNING id;
             """, assignment, cancellationToken: ct)).ConfigureAwait(false);
 
@@ -281,6 +282,18 @@ public sealed class ActionItemRepository : IActionItemRepository
             UPDATE action_items SET entry_id = @entryId, store_id = @storeId
             WHERE internet_message_id = @mid
             """, new { mid = internetMessageId, entryId, storeId }, cancellationToken: ct))
+            .ConfigureAwait(false);
+    }
+
+    public async Task ReplaceMessageIdAsync(
+        long id, string internetMessageId, string entryId, string storeId, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        await conn.ExecuteAsync(new CommandDefinition("""
+            UPDATE action_items
+            SET internet_message_id = @mid, entry_id = @entryId, store_id = @storeId
+            WHERE id = @id
+            """, new { id, mid = internetMessageId, entryId, storeId }, cancellationToken: ct))
             .ConfigureAwait(false);
     }
 

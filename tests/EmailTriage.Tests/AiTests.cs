@@ -11,7 +11,7 @@ file sealed class FakeAssistant : IAiAssistant
     public string? LastPrompt { get; private set; }
     public string? LastModel { get; private set; }
 
-    public Task<string> AskAsync(string prompt, string? model = null, CancellationToken ct = default)
+    public Task<string> AskAsync(string prompt, string? model = null, string? feature = null, CancellationToken ct = default)
     {
         LastPrompt = prompt;
         LastModel = model;
@@ -51,6 +51,99 @@ public class ClaudeCodeCliTests
         Assert.Throws<AiUnavailableException>(() => ClaudeCodeCli.ParseResult("not json at all"));
         Assert.Throws<AiUnavailableException>(() => ClaudeCodeCli.ParseResult("{broken"));
         Assert.Throws<AiUnavailableException>(() => ClaudeCodeCli.ParseResult("""{"result":""}"""));
+    }
+
+    [Fact]
+    public void ParseUsage_ReadsTokensCostAndDuration()
+    {
+        var json = """{"type":"result","is_error":false,"result":"ok","duration_ms":1532,"total_cost_usd":0.217847,"usage":{"input_tokens":2,"cache_creation_input_tokens":21262,"cache_read_input_tokens":10234,"output_tokens":4}}""";
+        var at = new DateTimeOffset(2026, 9, 28, 9, 0, 0, TimeSpan.Zero);
+
+        var call = ClaudeCodeCli.ParseUsage(json, "draft", "claude-opus-5", at, error: null);
+
+        Assert.Equal("draft", call.Feature);
+        Assert.Equal(2, call.InputTokens);
+        Assert.Equal(4, call.OutputTokens);
+        Assert.Equal(10234, call.CacheReadTokens);
+        Assert.Equal(21262, call.CacheWriteTokens);
+        Assert.Equal(31502, call.TotalTokens);
+        Assert.Equal(0.217847m, call.CostUsd);
+        Assert.Equal(1532, call.DurationMs);
+        Assert.True(call.Succeeded);
+    }
+
+    [Fact]
+    public void ParseUsage_NoEnvelopeLogsAFailureWithZeroes()
+    {
+        var call = ClaudeCodeCli.ParseUsage("", "search", "sonnet", DateTimeOffset.Now, "timed out");
+
+        Assert.False(call.Succeeded);
+        Assert.Equal("timed out", call.Error);
+        Assert.Equal(0, call.TotalTokens);
+        Assert.Equal(0m, call.CostUsd);
+    }
+
+    [Fact]
+    public void ParseAuth_TellsTheClaudeLoginFromAnApiKey()
+    {
+        var login = ClaudeCodeCli.ParseAuth("""{"loggedIn":true,"authMethod":"claude.ai","email":"me@example.com","subscriptionType":"max"}""");
+        var key = ClaudeCodeCli.ParseAuth("""{"loggedIn":true,"authMethod":"api_key","apiKeySource":"ANTHROPIC_API_KEY"}""");
+
+        Assert.NotNull(login);
+        Assert.True(login!.IsSubscription);
+        Assert.Contains("max plan", login.Describe());
+        Assert.NotNull(key);
+        Assert.False(key!.IsSubscription);
+        Assert.Contains("ANTHROPIC_API_KEY", key.Describe());
+        Assert.Null(ClaudeCodeCli.ParseAuth("not json"));
+    }
+}
+
+public class AiUsageLogTests
+{
+    private static AiCall Call(DateTimeOffset at, string feature, decimal cost, bool ok = true) =>
+        new(at, feature, "claude-opus-5", 100, 20, 0, 0, cost, 1000, ok, ok ? null : "failed");
+
+    [Fact]
+    public void Summarise_CountsOnlyTheWindowAndGroupsByFeature()
+    {
+        var now = new DateTimeOffset(2026, 9, 28, 12, 0, 0, TimeSpan.Zero);
+        var log = new AiUsageLog(path: null);
+        log.Record(Call(now.AddDays(-2), "draft", 0.50m));
+        log.Record(Call(now.AddHours(-1), "draft", 0.10m));
+        log.Record(Call(now.AddHours(-1), "search", 0.02m, ok: false));
+
+        var today = log.Summarise(new DateTimeOffset(now.Date, TimeSpan.Zero));
+
+        Assert.Equal(2, today.Calls);
+        Assert.Equal(1, today.Failures);
+        Assert.Equal(0.12m, today.CostUsd);
+        Assert.Equal(240, today.TotalTokens);
+        Assert.Equal(new[] { "draft", "search" }, today.ByFeature.Select(f => f.Feature));
+    }
+
+    [Fact]
+    public void Log_SurvivesARestartAndDropsCallsPastThirtyDays()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"ai-usage-{Guid.NewGuid():N}.jsonl");
+        var now = new DateTimeOffset(2026, 9, 28, 12, 0, 0, TimeSpan.Zero);
+        try
+        {
+            var first = new AiUsageLog(path, now);
+            first.Record(Call(now.AddDays(-40), "style", 1m));
+            first.Record(Call(now.AddDays(-1), "draft", 0.25m));
+            File.AppendAllText(path, "{torn line" + Environment.NewLine);
+
+            var reopened = new AiUsageLog(path, now);
+
+            var call = Assert.Single(reopened.Calls);
+            Assert.Equal("draft", call.Feature);
+            Assert.Equal(0.25m, call.CostUsd);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 }
 

@@ -19,7 +19,7 @@ public class ContactDirectoryTests
     public void Finds_by_first_name_last_name_or_address_prefix()
     {
         var dir = Build(
-            new ContactEntry("Jane Smith", "jane.smith@vorea.com", 0),
+            new ContactEntry("Jane Smith", "jane.smith@example.com", 0),
             new ContactEntry("Bob Jones", "bjones@example.com", 0));
 
         Assert.Equal("Jane Smith", Assert.Single(dir.Search("ja")).Name);
@@ -31,7 +31,7 @@ public class ContactDirectoryTests
     [Fact]
     public void Handles_last_comma_first_directory_names()
     {
-        var dir = Build(new ContactEntry("Smith, Jane", "jsmith@vorea.com", 0));
+        var dir = Build(new ContactEntry("Smith, Jane", "jsmith@example.com", 0));
 
         Assert.Single(dir.Search("jane"));
         Assert.Single(dir.Search("smith jane"));
@@ -49,8 +49,8 @@ public class ContactDirectoryTests
     public void People_you_correspond_with_rank_first()
     {
         var dir = Build(
-            new ContactEntry("Jan Directory", "jan.d@vorea.com", 0),
-            new ContactEntry("Janet Frequent", "janet@vorea.com", 40));
+            new ContactEntry("Jan Directory", "jan.d@example.com", 0),
+            new ContactEntry("Janet Frequent", "janet@example.com", 40));
 
         Assert.Equal("Janet Frequent", dir.Search("jan")[0].Name);
     }
@@ -59,8 +59,8 @@ public class ContactDirectoryTests
     public void Sent_items_names_boost_the_matching_directory_entry()
     {
         var dir = Build(
-            new ContactEntry("Alex Adams", "alex.a@vorea.com", 0),
-            new ContactEntry("Alex Baker", "alex.b@vorea.com", 0),
+            new ContactEntry("Alex Adams", "alex.a@example.com", 0),
+            new ContactEntry("Alex Baker", "alex.b@example.com", 0),
             new ContactEntry("Alex Baker", "", 30));
 
         Assert.Equal("Alex Baker", dir.Search("alex")[0].Name);
@@ -91,7 +91,7 @@ public class ContactDirectoryTests
     public void Searching_a_large_directory_is_fast()
     {
         var entries = Enumerable.Range(0, 60_000)
-            .Select(i => new ContactEntry($"Person{i} Surname{i % 997}", $"person{i}@vorea.com", i % 13))
+            .Select(i => new ContactEntry($"Person{i} Surname{i % 997}", $"person{i}@example.com", i % 13))
             .ToArray();
         var dir = Build(entries);
 

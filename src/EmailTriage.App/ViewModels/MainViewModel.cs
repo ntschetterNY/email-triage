@@ -24,6 +24,10 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ISnoozeRepository _snoozes;
     private readonly AppSettings _settings;
     private readonly IClock _clock;
+    private readonly AiUsageLog _aiUsage;
+    private readonly ClaudeCodeCli _claude;
+    private readonly FolderSearchService _folders;
+    private AiAuthInfo? _aiAuth;
 
     public KeyMap Keys { get; }
     public TriageViewModel Triage { get; }
@@ -38,6 +42,24 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private int _pendingSnoozeCount;
     [ObservableProperty] private int _pendingScheduledCount;
 
+    /// <summary>
+    /// A follow-up reply being written from the board: the card, and the mail
+    /// the reply answers. It counts as chased once that reply is sent.
+    /// </summary>
+    private (ActionItem Item, MailRef Target)? _chase;
+
+    /// <summary>The tab's label, with how many follow-ups are due when any are.</summary>
+    public string ActionsTabTitle => Actions.ScheduledFollowUpCount > 0
+        ? $"Action items · {Actions.ScheduledFollowUpCount} to follow up"
+        : "Action items";
+
+    /// <summary>Top-bar AI readout: today's calls, tokens and cost, and which account pays.</summary>
+    [ObservableProperty] private string _aiUsageText = "";
+    [ObservableProperty] private string _aiUsageDetail = "";
+
+    /// <summary>"Login" (Claude plan), "ApiKey" (API credits), or "" while unknown.</summary>
+    [ObservableProperty] private string _aiAuthState = "";
+
     public MainViewModel(
         IMailStore store,
         TriageViewModel triage,
@@ -50,8 +72,14 @@ public sealed partial class MainViewModel : ObservableObject
         IScheduledSendRepository scheduled,
         CalendarViewModel calendar,
         AppSettings settings,
-        IClock clock)
+        IClock clock,
+        AiUsageLog aiUsage,
+        ClaudeCodeCli claude,
+        FolderSearchService folders)
     {
+        _folders = folders;
+        _aiUsage = aiUsage;
+        _claude = claude;
         _settings = settings;
         _clock = clock;
         _contacts = contacts;
@@ -67,8 +95,19 @@ public sealed partial class MainViewModel : ObservableObject
         Keys = keys;
 
         // The status bar shows the tab on screen, and keeps up as that tab's line changes.
-        Triage.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(TriageViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
-        Actions.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(ActionItemsViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
+        Triage.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(TriageViewModel.Status)) return;
+
+            // A palette opened from the Calendar tab reports there, not on the hidden triage line.
+            if (_calendarPalette && Section == Section.Calendar) Calendar.Status = Triage.Status;
+            OnPropertyChanged(nameof(StatusText));
+        };
+        Actions.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ActionItemsViewModel.Status)) OnPropertyChanged(nameof(StatusText));
+            if (e.PropertyName == nameof(ActionItemsViewModel.ScheduledFollowUpCount)) OnPropertyChanged(nameof(ActionsTabTitle));
+        };
         Calendar.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(CalendarViewModel.Status)) OnPropertyChanged(nameof(StatusText)); };
 
         // Answering, blocking time or undoing a block: the agenda and strip reread.
@@ -89,6 +128,27 @@ public sealed partial class MainViewModel : ObservableObject
 
             // Ctrl+Shift+Enter: send & mark done, archiving the conversation replied to.
             var status = sent.Message;
+
+            // Filed before any archive, while the answered mail is still where it was.
+            if (sent.FollowUp is { } followUp)
+            {
+                status = $"{status} · {await Triage.RecordFollowUpAsync(sent.InReplyTo, followUp).ConfigureAwait(true)}";
+                if (Section == Section.Actions) Actions.Status = status;
+                await Actions.LoadAsync().ConfigureAwait(true);
+
+                // A new message: its card finds the email once Outlook files the sent copy.
+                if (sent.InReplyTo.IsEmpty) _ = Actions.ResolveSentCopiesSoonAsync();
+            }
+
+            // The follow-up written from the Follow up column went: the card goes back to Waiting.
+            if (_chase is { } chase && !sent.InReplyTo.IsEmpty && sent.InReplyTo == chase.Target)
+            {
+                _chase = null;
+                await Actions.MarkFollowedUpAsync(chase.Item).ConfigureAwait(true);
+                status = $"{status} · followed up, back in Waiting";
+                if (Section == Section.Actions) Actions.Status = status;
+            }
+
             if (sent.MarkDone)
             {
                 await Triage.ArchiveConversationOfAsync(sent.InReplyTo).ConfigureAwait(true);
@@ -115,6 +175,20 @@ public sealed partial class MainViewModel : ObservableObject
         if (await Triage.StartNewMailAsync().ConfigureAwait(true) is { } problem) SetStatus(problem);
     }
 
+    /// <summary>The Join button on a meeting's card.</summary>
+    public void JoinFromCard(MeetingCardViewModel card) => SetStatus(CalendarViewModel.JoinFromCard(card));
+
+    /// <summary>Open in Outlook on a meeting's card.</summary>
+    public async Task OpenCardInOutlookAsync(MeetingCardViewModel card) =>
+        SetStatus(await Calendar.OpenInOutlookAsync(card.Row.Event).ConfigureAwait(true));
+
+    /// <summary>Show in Calendar on a meeting's card.</summary>
+    public void ShowCardInCalendar(MeetingCardViewModel card)
+    {
+        Section = Section.Calendar;
+        Calendar.Select(card.Row.Event);
+    }
+
     /// <summary>Reports on the status line of whichever tab is showing.</summary>
     private void SetStatus(string message)
     {
@@ -130,13 +204,26 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _ui = SynchronizationContext.Current;
 
+        // Calls finish on background threads; the readout rereads on the UI one.
+        // A failed call may mean the sign-in changed, so that asks again.
+        _aiUsage.Changed += (_, _) => OnUi(async () =>
+        {
+            RefreshAiUsage();
+            if (_aiUsage.Calls.LastOrDefault() is { Succeeded: false }) await RefreshAiAuthAsync().ConfigureAwait(true);
+        });
+        RefreshAiUsage();
+        _ = RefreshAiAuthAsync();
+
         try
         {
             ConnectionStatus = "Connecting to Outlook...";
-            await _store.ConnectAsync().ConfigureAwait(true);
+            await _store.ConnectAsync().WarnIfSlow(OutlookStallAfter, () =>
+                ConnectionStatus = "Waiting on Outlook - check it for a sign-in or profile dialog").ConfigureAwait(true);
 
+            // Attached, but nothing is read yet. "Connected" waits for the inbox,
+            // so a stalled first read doesn't look like an empty mailbox.
             IsConnected = true;
-            ConnectionStatus = "Connected";
+            ConnectionStatus = "Loading inbox...";
 
             // Autocomplete works from the cache at once, and fills out as
             // Outlook's contacts and directory are read in the background.
@@ -146,6 +233,11 @@ public sealed partial class MainViewModel : ObservableObject
             // WPF, which rejects changes from any thread but its own, so every
             // reaction is posted back to the UI thread first.
             _store.InboxChanged += (_, _) => OnUi(RefreshTriageLiveAsync);
+            _store.ConnectionChanged += (_, _) => OnUi(() =>
+            {
+                ConnectionStatus = _store.IsConnected ? "Connected" : "Lost Outlook - reconnecting...";
+                return Task.CompletedTask;
+            });
 
             Triage.Palette.PropertyChanged += (_, e) =>
             {
@@ -186,7 +278,9 @@ public sealed partial class MainViewModel : ObservableObject
             _sender.Start();
 
             await Triage.LoadAsync().ConfigureAwait(true);
+            ConnectionStatus = "Connected";
             await Actions.LoadAsync().ConfigureAwait(true);
+            Actions.StartDayWatch();
 
             // The strip in the top bar needs the calendar whichever tab is showing.
             await Calendar.RefreshQuietlyAsync().ConfigureAwait(true);
@@ -203,7 +297,61 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>How long attaching to Outlook may take before the top bar says it is stuck.</summary>
+    private static readonly TimeSpan OutlookStallAfter = TimeSpan.FromSeconds(20);
+
     private SynchronizationContext? _ui;
+
+    private async Task RefreshAiAuthAsync()
+    {
+        _aiAuth = await _claude.GetAuthAsync().ConfigureAwait(true);
+        AiAuthState = _aiAuth is null ? "" : _aiAuth.LoggedIn && _aiAuth.IsSubscription ? "Login" : "ApiKey";
+        RefreshAiUsage();
+    }
+
+    private void RefreshAiUsage()
+    {
+        var now = _clock.Now;
+        var today = _aiUsage.Summarise(new DateTimeOffset(now.Date, now.Offset));
+        var week = _aiUsage.Summarise(now.AddDays(-7));
+        var month = _aiUsage.Summarise(now.AddDays(-30));
+
+        AiUsageText = _aiAuth is null && month.Calls == 0
+            ? ""
+            : $"AI today {today.Calls} · {Tokens(today.TotalTokens)} tok · ~${today.CostUsd:0.00}";
+
+        var lines = new List<string>
+        {
+            $"Runs through: {_aiAuth?.Describe() ?? "unknown - Claude Code not found"}",
+            "",
+            Period("Today", today),
+        };
+        lines.AddRange(today.ByFeature.Select(f =>
+            $"    {f.Feature,-8} {f.Calls} calls · {Tokens(f.Tokens)} tok · ~${f.CostUsd:0.000}"));
+        lines.Add(Period("Last 7 days", week));
+        lines.Add(Period("Last 30 days", month));
+        if (month.Calls > 0)
+            lines.Add($"Average per call: {Tokens(month.TotalTokens / month.Calls)} tok · ~${month.CostUsd / month.Calls:0.000}");
+        if (_aiUsage.Calls.LastOrDefault(c => !c.Succeeded) is { } failed)
+            lines.Add($"Last failure ({failed.At:ddd HH:mm}): {failed.Error}");
+        lines.Add("");
+        lines.Add(_aiAuth?.IsSubscription == false
+            ? "Cost is billed to your API credits."
+            : "Cost is Claude's list-price estimate; on your plan it counts against usage limits, not a bill.");
+        lines.Add($"Log: {AiUsageLog.DefaultPath}");
+        AiUsageDetail = string.Join(Environment.NewLine, lines);
+
+        static string Period(string name, AiUsageSummary s) =>
+            $"{name}: {s.Calls} calls{(s.Failures > 0 ? $" ({s.Failures} failed)" : "")} · " +
+            $"{Tokens(s.InputTokens + s.CacheTokens)} in / {Tokens(s.OutputTokens)} out · ~${s.CostUsd:0.00}";
+    }
+
+    private static string Tokens(long n) => n switch
+    {
+        >= 1_000_000 => $"{n / 1_000_000d:0.#}M",
+        >= 1_000 => $"{n / 1_000d:0.#}k",
+        _ => n.ToString(),
+    };
 
     /// <summary>Set when a live refresh was held back, so it can run once the way is clear.</summary>
     private bool _refreshHeld;
@@ -254,6 +402,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSectionChanged(Section value)
     {
+        _calendarPalette = false;
         OnPropertyChanged(nameof(StatusText));
         if (value == Section.Triage) _refreshHeld = false;
         _ = value switch
@@ -284,7 +433,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             // "3 pm" must reach the box, not move the highlight via `p`.
             if (stroke.IsTyping) return false;
-            return await HandlePaletteKeyAsync(action, ctrlEnter).ConfigureAwait(true);
+            return await HandlePaletteKeyAsync(stroke, action, ctrlEnter).ConfigureAwait(true);
         }
         if (Actions.Editor != EditorMode.None) return await HandleEditorKeyAsync(action, ctrlEnter).ConfigureAwait(true);
 
@@ -359,6 +508,11 @@ public sealed partial class MainViewModel : ObservableObject
             switch (stroke.Key)
             {
                 case System.Windows.Input.Key.L: composer.ToggleSchedule(); return true;
+                case System.Windows.Input.Key.F:
+                    composer.ToggleFollowUp();
+                    composer.RequestFocus(composer.IsFollowingUp ? RecipientField.FollowUp : RecipientField.Body);
+                    return true;
+                case System.Windows.Input.Key.T: composer.ToggleTrackAsTask(); return true;
                 case System.Windows.Input.Key.OemComma: await composer.DiscardAsync().ConfigureAwait(true); return true;
                 case System.Windows.Input.Key.O: composer.RequestFocus(RecipientField.To); return true;
                 case System.Windows.Input.Key.C: composer.RequestFocus(RecipientField.Cc); return true;
@@ -366,6 +520,13 @@ public sealed partial class MainViewModel : ObservableObject
                 case System.Windows.Input.Key.M: composer.RequestFocus(RecipientField.Body); return true;
                 case System.Windows.Input.Key.S when composer.IsNew: composer.RequestFocus(RecipientField.Subject); return true;
             }
+        }
+
+        if (action == TriageAction.Cancel && composer.IsFollowingUp && !composer.HasSuggestions)
+        {
+            composer.ToggleFollowUp();
+            composer.RequestFocus(RecipientField.Body);
+            return true;
         }
 
         if (action == TriageAction.Cancel && composer.IsScheduling && !composer.HasSuggestions)
@@ -392,8 +553,22 @@ public sealed partial class MainViewModel : ObservableObject
         return false;
     }
 
-    private async Task<bool> HandlePaletteKeyAsync(TriageAction action, bool ctrlEnter)
+    private async Task<bool> HandlePaletteKeyAsync(KeyStroke stroke, TriageAction action, bool ctrlEnter)
     {
+        // The meeting palette's switches: Teams, all day, repeat, show as.
+        if (stroke.Modifiers == System.Windows.Input.ModifierKeys.Control)
+        {
+            MeetingSwitch? which = stroke.Key switch
+            {
+                System.Windows.Input.Key.T => MeetingSwitch.Teams,
+                System.Windows.Input.Key.D => MeetingSwitch.AllDay,
+                System.Windows.Input.Key.R => MeetingSwitch.Repeat,
+                System.Windows.Input.Key.B => MeetingSwitch.ShowAs,
+                _ => null,
+            };
+            if (which is { } w && Triage.ToggleMeetingSwitch(w)) return true;
+        }
+
         // Ctrl+Enter has no binding of its own - only plain Enter maps to
         // Confirm - so it must be caught before the action switch.
         if (ctrlEnter)
@@ -414,10 +589,12 @@ public sealed partial class MainViewModel : ObservableObject
 
             case TriageAction.NextMail:
                 Triage.Palette.MoveSelection(1);
+                Triage.UpdateMeetingOptionsLine();
                 return true;
 
             case TriageAction.PrevMail:
                 Triage.Palette.MoveSelection(-1);
+                Triage.UpdateMeetingOptionsLine();
                 return true;
 
             default:
@@ -468,6 +645,14 @@ public sealed partial class MainViewModel : ObservableObject
                 await ComposeAsync().ConfigureAwait(true);
                 return true;
 
+            case TriageAction.OpenFolderInOutlook:
+                await Triage.OpenFolderInOutlookPaletteAsync().ConfigureAwait(true);
+                return true;
+
+            case TriageAction.OpenSettings:
+                SettingsRequested?.Invoke(this, EventArgs.Empty);
+                return true;
+
             case TriageAction.Refresh:
                 switch (Section)
                 {
@@ -505,6 +690,8 @@ public sealed partial class MainViewModel : ObservableObject
             case TriageAction.PageUp: Triage.Move(-10); return true;
             case TriageAction.FirstMail: Triage.MoveToEnd(false); return true;
             case TriageAction.LastMail: Triage.MoveToEnd(true); return true;
+            case TriageAction.ExtendSelectionDown: Triage.ExtendSelection(1); return true;
+            case TriageAction.ExtendSelectionUp: Triage.ExtendSelection(-1); return true;
 
             // As in Outlook's conversation view: Right opens the conversation to
             // list each message, Left goes back to the conversation and folds it.
@@ -555,8 +742,10 @@ public sealed partial class MainViewModel : ObservableObject
                 await Triage.ArchiveAsync().ConfigureAwait(true);
                 return true;
 
+            // Undoing a flag changes the board too.
             case TriageAction.Undo:
                 await Triage.UndoAsync().ConfigureAwait(true);
+                await Actions.LoadAsync().ConfigureAwait(true);
                 return true;
 
             case TriageAction.Search:
@@ -579,6 +768,14 @@ public sealed partial class MainViewModel : ObservableObject
                 Triage.OpenScheduleForSelected();
                 return true;
 
+            case TriageAction.ReplyWithMeeting:
+                Triage.OpenReplyWithMeetingForSelected();
+                return true;
+
+            case TriageAction.SavePdf:
+                SavePdfRequested?.Invoke(this, EventArgs.Empty);
+                return true;
+
             default:
                 return false;
         }
@@ -588,19 +785,39 @@ public sealed partial class MainViewModel : ObservableObject
     {
         switch (action)
         {
+            case TriageAction.CalendarDay: Calendar.SetView(CalendarView.Day); return true;
+            case TriageAction.CalendarWorkWeek: Calendar.SetView(CalendarView.WorkWeek); return true;
+            case TriageAction.CalendarWeek: Calendar.SetView(CalendarView.Week); return true;
+            case TriageAction.CalendarMonth: Calendar.SetView(CalendarView.Month); return true;
+            case TriageAction.CalendarAgenda: Calendar.SetView(CalendarView.Agenda); return true;
+
+            // j and k go meeting to meeting; the arrows (and Page Up/Down, in
+            // the grid) go a day, week or month at a time.
             case TriageAction.NextMail: Calendar.Move(1); return true;
             case TriageAction.PrevMail: Calendar.Move(-1); return true;
-            case TriageAction.PageDown: Calendar.Move(10); return true;
-            case TriageAction.PageUp: Calendar.Move(-10); return true;
-            case TriageAction.FirstMail: Calendar.MoveToEnd(false); return true;
+            case TriageAction.NextColumn: Calendar.Step(1); return true;
+            case TriageAction.PrevColumn: Calendar.Step(-1); return true;
+            case TriageAction.PageDown when Calendar.IsAgenda: Calendar.Move(10); return true;
+            case TriageAction.PageUp when Calendar.IsAgenda: Calendar.Move(-10); return true;
+            case TriageAction.PageDown: Calendar.Step(1); return true;
+            case TriageAction.PageUp: Calendar.Step(-1); return true;
+            case TriageAction.FirstMail: Calendar.GoToToday(); return true;
             case TriageAction.LastMail: Calendar.MoveToEnd(true); return true;
 
             // Enter goes to the meeting: its Teams or Zoom link, else Outlook.
+            // In the month it opens the day instead, as a click on it does.
+            case TriageAction.Confirm when Calendar.IsMonth: Calendar.OpenSelectedDay(); return true;
             case TriageAction.Confirm: await Calendar.ActivateAsync().ConfigureAwait(true); return true;
             case TriageAction.OpenInOutlook: await Calendar.OpenInOutlookAsync().ConfigureAwait(true); return true;
 
             case TriageAction.Rsvp:
                 AnswerSelectedMeeting();
+                return true;
+
+            // s, as elsewhere, puts something on the calendar; n is "new" here.
+            case TriageAction.ScheduleTime:
+            case TriageAction.MarkNoAction:
+                NewCalendarEntry();
                 return true;
 
             // Undoes a block made with s, like everywhere else.
@@ -612,6 +829,41 @@ public sealed partial class MainViewModel : ObservableObject
             default:
                 return false;
         }
+    }
+
+    /// <summary>Ctrl+P in triage: the window prints the conversation, since that takes its browser.</summary>
+    public event EventHandler? SavePdfRequested;
+
+    /// <summary>Ctrl+, or the Settings button: the view opens the Settings window.</summary>
+    public event EventHandler? SettingsRequested;
+
+    /// <summary>A fresh Settings page over the live settings, for the view to show.</summary>
+    public SettingsViewModel CreateSettings() => new(_settings, _store, _folders);
+
+    public string SettingsKey => Keys.Describe(TriageAction.OpenSettings);
+
+    /// <summary>Set while the answer or schedule palette was opened from the Calendar tab.</summary>
+    private bool _calendarPalette;
+
+    /// <summary>
+    /// s or n on the Calendar tab, or its New button: a new entry, title and
+    /// time typed together.
+    /// </summary>
+    public void NewCalendarEntry()
+    {
+        _calendarPalette = true;
+        Triage.OpenSchedulePalette(new ScheduleTarget("", null, Array.Empty<string>(), "", TitleFromQuery: true));
+    }
+
+    /// <summary>How long an entry made with a double-click in the calendar grid runs.</summary>
+    private static readonly TimeSpan DoubleClickLength = TimeSpan.FromMinutes(30);
+
+    /// <summary>A double-click in the calendar grid: a new entry at that time, half an hour long.</summary>
+    public void NewCalendarEntryAt(DateTimeOffset start)
+    {
+        _calendarPalette = true;
+        Triage.OpenSchedulePalette(new ScheduleTarget(
+            "", null, Array.Empty<string>(), "", TitleFromQuery: true, Start: start, Length: DoubleClickLength));
     }
 
     /// <summary>y on the Calendar tab: answer the meeting straight from the calendar.</summary>
@@ -627,6 +879,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
+        _calendarPalette = true;
         Triage.OpenRsvpPalette(new RsvpTarget(
             ev.Ref,
             string.IsNullOrWhiteSpace(ev.Subject) ? "(no subject)" : ev.Subject,
@@ -662,13 +915,28 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (Actions.Selected is not { } item) return;
 
-        if (Actions.SelectedChasesAssignee)
+        // A follow-up whose day has come is chased first: one set while
+        // sending gets a reply in that same thread, a dated hand-off its own mail.
+        var scheduled = FollowUpPlanner.Scheduled(item, _clock.Now);
+        if (scheduled?.Handoff is { InThread: true } asked && !item.IsAwaitingSentCopy)
+        {
+            await ChaseInThreadAsync(item, scheduled, asked).ConfigureAwait(true);
+            return;
+        }
+
+        if (scheduled?.Handoff is { PersonEmail.Length: > 0 } dated)
+        {
+            await Actions.ChaseAsync(dated).ConfigureAwait(true);
+            return;
+        }
+
+        if (scheduled is null && Actions.SelectedChasesAssignee)
         {
             await Actions.ChaseAsync().ConfigureAwait(true);
             return;
         }
 
-        if (FollowUpPlanner.Describe(item, _clock.UtcNow) is not { } due)
+        if ((scheduled ?? FollowUpPlanner.Describe(item, _clock.UtcNow)) is not { } due)
         {
             Actions.Status = "Nothing open to chase - add a blocker (b) or hand-off (Shift+A) first";
             return;
@@ -694,6 +962,41 @@ public sealed partial class MainViewModel : ObservableObject
             .ConfigureAwait(true);
 
         if (drafted) await Actions.MarkFollowedUpAsync(item).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Replies all in the conversation the follow-up was asked in, with
+    /// Claude drafting the nudge, and makes sure the person is on it. Nothing
+    /// sends itself; the card counts as chased once the user sends the reply.
+    /// </summary>
+    private async Task ChaseInThreadAsync(ActionItem item, FollowUpDue due, Assignment asked)
+    {
+        Actions.Status = "Opening the conversation...";
+        var target = await Actions.ReplyTargetAsync().ConfigureAwait(true);
+        if (target is null)
+        {
+            // The email has gone; a fresh mail still gets the nudge out.
+            if (asked.PersonEmail.Length > 0) await Actions.ChaseAsync(asked).ConfigureAwait(true);
+            else Actions.Status = "Could not find this task's email - it may have been deleted";
+            return;
+        }
+
+        if (await Triage.StartReplyToAsync(target.Value, ReplyScope.All).ConfigureAwait(true) is { } problem)
+        {
+            Actions.Status = problem;
+            return;
+        }
+
+        Triage.Composer.EnsureRecipient(asked.PersonName, asked.PersonEmail);
+        _chase = (item, target.Value);
+
+        Actions.Status = "";
+        await Triage
+            .AiDraftAsync(FollowUpPlanner.BuildInstructions(due), _settings.ResolveFollowUpModel())
+            .ConfigureAwait(true);
+
+        Actions.Status = $"Follow-up to {asked.PersonName} drafted - review it and send (Ctrl+Enter); " +
+                         "the card goes back to Waiting once it's sent";
     }
 
     private async Task ReplyFromBoardAsync(ReplyScope scope)
@@ -800,15 +1103,18 @@ public sealed partial class MainViewModel : ObservableObject
         ("Move",    $"{Keys.Describe(TriageAction.NextColumn)} / {Keys.Describe(TriageAction.PrevColumn)}", "Expand a conversation to read (and see the attachments of) each message, even filed ones / fold it back"),
         ("Move",    Keys.Describe(TriageAction.Search), "Filter the list (Right at the end of the query expands a result, Left at its start folds it)"),
         ("Move",    Keys.Describe(TriageAction.AiSearch), "Ask your inbox a question - Claude picks the matches (uses your Claude sign-in)"),
+        ("Move",    $"{Keys.Describe(TriageAction.ExtendSelectionDown)} / {Keys.Describe(TriageAction.ExtendSelectionUp)}", "Select several - e, v, h, a and n act on all of them"),
 
         ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - send to the action list"),
         ("Triage",  Keys.Describe(TriageAction.MarkNoAction), "No action needed"),
         ("Triage",  Keys.Describe(TriageAction.MoveToFolder), "Move to folder (type to search, Ctrl+Enter creates)"),
+        ("Triage",  Keys.Describe(TriageAction.OpenFolderInOutlook), "Open a folder in Outlook, from any tab"),
         ("Triage",  Keys.Describe(TriageAction.Snooze), "Come back to this later"),
         ("Triage",  Keys.Describe(TriageAction.Archive), "Archive"),
+        ("Triage",  Keys.Describe(TriageAction.SavePdf), "Save the conversation as a PDF (also the PDF button)"),
         ("Triage",  Keys.Describe(TriageAction.ToggleRead), "Toggle read / unread"),
         ("Triage",  Keys.Describe(TriageAction.OpenAttachment), "Open an attachment (or click it in the header)"),
-        ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move or snooze"),
+        ("Triage",  Keys.Describe(TriageAction.Undo), "Undo the last move, snooze, flag, read change or calendar block"),
 
         ("Reply",   Keys.Describe(TriageAction.Compose), "New message, from any tab (Ctrl+Shift+S jumps to its subject)"),
         ("Reply",   ReplyAllKey, "Reply to everyone"),
@@ -818,6 +1124,8 @@ public sealed partial class MainViewModel : ObservableObject
         ("Reply",   "Ctrl+Enter", "Send"),
         ("Reply",   "Ctrl+Shift+Enter", "Send & mark done - archives the conversation"),
         ("Reply",   "Ctrl+Shift+L", "Send later - optionally held for review if they reply first"),
+        ("Reply",   "Ctrl+Shift+F", "Follow up - pick a day and who it's waiting on (the first To by default); on that day it lands in the board's Follow up column"),
+        ("Reply",   "Ctrl+Shift+T", "Follow-up: toggle tracking it as a task"),
         ("Reply",   "Ctrl+Shift+O / C / B / M", "Jump to To / Cc / Bcc / the message"),
         ("Reply",   "Ctrl+Shift+,", "Discard the draft (Esc too)"),
 
@@ -828,7 +1136,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Board",   "Mouse", "Drag a card to another column to move it"),
         ("Board",   Keys.Describe(TriageAction.ToggleBoardView), "Board / By person report (sort, export to Excel, email it)"),
         ("Board",   Keys.Describe(TriageAction.ClearWait), "Clear the next blocker or hand-off (back to Doing when none are left)"),
-        ("Board",   Keys.Describe(TriageAction.Chase), "Chase whoever has it - Claude drafts the follow-up"
+        ("Board",   Keys.Describe(TriageAction.Chase), "Chase whoever has it - Claude drafts the follow-up (in the same thread for one set when sending)"
             + (_settings.FollowUpAfterDays > 0 ? $"; waits are flagged after {_settings.FollowUpAfterDays} days" : "")),
         ("Actions", Keys.Describe(TriageAction.AddNote), "Edit notes"),
         ("Actions", Keys.Describe(TriageAction.AddBlocker), "Blocked by - who or what it is waiting on"),
@@ -837,14 +1145,19 @@ public sealed partial class MainViewModel : ObservableObject
         ("Actions", Keys.Describe(TriageAction.CyclePriority), "Cycle priority"),
         ("Actions", Keys.Describe(TriageAction.OpenInOutlook), "Open the original in Outlook"),
 
+        ("Calendar", $"{Keys.Describe(TriageAction.CalendarDay)}-{Keys.Describe(TriageAction.CalendarAgenda)}", "On the Calendar tab: Day, Work week, Week, Month or Agenda view"),
+        ("Calendar", $"{Keys.Describe(TriageAction.PrevColumn)} {Keys.Describe(TriageAction.NextColumn)}  /  {Keys.Describe(TriageAction.FirstMail)}", "On the Calendar tab: previous / next day, week or month  /  back to today"),
+        ("Calendar", $"{Keys.Describe(TriageAction.NextMail)} / {Keys.Describe(TriageAction.PrevMail)}", "On the Calendar tab: next / previous meeting (Enter in the month opens its day)"),
         ("Calendar", Keys.Describe(TriageAction.Rsvp), "Answer an invitation - accept, maybe or decline, with a note if you type one"),
         ("Calendar", Keys.Describe(TriageAction.ScheduleTime), "Put the mail or task on your calendar (Ctrl+Enter invites its people instead)"),
+        ("Calendar", Keys.Describe(TriageAction.ReplyWithMeeting), "Reply with a meeting: Ctrl+T Teams, Ctrl+D all day, Ctrl+R repeat, Ctrl+B show as - opens in Outlook to send"),
         ("Calendar", Keys.Describe(TriageAction.JoinMeeting), "Join the meeting on now or about to start - from any tab"),
         ("Calendar", Keys.Describe(TriageAction.Confirm), "On the Calendar tab: join the meeting, or open it in Outlook"),
         ("Calendar", Keys.Describe(TriageAction.OpenInOutlook), "On the Calendar tab: open the meeting in Outlook"),
 
         ("General", Keys.Describe(TriageAction.Refresh), "Refresh"),
         ("General", Keys.Describe(TriageAction.ShowHelp), "This help"),
+        ("General", Keys.Describe(TriageAction.OpenSettings), "Settings - how your folders are named and nested, and organizing them"),
         ("General", Keys.Describe(TriageAction.Cancel), "Close / cancel"),
     };
 }

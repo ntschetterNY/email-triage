@@ -37,7 +37,7 @@ public sealed class AiSearchService
         string query, IReadOnlyList<AiSearchRow> rows, DateTimeOffset now,
         string? model = null, CancellationToken ct = default)
     {
-        var answer = await _assistant.AskAsync(BuildPrompt(query, rows, now), model, ct).ConfigureAwait(false);
+        var answer = await _assistant.AskAsync(BuildPrompt(query, rows, now), model, "search", ct).ConfigureAwait(false);
         var result = ParseResponse(answer);
 
         // Only keys that exist, in the model's order, each once - a misremembered
