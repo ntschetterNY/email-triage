@@ -76,8 +76,13 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     private readonly IClock _clock;
     private readonly AppSettings _settings;
 
+    // Conversation pages by Message-ID, and the message bodies they are built
+    // from by EntryId. Tasks rather than values, so the pane and the
+    // prefetcher share one fetch when both want the same mail. UI thread only.
     private readonly LruCache<string, Task<string>> _bodies = new(40, StringComparer.OrdinalIgnoreCase);
+    private readonly LruCache<string, Task<MailBody>> _mail = new(120, StringComparer.Ordinal);
     private CancellationTokenSource? _bodyLoad;
+    private CancellationTokenSource? _prefetch;
 
     /// <summary>
     /// The newest message from someone else in each task's conversation, by
@@ -784,17 +789,37 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     private async Task LoadBodyAsync(ActionItem? item)
     {
         _bodyLoad?.Cancel();
+        _prefetch?.Cancel();
 
         if (item is null) { BodyHtml = ""; return; }
 
         var cts = new CancellationTokenSource();
         _bodyLoad = cts;
 
-        var page = _bodies.GetOrAdd(item.InternetMessageId, _ => RenderBodyAsync(item));
         try
         {
-            var html = await page.ConfigureAwait(true);
-            if (!cts.IsCancellationRequested) BodyHtml = html;
+            var page = PageAsync(item);
+
+            // A card nothing has read yet - typically one far down a column,
+            // which prefetch never reached - costs an Outlook read per message
+            // in its conversation. Show the flagged mail as soon as it is in
+            // rather than leave the pane on the old card until all are.
+            if (!page.IsCompleted) await ShowFlaggedAsync(item, page, cts.Token).ConfigureAwait(true);
+
+            string html;
+            try { html = await page.ConfigureAwait(true); }
+            catch (OperationCanceledException) when (!cts.IsCancellationRequested)
+            {
+                // A prefetch of this card that was stopped part way: read it for real.
+                _bodies.Remove(item.InternetMessageId);
+                html = await PageAsync(item).ConfigureAwait(true);
+            }
+            if (cts.IsCancellationRequested) return;
+
+            BodyHtml = html;
+
+            // With this one on screen, get its neighbours ready while the user reads.
+            StartPrefetch(item);
         }
         catch (Exception ex)
         {
@@ -804,11 +829,52 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         }
     }
 
+    /// <summary>The task's conversation page, from cache or started now.</summary>
+    private Task<string> PageAsync(ActionItem item, CancellationToken stop = default) =>
+        _bodies.GetOrAdd(item.InternetMessageId, _ => RenderBodyAsync(item, stop));
+
+    /// <summary>
+    /// The flagged mail on its own, as a stand-in while the rest of the
+    /// conversation is still being read. Shares the body read the whole
+    /// page needs anyway, so it costs no extra trip to Outlook.
+    /// </summary>
+    private async Task ShowFlaggedAsync(ActionItem item, Task whole, CancellationToken ct)
+    {
+        if (item.IsAwaitingSentCopy || string.IsNullOrEmpty(item.EntryId)) return;
+
+        try
+        {
+            var body = await MailBodyAsync(new MailRef(item.EntryId, item.StoreId)).ConfigureAwait(true);
+            if (ct.IsCancellationRequested || whole.IsCompleted) return;
+
+            var blockRemote = _settings.BlockRemoteImages;
+            var html = await Task.Run(() => HtmlPresenter.Render(body, blockRemote)).ConfigureAwait(true);
+            if (ct.IsCancellationRequested || whole.IsCompleted) return;
+
+            BodyHtml = html;
+        }
+        catch { /* moved or gone: the whole page finds it again or says so */ }
+    }
+
+    /// <summary>
+    /// One message's body, shared between the pane, the stand-in and the
+    /// prefetcher so each is read from Outlook once. Fetched without a
+    /// cancellation token, as another caller may be waiting on the same read.
+    /// </summary>
+    private async Task<MailBody> MailBodyAsync(MailRef mail)
+    {
+        var task = _mail.GetOrAdd(mail.EntryId, _ => _store.GetBodyAsync(mail));
+        try { return await task.ConfigureAwait(true); }
+        catch { _mail.Remove(mail.EntryId); throw; }
+    }
+
     /// <summary>
     /// Renders the task's whole conversation, newest first, re-finding the
-    /// flagged mail by Message-ID if it has been filed since.
+    /// flagged mail by Message-ID if it has been filed since. <paramref name="stop"/>
+    /// is checked between reads, so a prefetch the user has moved on from
+    /// stops queuing work on Outlook's single thread ahead of the card they want.
     /// </summary>
-    private async Task<string> RenderBodyAsync(ActionItem item)
+    private async Task<string> RenderBodyAsync(ActionItem item, CancellationToken stop = default)
     {
         if (item.IsAwaitingSentCopy)
             return HtmlPresenter.Render(Placeholder(
@@ -817,6 +883,8 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         var mail = await ResolveAsync(item).ConfigureAwait(true);
         if (mail is null)
             return HtmlPresenter.Render(Placeholder("The email could not be found - it may have been deleted."), true);
+
+        stop.ThrowIfCancellationRequested();
 
         IReadOnlyList<MailSummary> thread;
         try { thread = await _store.GetConversationAsync(mail.Value, _settings.ThreadMessageLimit).ConfigureAwait(true); }
@@ -827,24 +895,35 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         var bodies = new List<MailBody>();
         foreach (var m in thread)
         {
-            try { bodies.Add(await _store.GetBodyAsync(m.Ref).ConfigureAwait(true)); }
+            stop.ThrowIfCancellationRequested();
+            try { bodies.Add(await MailBodyAsync(m.Ref).ConfigureAwait(true)); }
             catch { /* one unreadable message should not hide the rest */ }
         }
-        if (bodies.Count == 0) bodies.Add(await _store.GetBodyAsync(mail.Value).ConfigureAwait(true));
+        if (bodies.Count == 0) bodies.Add(await MailBodyAsync(mail.Value).ConfigureAwait(true));
 
         var blockRemote = _settings.BlockRemoteImages;
         return await Task.Run(() => HtmlPresenter.RenderThread(bodies, blockRemote)).ConfigureAwait(true);
     }
 
-    /// <summary>Where the flagged mail is now, updating the stored location if it moved.</summary>
+    /// <summary>
+    /// Where the flagged mail is now, updating the stored location if it moved.
+    /// Reading its body is the check that it is still there: the pane needs
+    /// that read anyway, so a card that has not moved costs no extra trip.
+    /// </summary>
     private async Task<MailRef?> ResolveAsync(ActionItem item)
     {
         if (item.IsAwaitingSentCopy) return null;
 
         var known = new MailRef(item.EntryId, item.StoreId);
-        if (!known.IsEmpty && await _store.GetSavedDraftStateAsync(new DraftRef(item.EntryId, item.StoreId)).ConfigureAwait(true)
-                is not SavedDraftState.Missing)
-            return known;
+        if (!known.IsEmpty)
+        {
+            try
+            {
+                await MailBodyAsync(known).ConfigureAwait(true);
+                return known;
+            }
+            catch { /* moved or deleted: look for it by Message-ID */ }
+        }
 
         var found = await _store.FindByMessageIdAsync(item.InternetMessageId, null).ConfigureAwait(true);
         if (found is null) return null;
@@ -853,6 +932,46 @@ public sealed partial class ActionItemsViewModel : ObservableObject
         item.EntryId = found.Value.EntryId;
         item.StoreId = found.Value.StoreId;
         return found;
+    }
+
+    /// <summary>
+    /// Loads the next few cards below the selected one in its column, and
+    /// the one above, into the caches. One card at a time, so a click the
+    /// user makes meanwhile waits for at most a single body read.
+    /// </summary>
+    private void StartPrefetch(ActionItem from)
+    {
+        _prefetch?.Cancel();
+        if (_settings.PrefetchAhead <= 0) return;
+
+        IList<ActionItem>? items = IsDoneLog ? DoneLog : Columns.FirstOrDefault(c => c.Items.Contains(from))?.Items;
+        var index = items?.IndexOf(from) ?? -1;
+        if (items is null || index < 0) return;
+
+        var targets = items.Skip(index + 1).Take(_settings.PrefetchAhead).ToList();
+        if (index > 0) targets.Add(items[index - 1]);
+
+        var cts = new CancellationTokenSource();
+        _prefetch = cts;
+        _ = PrefetchAsync(targets, cts.Token);
+    }
+
+    private async Task PrefetchAsync(IReadOnlyList<ActionItem> items, CancellationToken ct)
+    {
+        foreach (var item in items)
+        {
+            if (ct.IsCancellationRequested) return;
+
+            var page = PageAsync(item, ct);
+            try { await page.ConfigureAwait(true); }
+            catch
+            {
+                // Only a head start; the real open will report any problem.
+                // A stopped or failed page must not be served from the cache.
+                if (_bodies.TryGet(item.InternetMessageId, out var cached) && cached == page)
+                    _bodies.Remove(item.InternetMessageId);
+            }
+        }
     }
 
     /// <summary>
