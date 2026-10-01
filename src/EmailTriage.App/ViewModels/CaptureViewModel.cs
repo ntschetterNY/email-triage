@@ -25,6 +25,10 @@ public sealed partial class CaptureViewModel : ObservableObject
     private ActionStage _currentStage = ActionStage.ToDo;
     private DateTimeOffset? _existingDue;
 
+    /// <summary>The suggestion Enter picked; typing in Who again forgets it.</summary>
+    private Recipient? _picked;
+    private bool _picking;
+
     public CaptureViewModel(ContactDirectory contacts, IClock clock, AppSettings settings)
     {
         _contacts = contacts;
@@ -53,6 +57,9 @@ public sealed partial class CaptureViewModel : ObservableObject
     /// <summary>Ctrl+N: the view puts the cursor in the notes box.</summary>
     public event EventHandler? NotesFocusRequested;
 
+    /// <summary>A suggestion was picked: the view moves on to the next field.</summary>
+    public event EventHandler? PersonPicked;
+
     /// <summary>The cursor is in the Who box, so Up and Down pick a suggestion.</summary>
     [ObservableProperty] private bool _isWhoFocused;
 
@@ -74,6 +81,7 @@ public sealed partial class CaptureViewModel : ObservableObject
         get
         {
             if (!HasWho) return null;
+            if (_picked is { } picked) return picked;
             if (Suggestions.Count > 0)
                 return Suggestions[Math.Clamp(SuggestionIndex, 0, Suggestions.Count - 1)];
             return PersonResolver.Resolve(Who, Array.Empty<Recipient>());
@@ -128,8 +136,9 @@ public sealed partial class CaptureViewModel : ObservableObject
     public DateTimeOffset? ReturnTime =>
         _settings.SnoozeUntilActionDate ? ActionCapture.ReturnTime(Preview(), _clock.UtcNow) : null;
 
-    public string Hint =>
-        "Enter save · Tab next field · Shift+Enter flag with no details · Esc cancel"
+    public string Hint => HasSuggestions
+        ? "Enter pick · Up/Down choose · Tab next field · Esc cancel"
+        : "Enter save · Tab next field · Shift+Enter flag with no details · Esc cancel"
         + " · Ctrl+B blocker · Ctrl+N notes · Ctrl+P priority"
         + (CanTell ? " · Ctrl+M tell them" : "");
 
@@ -145,6 +154,7 @@ public sealed partial class CaptureViewModel : ObservableObject
         ContextLine = contextLine;
         IsMultiple = multiple;
         Title = existing is { Title.Length: > 0 } ? existing.Title : title;
+        _picked = null;
         Who = "";
         IsBlocker = false;
         DueText = "";
@@ -162,6 +172,7 @@ public sealed partial class CaptureViewModel : ObservableObject
     public void Close()
     {
         IsOpen = false;
+        _picked = null;
         Suggestions.Clear();
         Problem = "";
     }
@@ -181,6 +192,24 @@ public sealed partial class CaptureViewModel : ObservableObject
         var next = (SuggestionIndex + delta) % Suggestions.Count;
         if (next < 0) next += Suggestions.Count;
         SuggestionIndex = next;
+    }
+
+    /// <summary>
+    /// Enter while suggestions show: the highlighted person fills Who and the
+    /// list goes away, rather than the whole form being saved.
+    /// </summary>
+    public bool PickSuggestion()
+    {
+        if (!HasSuggestions || Person is not { } person) return false;
+        _picked = person;
+        _picking = true;
+        try { Who = person.Display; }
+        finally { _picking = false; }
+        Suggestions.Clear();
+        SuggestionIndex = -1;
+        RefreshDerived();
+        PersonPicked?.Invoke(this, EventArgs.Empty);
+        return true;
     }
 
     /// <summary>
@@ -282,6 +311,8 @@ public sealed partial class CaptureViewModel : ObservableObject
     partial void OnWhoChanged(string value)
     {
         Problem = "";
+        if (_picking) return;
+        _picked = null;
         RefreshSuggestions();
         RefreshDerived();
     }
@@ -292,6 +323,10 @@ public sealed partial class CaptureViewModel : ObservableObject
     partial void OnIsBlockerChanged(bool value) => RefreshDerived();
     partial void OnPriorityChanged(ActionPriority value) => RefreshDerived();
     partial void OnTellThemChanged(bool value) => RefreshDerived();
-    partial void OnIsWhoFocusedChanged(bool value) => OnPropertyChanged(nameof(HasSuggestions));
+    partial void OnIsWhoFocusedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(HasSuggestions));
+        OnPropertyChanged(nameof(Hint));
+    }
     partial void OnSuggestionIndexChanged(int value) => RefreshDerived();
 }
