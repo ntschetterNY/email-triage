@@ -559,8 +559,8 @@
                                 <Button DockPanel.Dock="Right" Content="Print" Click="OnPrint" Margin="12,0,0,0"
                                         VerticalAlignment="Top" Style="{StaticResource ReportButton}"
                                         ToolTip="Print this conversation (Ctrl+P)" />
-                                <TextBlock Text="{Binding Triage.OpenBody.Subject}" FontSize="17"
-                                           FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBox Text="{Binding Triage.OpenBody.Subject, Mode=OneWay}" FontSize="17"
+                                         FontWeight="SemiBold" Style="{StaticResource SelectableText}" />
                             </DockPanel>
                             <Grid Margin="0,7,0,0">
                                 <StackPanel Orientation="Horizontal">

@@ -85,6 +85,23 @@
         <Setter Property="SelectionBrush" Value="{StaticResource Accent}" />
     </Style>
 
+    <!-- Text that reads like a TextBlock but can be selected and copied.
+         Keys still reach the window first, so shortcuts keep working. -->
+    <Style x:Key="SelectableText" TargetType="TextBox">
+        <Setter Property="IsReadOnly" Value="True" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Margin" Value="-2,0,0,0" />
+        <Setter Property="Foreground" Value="{StaticResource Text}" />
+        <Setter Property="CaretBrush" Value="Transparent" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="SelectionBrush" Value="{StaticResource Accent}" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+    </Style>
+
     <Style x:Key="SectionTab" TargetType="TextBlock">
         <Setter Property="Padding" Value="12,6" />
         <Setter Property="FontSize" Value="12" />
