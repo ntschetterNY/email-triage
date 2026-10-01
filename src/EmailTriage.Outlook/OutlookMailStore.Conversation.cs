@@ -9,7 +9,9 @@ public sealed partial class OutlookMailStore
     /// <summary>
     /// Every sent or received message in the mail's conversation, wherever it
     /// is filed, newest first. Unsent drafts are left out. Falls back to just
-    /// the mail itself on stores without conversation support.
+    /// the mail itself on stores without conversation support. Someone is
+    /// always waiting on this (an opened card, a reply), so it goes ahead of
+    /// background work on Outlook's thread.
     /// </summary>
     public Task<IReadOnlyList<MailSummary>> GetConversationAsync(
         MailRef mail, int max, CancellationToken ct = default) =>
@@ -54,7 +56,7 @@ public sealed partial class OutlookMailStore
                     .ToList();
             }
             finally { ComUtil.ReleaseAll(table, conversation, item); }
-        }, ct);
+        }, urgent: true, ct);
 
     private MailSummary? ReadConversationMessage(MailRef mail, HashSet<string> me)
     {
