@@ -63,6 +63,7 @@ public partial class MainWindow : Window
         viewModel.Triage.Palette.PropertyChanged += OnPaletteChanged;
         viewModel.Triage.Capture.PropertyChanged += OnCaptureChanged;
         viewModel.Triage.Capture.NotesFocusRequested += (_, _) => FocusLater(CaptureNotes);
+        viewModel.Triage.Capture.PersonPicked += (_, _) => FocusLater(CaptureDue);
         viewModel.Triage.Composer.PropertyChanged += OnComposerChanged;
         viewModel.Triage.Composer.SuggestionAccepted += OnSuggestionAccepted;
         viewModel.Triage.Composer.FocusRequested += (_, field) => FocusLater(field switch

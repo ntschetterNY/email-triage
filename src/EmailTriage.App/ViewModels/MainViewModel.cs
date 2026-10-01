@@ -695,6 +695,9 @@ public sealed partial class MainViewModel : ObservableObject
                 await Actions.LoadAsync().ConfigureAwait(true);
                 return true;
 
+            case System.Windows.Input.Key.Return when mods == Plain && capture.PickSuggestion():
+                return true;
+
             case System.Windows.Input.Key.Return:
                 var tell = await Triage.CommitCaptureAsync().ConfigureAwait(true);
                 if (capture.IsOpen) return true; // a date it could not read keeps it open
