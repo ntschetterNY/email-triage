@@ -2263,31 +2263,34 @@
                                          Text="{Binding Triage.Capture.DueText, UpdateSourceTrigger=PropertyChanged}" />
                                 <TextBlock Text="{Binding Triage.Capture.DuePreview}" Style="{StaticResource CapturePreview}" />
                             </StackPanel>
-                            <StackPanel Grid.Column="2"
-                                        Visibility="{Binding Triage.Capture.HasWho, Converter={StaticResource BoolVis}}">
+                            <!-- always shown; only a named person can be chased, so it waits for Who -->
+                            <StackPanel Grid.Column="2">
                                 <TextBlock Text="Follow up" Style="{StaticResource CaptureLabel}" />
                                 <TextBox x:Name="CaptureFollowUp" Style="{StaticResource FlatInput}"
+                                         IsEnabled="{Binding Triage.Capture.HasWho}"
                                          Text="{Binding Triage.Capture.FollowUpText, UpdateSourceTrigger=PropertyChanged}" />
                                 <TextBlock Text="{Binding Triage.Capture.FollowUpPreview}" Style="{StaticResource CapturePreview}" />
                             </StackPanel>
                         </Grid>
 
-                        <!-- priority, notes, tell them -->
+                        <!-- notes -->
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="Ctrl+N" Style="{StaticResource CaptureLabel}" />
+                            <TextBlock Text="Notes" Style="{StaticResource CaptureLabel}" />
+                        </DockPanel>
+                        <TextBox x:Name="CaptureNotes" Style="{StaticResource FlatInput}"
+                                 AcceptsReturn="False" TextWrapping="Wrap" MinHeight="56" VerticalContentAlignment="Top"
+                                 Text="{Binding Triage.Capture.Notes, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <!-- priority, tell them -->
                         <DockPanel Margin="0,12,0,0">
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                <TextBlock Text="{Binding Triage.Capture.TellLabel}" FontSize="11" Margin="0,0,14,0"
-                                           Foreground="{StaticResource Muted}"
-                                           Visibility="{Binding Triage.Capture.CanTell, Converter={StaticResource BoolVis}}" />
-                                <TextBlock Text="{Binding Triage.Capture.NotesLabel}" FontSize="11" Foreground="{StaticResource Muted}" />
-                            </StackPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding Triage.Capture.TellLabel}" FontSize="11"
+                                       Foreground="{StaticResource Muted}"
+                                       Visibility="{Binding Triage.Capture.CanTell, Converter={StaticResource BoolVis}}" />
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}">
                                 <Run Text="{Binding Triage.Capture.PriorityLabel, Mode=OneWay}" /><Run Text="   Ctrl+P" />
                             </TextBlock>
                         </DockPanel>
-                        <TextBox x:Name="CaptureNotes" Style="{StaticResource FlatInput}" Margin="0,6,0,0"
-                                 AcceptsReturn="False" TextWrapping="Wrap" MinHeight="56" VerticalContentAlignment="Top"
-                                 Visibility="{Binding Triage.Capture.ShowNotes, Converter={StaticResource BoolVis}}"
-                                 Text="{Binding Triage.Capture.Notes, UpdateSourceTrigger=PropertyChanged}" />
 
                         <!-- where it lands -->
                         <Border Background="#1A7AA2F7" CornerRadius="5" Padding="12,8" Margin="0,12,0,0">

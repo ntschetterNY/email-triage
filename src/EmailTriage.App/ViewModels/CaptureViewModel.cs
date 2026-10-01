@@ -45,11 +45,13 @@ public sealed partial class CaptureViewModel : ObservableObject
     [ObservableProperty] private string _followUpText = "";
     [ObservableProperty] private ActionPriority _priority = ActionPriority.Normal;
     [ObservableProperty] private string _notes = "";
-    [ObservableProperty] private bool _showNotes;
     [ObservableProperty] private bool _tellThem;
 
     /// <summary>Why Enter did not save, shown under the form until the next edit.</summary>
     [ObservableProperty] private string _problem = "";
+
+    /// <summary>Ctrl+N: the view puts the cursor in the notes box.</summary>
+    public event EventHandler? NotesFocusRequested;
 
     /// <summary>The cursor is in the Who box, so Up and Down pick a suggestion.</summary>
     [ObservableProperty] private bool _isWhoFocused;
@@ -105,15 +107,14 @@ public sealed partial class CaptureViewModel : ObservableObject
             : null;
 
     public string FollowUpPreview => FollowUpText.Trim().Length == 0
-        ? FollowUp is { } f ? $"{When(f)} unless you say otherwise" : "no chase"
+        ? FollowUp is { } f ? $"{When(f)} unless you say otherwise"
+            : HasWho ? "no chase" : "name who has the ball to chase them"
         : FollowUp is { } d ? When(d) : "not a date I understand";
 
     /// <summary>"Friday 2 Oct 14:00": the time too, since that is when the mail comes back.</summary>
     private static string When(DateTimeOffset when) => when.ToLocalTime().ToString("dddd d MMM HH:mm");
 
     public string PriorityLabel => $"Priority  {Priority}";
-
-    public string NotesLabel => ShowNotes ? "Notes" : "Notes  Ctrl+N";
 
     public string TellLabel => TellThem
         ? "✓ Tell them by email after saving  Ctrl+M"
@@ -150,7 +151,6 @@ public sealed partial class CaptureViewModel : ObservableObject
         FollowUpText = "";
         Priority = existing?.Priority ?? ActionPriority.Normal;
         Notes = existing?.Notes ?? "";
-        ShowNotes = Notes.Length > 0;
         TellThem = false;
         Problem = "";
         Suggestions.Clear();
@@ -166,7 +166,7 @@ public sealed partial class CaptureViewModel : ObservableObject
         Problem = "";
     }
 
-    public void ToggleNotes() => ShowNotes = !ShowNotes;
+    public void FocusNotes() => NotesFocusRequested?.Invoke(this, EventArgs.Empty);
 
     public void CyclePriority() => Priority = Priority switch
     {
@@ -273,7 +273,6 @@ public sealed partial class CaptureViewModel : ObservableObject
         OnPropertyChanged(nameof(FollowUp));
         OnPropertyChanged(nameof(FollowUpPreview));
         OnPropertyChanged(nameof(PriorityLabel));
-        OnPropertyChanged(nameof(NotesLabel));
         OnPropertyChanged(nameof(TellLabel));
         OnPropertyChanged(nameof(ResultLine));
         OnPropertyChanged(nameof(Hint));
@@ -292,7 +291,6 @@ public sealed partial class CaptureViewModel : ObservableObject
     partial void OnFollowUpTextChanged(string value) { Problem = ""; RefreshDerived(); }
     partial void OnIsBlockerChanged(bool value) => RefreshDerived();
     partial void OnPriorityChanged(ActionPriority value) => RefreshDerived();
-    partial void OnShowNotesChanged(bool value) => RefreshDerived();
     partial void OnTellThemChanged(bool value) => RefreshDerived();
     partial void OnIsWhoFocusedChanged(bool value) => OnPropertyChanged(nameof(HasSuggestions));
     partial void OnSuggestionIndexChanged(int value) => RefreshDerived();

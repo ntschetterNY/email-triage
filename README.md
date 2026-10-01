@@ -255,7 +255,7 @@ follow-up day (a couple of days before it is due unless you type one - `FollowUp
 in settings) putting it in the **Follow up** column when the day comes. A first name
 is enough: people on the thread come first, then anyone you have waited on before,
 then your contacts. `Ctrl+B` makes the wait a blocker rather than a hand-off,
-`Ctrl+P` cycles the priority, `Ctrl+N` opens a notes box, and `Ctrl+M` opens the
+`Ctrl+P` cycles the priority, `Ctrl+N` jumps to the notes box, and `Ctrl+M` opens the
 usual Outlook draft to tell them once it is saved. Flag a mail that is already on
 the board and the popup edits its card. Several selected conversations get the same
 answers. Set `AskDetailsOnFlag` to `false` in settings to have `a` flag at once.

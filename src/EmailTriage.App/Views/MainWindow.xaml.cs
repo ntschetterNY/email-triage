@@ -62,6 +62,7 @@ public partial class MainWindow : Window
         viewModel.Triage.PropertyChanged += OnTriageChanged;
         viewModel.Triage.Palette.PropertyChanged += OnPaletteChanged;
         viewModel.Triage.Capture.PropertyChanged += OnCaptureChanged;
+        viewModel.Triage.Capture.NotesFocusRequested += (_, _) => FocusLater(CaptureNotes);
         viewModel.Triage.Composer.PropertyChanged += OnComposerChanged;
         viewModel.Triage.Composer.SuggestionAccepted += OnSuggestionAccepted;
         viewModel.Triage.Composer.FocusRequested += (_, field) => FocusLater(field switch
@@ -924,13 +925,6 @@ public partial class MainWindow : Window
     private void OnCaptureChanged(object? sender, PropertyChangedEventArgs e)
     {
         var capture = ViewModel.Triage.Capture;
-
-        // Ctrl+N opens the notes box: put the cursor in it.
-        if (e.PropertyName == nameof(CaptureViewModel.ShowNotes))
-        {
-            if (capture.IsOpen && capture.ShowNotes) FocusLater(CaptureNotes);
-            return;
-        }
 
         if (e.PropertyName != nameof(CaptureViewModel.IsOpen)) return;
 
