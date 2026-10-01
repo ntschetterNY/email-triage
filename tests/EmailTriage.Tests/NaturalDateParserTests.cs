@@ -26,6 +26,16 @@ public class NaturalDateParserTests
         Assert.Equal(Now.AddDays(3), result);
     }
 
+    [Theory]
+    [InlineData("tom 11am")]
+    [InlineData("tomorrow 11am")]
+    [InlineData("tmrw 11:00")]
+    public void Tomorrow_shorthand_keeps_its_time(string input)
+    {
+        Assert.True(NaturalDateParser.TryParse(input, Now, out var result));
+        Assert.Equal(new DateTimeOffset(2026, 3, 12, 11, 0, 0, TimeSpan.Zero), result);
+    }
+
     [Fact]
     public void Tomorrow_defaults_to_the_configured_morning()
     {
