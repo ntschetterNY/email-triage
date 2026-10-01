@@ -512,6 +512,218 @@ public sealed partial class OutlookMailStore : ICalendarStore
         finally { ComUtil.Release(pattern); }
     }
 
+    /// <summary>How long to wait for the Teams add-in to put its link in, once its button is pressed.</summary>
+    private static readonly TimeSpan TeamsLinkWait = TimeSpan.FromSeconds(20);
+
+    // OlInspectorClose: olSave = 0, olDiscard = 1
+    private const int CloseSave = 0;
+    private const int CloseDiscard = 1;
+
+    public async Task<TeamsOutcome> UpdateEventAsync(CalendarEvent ev, CalendarEventChange change, CancellationToken ct = default)
+    {
+        // Only for the Teams button: the meeting stays open in Outlook while
+        // it is pressed, and is sent or saved from this same object after.
+        object? held = null;
+
+        var window = await RunAsync(() =>
+        {
+            EnsureConnected();
+            var me = MyAddresses();
+
+            dynamic? item = null;
+            try
+            {
+                item = OpenEvent(ev);
+                if (ComUtil.Int(() => item!.Class) != ComUtil.OlAppointment)
+                    throw new InvalidOperationException("That is not a calendar entry.");
+
+                Apply((object)item!, change, me);
+
+                if (!change.AddTeams)
+                {
+                    if (change.Send) item!.Send();
+                    else item!.Save();
+                    return IntPtr.Zero;
+                }
+
+                item!.Display(false);
+                held = item;
+
+                dynamic? inspector = null;
+                try
+                {
+                    inspector = item.GetInspector;
+                    return inspector is null ? IntPtr.Zero : TeamsButton.WindowOf((object)inspector);
+                }
+                finally { ComUtil.Release(inspector); }
+            }
+            catch
+            {
+                // Outlook keeps an opened item in memory: drop the half-made
+                // edit, so the next read does not see it as if it were saved.
+                if (item is not null && held is null)
+                    ComUtil.Try<object?>(() => { item!.Close(CloseDiscard); return null; });
+                throw;
+            }
+            finally
+            {
+                if (held is null) ComUtil.Release(item);
+            }
+        }, ct).ConfigureAwait(false);
+
+        if (!change.AddTeams) return TeamsOutcome.None;
+
+        try
+        {
+            // Off the Outlook thread, as for a new meeting: the ribbon takes a moment.
+            var pressed = await Task.Run(() => TeamsButton.TryPress(window, ct), ct).ConfigureAwait(false);
+            if (!pressed) return TeamsOutcome.NotFound;
+
+            // The add-in fills the link in by itself, some seconds later.
+            // Sending before it lands would send a meeting with no link.
+            var deadline = DateTime.UtcNow + TeamsLinkWait;
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(500, ct).ConfigureAwait(false);
+
+                var linked = await RunAsync(() =>
+                    MeetingLinks.Find(ComUtil.MapiString(held!, PropTeamsUrl)) is not null
+                    || MeetingLinks.Find(ComUtil.Str(() => ((dynamic)held!).Body)) is not null, ct).ConfigureAwait(false);
+                if (!linked) continue;
+
+                await RunAsync(() =>
+                {
+                    dynamic item = held!;
+                    if (change.Send)
+                    {
+                        item.Send(); // closes its window too
+                    }
+                    else
+                    {
+                        item.Save();
+                        ComUtil.Try<object?>(() => { item.Close(CloseSave); return null; });
+                    }
+                }, ct).ConfigureAwait(false);
+                return TeamsOutcome.Added;
+            }
+
+            return TeamsOutcome.NoLinkYet;
+        }
+        finally
+        {
+            var item = held;
+            _ = RunAsync(() => ComUtil.Release(item));
+        }
+    }
+
+    /// <summary>Writes the change onto the item, without saving it.</summary>
+    private static void Apply(object itemObj, CalendarEventChange change, ISet<string> me)
+    {
+        dynamic item = itemObj;
+
+        item.Subject = change.Subject;
+
+        // All day before the times: setting it moves Start and End to midnights.
+        if (ComUtil.Bool(() => item.AllDayEvent) != change.IsAllDay) item.AllDayEvent = change.IsAllDay;
+        item.Start = change.Start.LocalDateTime;
+        item.End = change.End.LocalDateTime;
+
+        item.Location = change.Location;
+
+        // After all day, which otherwise switches it to free.
+        item.BusyStatus = (int)change.ShowAs;
+
+        if (change.Body is { } body) item.Body = body;
+        if (change.Invitees is { } invitees) SetInvitees(itemObj, invitees, me);
+
+        // An appointment with people on it becomes a meeting, sent as an invitation.
+        if (change.Send && ComUtil.Int(() => item.MeetingStatus) == OlNonMeeting) item.MeetingStatus = OlMeeting;
+    }
+
+    /// <summary>
+    /// Makes the attendee list match: drops whoever is no longer on it, adds
+    /// the newcomers, and moves people between required and optional. The
+    /// organizer, rooms and you yourself are left where they are.
+    /// </summary>
+    private static void SetInvitees(object itemObj, IReadOnlyList<Invitee> invitees, ISet<string> me)
+    {
+        dynamic item = itemObj;
+        var organizer = ComUtil.Str(() => item.Organizer);
+        var placed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        dynamic? recipients = null;
+        try
+        {
+            recipients = item.Recipients;
+            int count = ComUtil.Int(() => recipients!.Count);
+
+            // Backwards, so removing one does not shift the ones still to look at.
+            for (int i = count; i >= 1; i--)
+            {
+                dynamic? r = null;
+                try
+                {
+                    r = recipients![i];
+                    var type = ComUtil.Int(() => r!.Type, AttendeeRequired);
+                    if (type == AttendeeResource) continue;
+
+                    var name = ComUtil.Str(() => r!.Name);
+                    var smtp = ComUtil.MapiString((object)r!, ComUtil.PropRecipientSmtpAddress);
+                    var address = ComUtil.Str(() => r!.Address);
+                    if (me.Contains(smtp) || me.Contains(address)) continue;
+                    if (organizer.Length > 0 && string.Equals(name, organizer, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var match = invitees.FirstOrDefault(v => Same(v.Who, smtp) || Same(v.Who, address) || Same(v.Who, name));
+                    if (match.Who is null)
+                    {
+                        recipients.Remove(i);
+                        continue;
+                    }
+
+                    placed.Add(match.Who);
+                    var wanted = match.IsOptional ? AttendeeOptional : AttendeeRequired;
+                    if (type != wanted) r!.Type = wanted;
+                }
+                finally { ComUtil.Release(r); }
+            }
+
+            foreach (var v in invitees.Where(v => !placed.Contains(v.Who) && !me.Contains(v.Who)))
+            {
+                dynamic? r = null;
+                try
+                {
+                    r = recipients!.Add(v.Who);
+                    r!.Type = v.IsOptional ? AttendeeOptional : AttendeeRequired;
+                }
+                finally { ComUtil.Release(r); }
+            }
+
+            if (!ComUtil.Bool(() => recipients!.ResolveAll(), true))
+                throw new InvalidOperationException($"Outlook does not know {string.Join(", ", Unresolved((object)recipients!))} - use an email address");
+        }
+        finally { ComUtil.Release(recipients); }
+
+        static bool Same(string a, string b) => b.Length > 0 && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> Unresolved(object recipientsObj)
+    {
+        dynamic recipients = recipientsObj;
+        var names = new List<string>();
+        int count = ComUtil.Int(() => recipients.Count);
+        for (int i = 1; i <= count; i++)
+        {
+            dynamic? r = null;
+            try
+            {
+                r = recipients[i];
+                if (!ComUtil.Bool(() => r!.Resolved, true)) names.Add($"\"{ComUtil.Str(() => r!.Name)}\"");
+            }
+            finally { ComUtil.Release(r); }
+        }
+        return names;
+    }
+
     public Task DeleteEventAsync(MailRef ev, CancellationToken ct = default) =>
         RunAsync(() =>
         {

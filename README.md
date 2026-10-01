@@ -358,7 +358,21 @@ yourself. If your Outlook already adds Teams to every new meeting, set `TeamsByD
 to false: there's no need for the app to press the button as well.
 
 The top bar shows the meeting on now or next, with a countdown. It turns amber five
-minutes before a meeting. Click it to see the meeting in the Calendar tab.
+minutes before a meeting. Click it for the meeting's card: a Join button, who is coming,
+and the invitation text.
+
+On your own meetings and appointments the card has **Edit** (or `E`): change the title,
+date and times, all day, show as, location, required and optional attendees, and the
+notes, and tick **Add a Teams meeting** for one that has no link. `Ctrl+Enter` saves; `Esc`
+goes back to the card. A meeting with attendees goes out to them as an update straight
+from the app (the button says **Send update**, or **Send invitation** when you first add
+people to an appointment). Names are looked up by Outlook, as in its own To line. For a
+recurring meeting the edit changes that day only. Adding Teams still needs Outlook's
+Teams Meeting button, so its window opens for a few seconds while the app presses it,
+waits for the link, then sends or saves and closes it; if the button or the link does not
+turn up, the meeting is left open there for you to finish. Notes are saved as plain text,
+so only rewrite them when you mean to: an untouched body is never written back.
+Someone else's meeting can't be edited - its changes come from the organizer.
 
 The Calendar tab has five views. `1` Day, `2` Work week and `3` Week are a time grid:
 overlapping meetings sit side by side, time outside your working hours is shaded, and a

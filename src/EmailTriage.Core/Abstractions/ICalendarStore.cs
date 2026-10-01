@@ -39,6 +39,16 @@ public interface ICalendarStore
     /// </summary>
     Task<TeamsOutcome> ShowNewMeetingAsync(NewCalendarEvent spec, CancellationToken ct = default);
 
+    /// <summary>
+    /// Changes an appointment, or a meeting you organised - the single
+    /// occurrence, for a recurring one - and saves it, or sends the update
+    /// to its attendees when <see cref="CalendarEventChange.Send"/> is set.
+    /// With <see cref="CalendarEventChange.AddTeams"/>, the meeting is opened
+    /// in Outlook so its Teams button can be pressed, then sent or saved and
+    /// closed once the link is in; anything short of that is left open there.
+    /// </summary>
+    Task<TeamsOutcome> UpdateEventAsync(CalendarEvent ev, CalendarEventChange change, CancellationToken ct = default);
+
     Task DeleteEventAsync(MailRef ev, CancellationToken ct = default);
 
     /// <summary>Opens the event in Outlook - the single occurrence, for a recurring meeting.</summary>
