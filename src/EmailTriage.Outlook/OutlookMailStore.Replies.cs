@@ -198,12 +198,53 @@ public sealed partial class OutlookMailStore
 
         _openDrafts.TryRemove(draft.EntryId, out _);
 
+        if (recipients is { InlineImages.Count: > 0 }) EmbedImages(item, recipients.InlineImages);
+
         // Put the new text above Outlook's quoted history rather than
         // replacing the body, so the thread stays intact.
         var existing = ComUtil.Str(() => item.HTMLBody);
         item.HTMLBody = bodyHtml + existing;
 
         return stored;
+    }
+
+    /// <summary>
+    /// Attaches each pasted picture with the Content-ID its HTML uses, which
+    /// is how Outlook shows an image in the body rather than as a file.
+    /// </summary>
+    private static void EmbedImages(dynamic item, IReadOnlyList<InlineImage> images)
+    {
+        var missing = images.FirstOrDefault(i => !File.Exists(i.Path));
+        if (missing is not null)
+            throw new InvalidOperationException("A picture in the message is no longer on disk. Paste it again.");
+
+        dynamic? attachments = null;
+        try
+        {
+            attachments = item.Attachments;
+            foreach (var image in images)
+            {
+                dynamic? attachment = null;
+                dynamic? accessor = null;
+                try
+                {
+                    // olByValue = 1; the display name is what a client that
+                    // cannot show it inline calls the file.
+                    attachment = attachments!.Add(image.Path, 1, 0, Path.GetFileName(image.Path));
+                    accessor = attachment!.PropertyAccessor;
+                    accessor!.SetProperty(PropAttachContentId, image.ContentId);
+                    // Best effort: marks it as part of the body, not a file to open.
+                    ComUtil.Try<object?>(() => { accessor.SetProperty(PropAttachmentHidden, true); return null; });
+                    ComUtil.Try<object?>(() => { accessor.SetProperty(PropAttachMimeTag, "image/png"); return null; });
+                }
+                finally
+                {
+                    ComUtil.Release(accessor);
+                    ComUtil.Release(attachment);
+                }
+            }
+        }
+        finally { ComUtil.Release(attachments); }
     }
 
     public Task DiscardDraftAsync(DraftRef draft, CancellationToken ct = default) =>

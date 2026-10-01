@@ -15,6 +15,12 @@ public sealed record SentEventArgs(string Message, MailRef InReplyTo, bool MarkD
     public FollowUpRequest? FollowUp { get; init; }
 }
 
+/// <summary>A link to write into the message, over the text selected when the link row opened.</summary>
+public sealed record LinkInsertion(string Label, string Url);
+
+/// <summary>A person picked for the "@jan" being typed, which the editor replaces with the mention.</summary>
+public sealed record MentionInsertion(MentionText.Query Query, ContactEntry Contact);
+
 /// <summary>Where suggestions are showing: a recipient line, or an @mention in the message.</summary>
 public enum RecipientField { None, To, Cc, Bcc, Body, Subject, FollowUp, LinkLabel, LinkAddress }
 
@@ -22,7 +28,9 @@ public enum RecipientField { None, To, Cc, Bcc, Body, Subject, FollowUp, LinkLab
 /// The inline reply and forward box. Outlook builds the draft - quoted history,
 /// signature, recipients - and this collects the new text on top, plus any
 /// edits to the To, Cc and Bcc lines, so mail looks the same as it would from
-/// Outlook itself.
+/// Outlook itself. The message itself lives in the view's editor, which keeps
+/// <see cref="BodyText"/> as a plain-text mirror and hands over the formatted
+/// <see cref="ComposeDocument"/> through <see cref="ReadBody"/> at send time.
 /// </summary>
 public sealed partial class ComposerViewModel : ObservableObject
 {
@@ -34,6 +42,7 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     [ObservableProperty] private bool _isOpen;
     [ObservableProperty] private string _bodyText = "";
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasContent))] private bool _hasImages;
     [ObservableProperty] private string _toLine = "";
     [ObservableProperty] private string _ccLine = "";
     [ObservableProperty] private string _bccLine = "";
@@ -90,6 +99,19 @@ public sealed partial class ComposerViewModel : ObservableObject
         _dayShape = dayShape;
     }
 
+    /// <summary>
+    /// Set by the view: the message as written, with its formatting and
+    /// pictures. Without one, <see cref="BodyText"/> goes out as plain lines.
+    /// </summary>
+    public Func<ComposeDocument>? ReadBody { get; set; }
+
+    private ComposeDocument CurrentBody() => ReadBody?.Invoke() ?? ComposeDocument.FromPlainText(BodyText);
+
+    /// <summary>Something has been written or pasted, so closing would lose it.</summary>
+    public bool HasContent => !string.IsNullOrWhiteSpace(BodyText) || HasImages;
+
+    partial void OnBodyTextChanged(string value) => OnPropertyChanged(nameof(HasContent));
+
     /// <summary>When the typed time resolves to, or null while it does not parse.</summary>
     public DateTimeOffset? ScheduleAt =>
         NaturalDateParser.TryParse(ScheduleText, _clock.Now, out var when, _dayShape) && when > _clock.Now
@@ -115,14 +137,17 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     // ---- links ----------------------------------------------------------------
 
-    // The part of the message the link replaces, noted when the row opens.
-    private int _linkStart, _linkLength;
-
     /// <summary>
     /// Raised for Ctrl+K. The view knows the selection and the clipboard, so
     /// it answers with <see cref="StartLink"/>.
     /// </summary>
     public event EventHandler? LinkRequested;
+
+    /// <summary>
+    /// Raised when the link row is confirmed: the editor writes the link over
+    /// the text that was selected when the row opened.
+    /// </summary>
+    public event EventHandler<LinkInsertion>? LinkInserted;
 
     public void RequestLink()
     {
@@ -133,13 +158,10 @@ public sealed partial class ComposerViewModel : ObservableObject
     /// Opens the link row for the text selected in the message (or the caret,
     /// when nothing is). A web address already on the clipboard is filled in.
     /// </summary>
-    public void StartLink(int selectionStart, int selectionLength, string? clipboard)
+    public void StartLink(string selected, string? clipboard)
     {
         CloseSuggestions();
-        _linkStart = Math.Clamp(selectionStart, 0, BodyText.Length);
-        _linkLength = Math.Clamp(selectionLength, 0, BodyText.Length - _linkStart);
 
-        var selected = BodyText.Substring(_linkStart, _linkLength);
         if (LinkText.LooksLikeAddress(selected))
         {
             LinkLabel = "";
@@ -167,7 +189,13 @@ public sealed partial class ComposerViewModel : ObservableObject
             return;
         }
 
-        (BodyText, BodyCaret) = LinkText.Insert(BodyText, _linkStart, _linkLength, LinkLabel, LinkAddress);
+        var url = LinkText.Normalize(LinkAddress);
+        var label = LinkLabel.Replace("\r", " ").Replace("\n", " ").Trim();
+        if (label.Length == 0) label = LinkAddress.Trim();
+
+        if (LinkInserted is { } write) write(this, new LinkInsertion(label, url));
+        else (BodyText, BodyCaret) = LinkText.Insert(BodyText, BodyText.Length, 0, LinkLabel, LinkAddress);
+
         IsLinking = false;
         LinkLabel = LinkAddress = "";
         Status = "";
@@ -391,10 +419,14 @@ public sealed partial class ComposerViewModel : ObservableObject
     /// <summary>Raised after a suggestion or link is taken, so the view can put the caret after it.</summary>
     public event EventHandler<RecipientField>? SuggestionAccepted;
 
+    /// <summary>Raised when a person is picked for an @mention: the editor swaps the typed "@jan" for them.</summary>
+    public event EventHandler<MentionInsertion>? MentionInserted;
+
     public void Open(ReplyDraft draft)
     {
         Draft = draft;
         BodyText = "";
+        HasImages = false;
         Status = "";
         IsScheduling = false;
         ScheduleText = "";
@@ -511,8 +543,9 @@ public sealed partial class ComposerViewModel : ObservableObject
     {
         if (_mentionQuery is not { } query) return;
 
-        (BodyText, BodyCaret) = MentionText.Insert(BodyText, query, _mentionCaret, pick);
         _mentionQuery = null;
+        if (MentionInserted is { } write) write(this, new MentionInsertion(query, pick));
+        else (BodyText, BodyCaret) = MentionText.Insert(BodyText, query, _mentionCaret, pick);
 
         if (!_mentions.Any(m => string.Equals(m.Address, pick.Address, StringComparison.OrdinalIgnoreCase)))
             _mentions.Add(pick);
@@ -563,10 +596,11 @@ public sealed partial class ComposerViewModel : ObservableObject
 
         // Forwarding with no note of your own is normal, as is sending just a
         // file; an empty reply is not.
+        var body = CurrentBody();
         var hasFiles = Attachments.Any(a => a.Path is not null);
         if (IsNew)
         {
-            if (string.IsNullOrWhiteSpace(SubjectLine) && string.IsNullOrWhiteSpace(BodyText) && !hasFiles)
+            if (string.IsNullOrWhiteSpace(SubjectLine) && body.IsBlank && !hasFiles)
             {
                 Status = "Nothing to send - add a subject or a message.";
                 return;
@@ -579,7 +613,7 @@ public sealed partial class ComposerViewModel : ObservableObject
                 return;
             }
         }
-        else if (!IsForward && string.IsNullOrWhiteSpace(BodyText) && !hasFiles)
+        else if (!IsForward && body.IsBlank && !hasFiles)
         {
             Status = "Nothing to send - type a reply first.";
             return;
@@ -627,6 +661,8 @@ public sealed partial class ComposerViewModel : ObservableObject
             }
         }
 
+        var rendered = body.IsBlank ? null : ComposeHtml.Render(body, _mentions);
+
         // Only the lines the user changed are rewritten; the rest keep the
         // exact recipients Outlook resolved when it built the draft.
         var overrides = new RecipientOverrides(
@@ -640,19 +676,16 @@ public sealed partial class ComposerViewModel : ObservableObject
                 .Where(c => !Attachments.Any(a => a.CarriedIndex == c.Index))
                 .Select(c => c.Index)
                 .ToList(),
+            InlineImages = rendered?.Images ?? Array.Empty<InlineImage>(),
         };
-        var changes = overrides is { ChangesRecipients: false, Subject: null, Attachments.Count: 0, RemoveAttachments.Count: 0 }
-            ? null
-            : overrides;
+        var changes = overrides.IsEmpty ? null : overrides;
 
         IsSending = true;
         Status = sendAt is null ? "Sending..." : "Scheduling...";
 
         try
         {
-            var html = (string.IsNullOrWhiteSpace(BodyText)
-                ? ""
-                : HtmlPresenter.ComposeReplyFragment(BodyText, _mentions)) + followUpLine;
+            var html = (rendered?.Html ?? "") + followUpLine;
 
             string done;
             if (sendAt is { } when)
@@ -707,6 +740,7 @@ public sealed partial class ComposerViewModel : ObservableObject
         IsOpen = false;
         Draft = null;
         BodyText = "";
+        HasImages = false;
         Status = "";
         IsScheduling = false;
         ScheduleText = "";

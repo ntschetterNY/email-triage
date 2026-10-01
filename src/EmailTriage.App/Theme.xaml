@@ -85,6 +85,52 @@
         <Setter Property="SelectionBrush" Value="{StaticResource Accent}" />
     </Style>
 
+    <!-- The message box of the composer: FlatInput's look on a RichTextBox. -->
+    <Style x:Key="FlatRichInput" TargetType="RichTextBox">
+        <Setter Property="Background" Value="{StaticResource Raised}" />
+        <Setter Property="Foreground" Value="{StaticResource Text}" />
+        <Setter Property="CaretBrush" Value="{StaticResource Accent}" />
+        <Setter Property="BorderBrush" Value="{StaticResource Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="8,6" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="SelectionBrush" Value="{StaticResource Accent}" />
+        <Setter Property="AcceptsTab" Value="False" />
+    </Style>
+
+    <!-- Formatting buttons under the message: never take focus, so the
+         selection they act on stays put. Tag="on" shows the state at the caret. -->
+    <Style x:Key="FormatButton" TargetType="Button">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Foreground" Value="{StaticResource Text}" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="MinWidth" Value="28" />
+        <Setter Property="Height" Value="24" />
+        <Setter Property="Margin" Value="0,0,2,0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="B" Background="Transparent" BorderBrush="Transparent"
+                            BorderThickness="1" CornerRadius="4" Padding="6,0">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="{StaticResource Raised}" />
+                            <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource Border}" />
+                        </Trigger>
+                        <Trigger Property="Tag" Value="on">
+                            <Setter TargetName="B" Property="Background" Value="#337AA2F7" />
+                            <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource Accent}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- Text that reads like a TextBlock but can be selected and copied.
          Keys still reach the window first, so shortcuts keep working. -->
     <Style x:Key="SelectableText" TargetType="TextBox">

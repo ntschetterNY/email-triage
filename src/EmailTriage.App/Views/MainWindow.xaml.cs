@@ -78,10 +78,23 @@ public partial class MainWindow : Window
             _ => ComposerBox,
         });
         viewModel.Triage.Composer.LinkRequested += (_, _) => viewModel.Triage.Composer.StartLink(
-            ComposerBox.SelectionStart, ComposerBox.SelectionLength, ClipboardText());
+            ComposerBox.Selection.Text, ClipboardText());
+
+        // The message box: formatting, pictures, mentions and links live in the editor.
+        _editor = new ComposerEditor(ComposerBox, viewModel.Triage.Composer);
+        _editor.FormatChanged += (_, _) =>
+        {
+            BoldButton.Tag = _editor.IsBold ? "on" : null;
+            ItalicButton.Tag = _editor.IsItalic ? "on" : null;
+            UnderlineButton.Tag = _editor.IsUnderline ? "on" : null;
+            StrikeButton.Tag = _editor.IsStrikethrough ? "on" : null;
+            BulletsButton.Tag = _editor.IsBulleted ? "on" : null;
+            NumbersButton.Tag = _editor.IsNumbered ? "on" : null;
+            DashesButton.Tag = _editor.IsDashed ? "on" : null;
+        };
 
         // Suggestions belong to the line being typed in; moving elsewhere drops them.
-        foreach (var box in new[] { ToBox, CcBox, BccBox, SubjectBox, ComposerBox, FollowUpBox })
+        foreach (var box in new UIElement[] { ToBox, CcBox, BccBox, SubjectBox, ComposerBox, FollowUpBox })
             box.GotKeyboardFocus += (_, _) => viewModel.Triage.Composer.CloseSuggestions();
 
         // "@" in the message searches contacts. Text and caret both matter:
@@ -1129,10 +1142,35 @@ public partial class MainWindow : Window
         catch (System.Runtime.InteropServices.ExternalException) { return null; }
     }
 
+    private ComposerEditor _editor = null!;
+
     private void UpdateMentionSearch()
     {
         if (!ComposerBox.IsKeyboardFocusWithin) return;
-        ViewModel.Triage.Composer.UpdateMentionSearch(ComposerBox.Text, ComposerBox.CaretIndex);
+        _editor.UpdateMentionSearch();
+    }
+
+    // ---- the formatting bar under the message ---------------------------------
+
+    private void OnFormatBold(object sender, RoutedEventArgs e) => _editor.ToggleBold();
+    private void OnFormatItalic(object sender, RoutedEventArgs e) => _editor.ToggleItalic();
+    private void OnFormatUnderline(object sender, RoutedEventArgs e) => _editor.ToggleUnderline();
+    private void OnFormatStrike(object sender, RoutedEventArgs e) => _editor.ToggleStrikethrough();
+    private void OnFormatBullets(object sender, RoutedEventArgs e) => _editor.ToggleBullets();
+    private void OnFormatNumbers(object sender, RoutedEventArgs e) => _editor.ToggleNumbering();
+    private void OnFormatDashes(object sender, RoutedEventArgs e) => _editor.ToggleDashes();
+    private void OnFormatIndent(object sender, RoutedEventArgs e) => _editor.Indent();
+    private void OnFormatOutdent(object sender, RoutedEventArgs e) => _editor.Outdent();
+    private void OnFormatClear(object sender, RoutedEventArgs e) => _editor.ClearFormatting();
+
+    private void OnInsertPicture(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Picture to put in the message",
+            Filter = "Pictures|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp;*.tif;*.tiff|All files|*.*",
+        };
+        if (dialog.ShowDialog(this) == true) _editor.InsertImageFile(dialog.FileName);
     }
 
     /// <summary>
@@ -1157,8 +1195,8 @@ public partial class MainWindow : Window
 
         if (SuggestionPopup.Parent is not Grid dialog) return;
 
-        var start = Math.Min(composer.MentionStart, ComposerBox.Text.Length);
-        var rect = ComposerBox.GetRectFromCharacterIndex(start);
+        if (_editor.MentionStart is not { } start) return;
+        var rect = start.GetCharacterRect(System.Windows.Documents.LogicalDirection.Forward);
         if (rect.IsEmpty) return;
 
         // The whole dialog, not just the message row, so a long list is not squashed.
@@ -1189,12 +1227,8 @@ public partial class MainWindow : Window
         if (field == RecipientField.Body)
         {
             // Focus too: a link is taken from the link row, outside the message.
-            var caret = ViewModel.Triage.Composer.BodyCaret;
-            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () =>
-            {
-                ComposerBox.Focus();
-                ComposerBox.CaretIndex = Math.Min(caret, ComposerBox.Text.Length);
-            });
+            // The editor has already put the caret after what it wrote.
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () => ComposerBox.Focus());
             return;
         }
 
@@ -1322,8 +1356,7 @@ public partial class MainWindow : Window
     protected override void OnClosing(CancelEventArgs e)
     {
         // A half-written reply is easy to lose to a stray Alt+F4.
-        if (ViewModel.Triage.Composer.IsOpen &&
-            !string.IsNullOrWhiteSpace(ViewModel.Triage.Composer.BodyText))
+        if (ViewModel.Triage.Composer.IsOpen && ViewModel.Triage.Composer.HasContent)
         {
             var answer = MessageBox.Show(
                 "You have an unsent message. Close anyway?",

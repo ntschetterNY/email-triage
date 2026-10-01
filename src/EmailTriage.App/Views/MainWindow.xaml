@@ -1975,11 +1975,20 @@
                         </DockPanel>
                     </StackPanel>
 
-                    <TextBox Grid.Row="1" x:Name="ComposerBox" Margin="18,0,18,12"
-                             Style="{StaticResource FlatInput}" FontSize="13.5"
-                             AcceptsReturn="True" TextWrapping="Wrap" MinHeight="180"
-                             VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
-                             Text="{Binding Triage.Composer.BodyText, UpdateSourceTrigger=PropertyChanged}" />
+                    <!-- the message: rich text, driven by ComposerEditor in code-behind, which
+                         keeps Triage.Composer.BodyText as its plain-text mirror -->
+                    <RichTextBox Grid.Row="1" x:Name="ComposerBox" Margin="18,0,18,12"
+                                 Style="{StaticResource FlatRichInput}" FontSize="13.5" MinHeight="180"
+                                 VerticalScrollBarVisibility="Auto">
+                        <RichTextBox.Resources>
+                            <Style TargetType="Paragraph">
+                                <Setter Property="Margin" Value="0" />
+                            </Style>
+                            <Style TargetType="Hyperlink">
+                                <Setter Property="Foreground" Value="{StaticResource Accent}" />
+                            </Style>
+                        </RichTextBox.Resources>
+                    </RichTextBox>
 
                     <!-- contact suggestions, dropped over the top of the message, or
                          beside the caret for an @mention (placed from code-behind) -->
@@ -2065,6 +2074,45 @@
                     <Border Grid.Row="3" Background="{StaticResource Raised}"
                             CornerRadius="0,0,9,9" Padding="18,10">
                         <StackPanel>
+                            <!-- formatting, as far as mail carries it the same way everywhere;
+                                 Tag="on" marks what is in effect at the caret (set from code-behind) -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <StackPanel.Resources>
+                                    <Style TargetType="Rectangle">
+                                        <Setter Property="Width" Value="1" />
+                                        <Setter Property="Height" Value="16" />
+                                        <Setter Property="Margin" Value="4,0,6,0" />
+                                        <Setter Property="Fill" Value="{StaticResource Border}" />
+                                    </Style>
+                                </StackPanel.Resources>
+                                <Button x:Name="BoldButton" Style="{StaticResource FormatButton}" Click="OnFormatBold" ToolTip="Bold (Ctrl+B)">
+                                    <TextBlock Text="B" FontWeight="Bold" />
+                                </Button>
+                                <Button x:Name="ItalicButton" Style="{StaticResource FormatButton}" Click="OnFormatItalic" ToolTip="Italic (Ctrl+I)">
+                                    <TextBlock Text="I" FontStyle="Italic" FontFamily="Georgia, serif" />
+                                </Button>
+                                <Button x:Name="UnderlineButton" Style="{StaticResource FormatButton}" Click="OnFormatUnderline" ToolTip="Underline (Ctrl+U)">
+                                    <TextBlock Text="U" TextDecorations="Underline" />
+                                </Button>
+                                <Button x:Name="StrikeButton" Style="{StaticResource FormatButton}" Click="OnFormatStrike" ToolTip="Strikethrough (Ctrl+Shift+X)">
+                                    <TextBlock Text="S" TextDecorations="Strikethrough" />
+                                </Button>
+                                <Rectangle />
+                                <Button x:Name="BulletsButton" Style="{StaticResource FormatButton}" Click="OnFormatBullets" Content="•  List"
+                                        ToolTip="Bullets (Ctrl+Shift+8) - or type * and a space at the start of a line" />
+                                <Button x:Name="NumbersButton" Style="{StaticResource FormatButton}" Click="OnFormatNumbers" Content="1.  List"
+                                        ToolTip="Numbering (Ctrl+Shift+7) - or type 1. and a space; Enter counts on" />
+                                <Button x:Name="DashesButton" Style="{StaticResource FormatButton}" Click="OnFormatDashes" Content="–  List"
+                                        ToolTip="Dashes (Ctrl+Shift+9) - or type - and a space; Enter continues the list" />
+                                <Rectangle />
+                                <Button Style="{StaticResource FormatButton}" Click="OnFormatIndent" Content="⇥" ToolTip="Indent (Ctrl+])" />
+                                <Button Style="{StaticResource FormatButton}" Click="OnFormatOutdent" Content="⇤" ToolTip="Outdent (Ctrl+[)" />
+                                <Rectangle />
+                                <Button Style="{StaticResource FormatButton}" Click="OnFormatClear" Content="Clear" ToolTip="Clear formatting (Ctrl+Space)" />
+                                <Button Style="{StaticResource FormatButton}" Click="OnInsertPicture" Content="Picture…"
+                                        ToolTip="Put a picture in the message from a file - or just paste one (Ctrl+V). Right-click a picture for its size and drop shadow" />
+                            </StackPanel>
+
                             <!-- follow-up (Ctrl+Shift+F): Tab runs by, who, what, then the two toggles -->
                             <Grid Margin="0,0,0,10"
                                   Visibility="{Binding Triage.Composer.IsFollowingUp, Converter={StaticResource BoolVis}}">
@@ -2154,10 +2202,10 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+K link · Esc discard · @ mentions · drop files to attach"
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+K link · Esc discard · @ mentions · paste pictures · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Ctrl+K link · Esc discard · @ mentions · drop files to attach"
+                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Ctrl+K link · Esc discard · @ mentions · paste pictures · drop files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"

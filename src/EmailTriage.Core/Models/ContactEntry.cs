@@ -39,5 +39,12 @@ public sealed record RecipientOverrides(
     /// </summary>
     public IReadOnlyList<int> RemoveAttachments { get; init; } = Array.Empty<int>();
 
+    /// <summary>Pictures pasted into the message, which its HTML refers to by Content-ID.</summary>
+    public IReadOnlyList<InlineImage> InlineImages { get; init; } = Array.Empty<InlineImage>();
+
+    /// <summary>Whether anything here needs writing onto the draft at all.</summary>
+    public bool IsEmpty =>
+        !ChangesRecipients && Subject is null && Attachments.Count == 0 && RemoveAttachments.Count == 0 && InlineImages.Count == 0;
+
     public bool ChangesRecipients => To is not null || Cc is not null || Bcc is not null;
 }
