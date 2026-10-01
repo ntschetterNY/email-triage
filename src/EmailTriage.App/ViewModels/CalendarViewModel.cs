@@ -883,6 +883,46 @@ public sealed partial class CalendarViewModel : ObservableObject
         card.IsLoading = false;
     }
 
+    /// <summary>
+    /// Saves the edit on a meeting's card - sending it to the attendees when
+    /// it has any. Returns what happened, for the status line, or null when
+    /// it did not go through and the card says why.
+    /// </summary>
+    public async Task<string?> SaveCardAsync(MeetingCardViewModel card)
+    {
+        if (card.IsSaving || card.BuildChange(_clock.Now) is not { } change) return null;
+
+        var ev = card.Row.Event;
+        var told = !change.Send ? "Saved" : ev.IsMeeting ? "Update sent" : "Invitation sent";
+        var save = !change.Send ? "Save" : "Send";
+
+        card.IsSaving = true;
+        card.EditMessage = change.AddTeams ? "Adding a Teams meeting in Outlook - a few seconds..."
+            : change.Send ? "Sending..." : "Saving...";
+        try
+        {
+            var teams = await _store.UpdateEventAsync(ev, change).ConfigureAwait(true);
+            await RefreshQuietlyAsync().ConfigureAwait(true);
+
+            return teams switch
+            {
+                TeamsOutcome.Added => $"{told} with a Teams meeting: {change.Subject}",
+                TeamsOutcome.NotFound => $"{change.Subject} is open in Outlook, but its Teams button was not found - press Teams Meeting there, then {save}",
+                TeamsOutcome.NoLinkYet => $"{change.Subject} is open in Outlook: Teams was pressed but no link has come yet - check it there, then {save}",
+                _ => $"{told}: {change.Subject}",
+            };
+        }
+        catch (Exception ex)
+        {
+            card.EditMessage = $"Could not save it: {ex.Message}";
+            return null;
+        }
+        finally
+        {
+            card.IsSaving = false;
+        }
+    }
+
     /// <summary>Join from a meeting's card; returns what happened, for the status line.</summary>
     public static string JoinFromCard(MeetingCardViewModel card) =>
         card.Detail?.JoinUrl is { } url ? Join(card.Row.Event, url) : "That meeting has no link to join";

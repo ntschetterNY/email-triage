@@ -158,10 +158,53 @@ public enum TeamsOutcome
 
     /// <summary>No Teams button was found to press, so it has to be added by hand.</summary>
     NotFound,
+
+    /// <summary>
+    /// The Teams button was pressed but no link turned up in time, so the
+    /// meeting was left open in Outlook, unsent, to check and send by hand.
+    /// </summary>
+    NoLinkYet,
 }
 
 /// <summary>A stretch of time, such as a free slot.</summary>
 public readonly record struct TimeSlot(DateTimeOffset Start, DateTimeOffset End)
 {
     public TimeSpan Duration => End - Start;
+}
+
+/// <summary>Someone on a meeting being edited: an address, or a name for Outlook to look up.</summary>
+public readonly record struct Invitee(string Who, bool IsOptional);
+
+/// <summary>
+/// An edit to an event already on the calendar. Every field holds the new
+/// value; <see cref="Body"/> and <see cref="Invitees"/> are null when left as
+/// they were, so they are not rewritten.
+/// </summary>
+public sealed record CalendarEventChange
+{
+    public required string Subject { get; init; }
+    public required DateTimeOffset Start { get; init; }
+    public required DateTimeOffset End { get; init; }
+    public bool IsAllDay { get; init; }
+    public string Location { get; init; } = "";
+    public BusyStatus ShowAs { get; init; } = BusyStatus.Busy;
+
+    /// <summary>
+    /// The new text, or null when unchanged. Outlook only takes plain text
+    /// here, which flattens the formatting - a Teams join block included -
+    /// so an untouched body is never written back.
+    /// </summary>
+    public string? Body { get; init; }
+
+    /// <summary>Everyone invited after the edit, the organizer aside; null when unchanged.</summary>
+    public IReadOnlyList<Invitee>? Invitees { get; init; }
+
+    /// <summary>
+    /// Goes out to the attendees as a meeting update (or, for an appointment
+    /// gaining people, as an invitation) rather than being saved quietly.
+    /// </summary>
+    public bool Send { get; init; }
+
+    /// <summary>Have Outlook's Teams button add a Teams meeting before it is saved or sent.</summary>
+    public bool AddTeams { get; init; }
 }

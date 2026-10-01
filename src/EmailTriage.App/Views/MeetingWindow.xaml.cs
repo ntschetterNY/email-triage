@@ -7,7 +7,9 @@ namespace EmailTriage.App.Views;
 
 /// <summary>
 /// A meeting's card, opened under its pill in the top bar. Joining is the big
-/// button at the top (or Enter); Esc or a click elsewhere closes it.
+/// button at the top (or Enter); Esc or a click elsewhere closes it. Edit (or
+/// E) turns it into a form for your own meetings: Ctrl+Enter saves or sends
+/// the update, Esc goes back to the card.
 /// </summary>
 public partial class MeetingWindow : Window
 {
@@ -28,12 +30,23 @@ public partial class MeetingWindow : Window
         {
             // Lavish first, so Esc leaves comment mode rather than closing the card.
             if (LavishLayer.HandleKey(e)) return;
+
+            if (_card.IsEditing)
+            {
+                if (e.Key == Key.Escape && !_card.IsSaving) { e.Handled = true; CancelEdit(); }
+                else if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control) { e.Handled = true; _ = SaveAsync(); }
+                return;
+            }
+
             if (e.Key == Key.Escape) { e.Handled = true; Close(); }
+            else if (e.Key == Key.E && Keyboard.Modifiers == ModifierKeys.None && _card.CanStartEdit) { e.Handled = true; BeginEdit(); }
         };
 
         // A pop-up: clicking back into the app puts it away - unless you are
-        // commenting on it, when sending a note may well open the browser.
-        Deactivated += (_, _) => { if (!_closing && !LavishLayer.IsActive) Close(); };
+        // commenting on it, when sending a note may well open the browser, or
+        // part way through an edit, which a stray click must not throw away
+        // (and adding Teams brings Outlook's own window up in front).
+        Deactivated += (_, _) => { if (!_closing && !LavishLayer.IsActive && !_card.IsEditing) Close(); };
 
         // The link is read after the card opens; once it is there, Enter joins.
         card.PropertyChanged += OnCardChanged;
@@ -83,6 +96,33 @@ public partial class MeetingWindow : Window
     {
         _main.ShowCardInCalendar(_card);
         Close();
+    }
+
+    private void OnEditClick(object sender, RoutedEventArgs e) => BeginEdit();
+
+    private void BeginEdit()
+    {
+        _card.BeginEdit();
+        if (!_card.IsEditing) return;
+
+        // Once the form is laid out; it is collapsed until now.
+        Dispatcher.BeginInvoke(() => { EditSubjectBox.Focus(); EditSubjectBox.SelectAll(); },
+            System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    private void CancelEdit()
+    {
+        _card.CancelEdit();
+        if (_card.CanJoin) JoinButton.Focus(); else Focus();
+    }
+
+    private void OnCancelEditClick(object sender, RoutedEventArgs e) => CancelEdit();
+
+    private void OnSaveClick(object sender, RoutedEventArgs e) => _ = SaveAsync();
+
+    private async Task SaveAsync()
+    {
+        if (await _main.SaveCardAsync(_card).ConfigureAwait(true) && !_closing) Close();
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();

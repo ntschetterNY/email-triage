@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="{Binding Row.Subject}"
-        Width="440" SizeToContent="Height" MaxHeight="640"
+        Width="440" SizeToContent="Height" MaxHeight="720"
         WindowStyle="None" ResizeMode="NoResize"
         ShowInTaskbar="False"
         Background="{StaticResource Panel}"
@@ -39,12 +39,21 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- The edit form's field names, like ATTENDEES below. -->
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{StaticResource Muted}" />
+            <Setter Property="Margin" Value="0,12,0,4" />
+        </Style>
     </Window.Resources>
 
     <Grid x:Name="WindowRoot">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="18,16,18,18">
-            <Button x:Name="JoinButton" Content="{Binding JoinText}" Click="OnJoinClick" IsDefault="True"
+        <Grid Margin="18,16,18,18">
+        <StackPanel Visibility="{Binding IsViewing, Converter={StaticResource BoolVis}}">
+            <Button x:Name="JoinButton" Content="{Binding JoinText}" Click="OnJoinClick" IsDefault="{Binding IsViewing}"
                     IsEnabled="{Binding CanJoin}" Style="{StaticResource JoinButton}" />
             <TextBlock Text="No Teams, Zoom, Meet or Webex link in this meeting - open it in Outlook for the details."
                        FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,6,0,0"
@@ -62,6 +71,9 @@
 
             <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                 <Button Content="Open in Outlook" Click="OnOutlookClick" Margin="0,0,8,0" Style="{StaticResource ReportButton}" />
+                <Button Content="Edit" Click="OnEditClick" Margin="0,0,8,0" Style="{StaticResource ReportButton}"
+                        IsEnabled="{Binding CanStartEdit}" ToolTip="Change the title, time, people, Teams link and notes (E)"
+                        Visibility="{Binding CanEdit, Converter={StaticResource BoolVis}}" />
                 <Button Content="Show in Calendar" Click="OnCalendarClick" Margin="0,0,8,0" Style="{StaticResource ReportButton}" />
                 <Button Content="Close" Click="OnCloseClick" Style="{StaticResource ReportButton}" ToolTip="Esc" />
                 <Button x:Name="LavishButton" Style="{StaticResource LavishButton}" Margin="8,0,0,0"
@@ -71,6 +83,8 @@
                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                 </Button>
             </StackPanel>
+            <TextBlock Text="{Binding EditHint}" FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                       Visibility="{Binding EditHint, Converter={StaticResource NullVis}}" />
 
             <!-- who is coming -->
             <TextBlock Text="ATTENDEES" FontSize="10" FontWeight="Bold" Margin="0,18,0,8"
@@ -121,6 +135,87 @@
                 </ScrollViewer>
             </Border>
         </StackPanel>
+
+        <!-- Editing: everything Outlook's meeting window has that you change day to day.
+             Ctrl+Enter saves (or sends the update), Esc goes back to the card. -->
+        <StackPanel x:Name="EditForm" Visibility="{Binding IsEditing, Converter={StaticResource BoolVis}}">
+            <TextBlock Text="EDIT MEETING" FontSize="10" FontWeight="Bold" Foreground="{StaticResource Accent}" />
+
+            <TextBlock Text="TITLE" Style="{StaticResource FieldLabel}" />
+            <TextBox x:Name="EditSubjectBox" Text="{Binding EditSubject, UpdateSourceTrigger=PropertyChanged}"
+                     Style="{StaticResource FlatInput}" FontSize="14" />
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="80" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="80" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="DATE" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding EditDate, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource FlatInput}"
+                             ToolTip="&quot;Fri 2 Oct 2026&quot;, &quot;2 Oct&quot;, &quot;tomorrow&quot;, &quot;next tue&quot;" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Visibility="{Binding ShowsTimes, Converter={StaticResource BoolVis}}">
+                    <TextBlock Text="START" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding EditStart, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource FlatInput}"
+                             ToolTip="&quot;09:00&quot;, &quot;9am&quot;, &quot;2:15pm&quot;" />
+                </StackPanel>
+                <StackPanel Grid.Column="4" Visibility="{Binding ShowsTimes, Converter={StaticResource BoolVis}}">
+                    <TextBlock Text="END" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding EditEnd, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource FlatInput}"
+                             ToolTip="&quot;09:30&quot;, &quot;10am&quot;, &quot;3:45pm&quot;" />
+                </StackPanel>
+            </Grid>
+
+            <DockPanel Margin="0,10,0,0" LastChildFill="False">
+                <CheckBox IsChecked="{Binding EditAllDay}" VerticalContentAlignment="Center" DockPanel.Dock="Left">
+                    <TextBlock Text="All day" FontSize="12.5" />
+                </CheckBox>
+                <ComboBox DockPanel.Dock="Right" Width="150" FontSize="12"
+                          ItemsSource="{Binding ShowAsChoices}" DisplayMemberPath="Label"
+                          SelectedItem="{Binding EditShowAs}" ToolTip="Show as" />
+                <TextBlock DockPanel.Dock="Right" Text="Show as" FontSize="12" Margin="0,0,8,0"
+                           VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
+            </DockPanel>
+
+            <TextBlock Text="LOCATION" Style="{StaticResource FieldLabel}" />
+            <TextBox Text="{Binding EditLocation, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource FlatInput}" />
+
+            <TextBlock Text="REQUIRED" Style="{StaticResource FieldLabel}" />
+            <TextBox Text="{Binding EditRequired, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource FlatInput}"
+                     TextWrapping="Wrap" ToolTip="Names or addresses, separated by ; - Outlook looks the names up" />
+            <TextBlock Text="OPTIONAL" Style="{StaticResource FieldLabel}" />
+            <TextBox Text="{Binding EditOptional, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource FlatInput}"
+                     TextWrapping="Wrap" ToolTip="Names or addresses, separated by ;" />
+
+            <CheckBox IsChecked="{Binding EditAddTeams}" VerticalContentAlignment="Center" Margin="0,12,0,0"
+                      Visibility="{Binding CanAddTeams, Converter={StaticResource BoolVis}}"
+                      ToolTip="Outlook's Teams Meeting button is pressed for you; its window shows for a few seconds while the link goes in">
+                <TextBlock Text="Add a Teams meeting" FontSize="12.5" />
+            </CheckBox>
+
+            <TextBlock Text="NOTES" Style="{StaticResource FieldLabel}" />
+            <TextBox Text="{Binding EditBody, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource FlatInput}"
+                     AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70" MaxHeight="180"
+                     VerticalScrollBarVisibility="Auto" FontSize="12.5"
+                     ToolTip="Saved as plain text: rewriting the notes drops their formatting" />
+
+            <TextBlock Text="{Binding EditNote}" FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"
+                       Visibility="{Binding HasEditNote, Converter={StaticResource BoolVis}}" />
+            <TextBlock Text="{Binding EditMessage}" FontSize="12" Foreground="{StaticResource Warn}" TextWrapping="Wrap" Margin="0,10,0,0"
+                       Visibility="{Binding HasEditMessage, Converter={StaticResource BoolVis}}" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                <Button Content="{Binding SaveLabel}" Click="OnSaveClick" IsEnabled="{Binding CanSave}"
+                        Style="{StaticResource JoinButton}" Focusable="False" ToolTip="Ctrl+Enter" />
+                <Button Content="Cancel" Click="OnCancelEditClick" Margin="10,0,0,0" VerticalAlignment="Center"
+                        Style="{StaticResource ReportButton}" ToolTip="Esc" />
+            </StackPanel>
+        </StackPanel>
+        </Grid>
     </ScrollViewer>
 
     <!-- Lavish comment mode over the card; it grows to fit the note card while one is open -->

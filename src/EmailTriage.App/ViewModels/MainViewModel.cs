@@ -195,6 +195,14 @@ public sealed partial class MainViewModel : ObservableObject
     public async Task OpenCardInOutlookAsync(MeetingCardViewModel card) =>
         SetStatus(await Calendar.OpenInOutlookAsync(card.Row.Event).ConfigureAwait(true));
 
+    /// <summary>Save on a meeting card's edit form. True once it went through and the card can close.</summary>
+    public async Task<bool> SaveCardAsync(MeetingCardViewModel card)
+    {
+        if (await Calendar.SaveCardAsync(card).ConfigureAwait(true) is not { } done) return false;
+        SetStatus(done);
+        return true;
+    }
+
     /// <summary>Show in Calendar on a meeting's card.</summary>
     public void ShowCardInCalendar(MeetingCardViewModel card)
     {
