@@ -711,7 +711,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return true;
 
             case System.Windows.Input.Key.B when mods == Ctrl: capture.IsBlocker = !capture.IsBlocker; return true;
-            case System.Windows.Input.Key.N when mods == Ctrl: capture.ToggleNotes(); return true;
+            case System.Windows.Input.Key.N when mods == Ctrl: capture.FocusNotes(); return true;
             case System.Windows.Input.Key.M when mods == Ctrl: capture.TellThem = !capture.TellThem; return true;
             case System.Windows.Input.Key.P when mods == Ctrl: capture.CyclePriority(); return true;
         }
