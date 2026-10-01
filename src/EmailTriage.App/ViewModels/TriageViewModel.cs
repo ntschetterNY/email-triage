@@ -676,6 +676,18 @@ public sealed partial class TriageViewModel : ObservableObject
         if (Selected is null || !Rows.Contains(Selected)) Selected = Rows.FirstOrDefault();
     }
 
+    /// <summary>
+    /// A click in the list hands the keyboard back to it, so `f`, `r` and the
+    /// rest act on what was clicked instead of typing into the box. A typed
+    /// filter stays, as Enter leaves it; an unasked question has nothing to keep.
+    /// </summary>
+    public void LeaveSearchBox()
+    {
+        if (!IsSearching || IsAiSearchRunning) return;
+        if (IsAiSearch) { IsSearching = false; IsAiSearch = false; SearchQuery = ""; ApplySearchFilter(); }
+        else IsSearching = false;
+    }
+
     /// <summary>True while an AI answer is filtering the list, so Esc knows to clear it.</summary>
     public bool HasAiFilter => _aiFilterKeys is not null;
 
