@@ -9,6 +9,8 @@ namespace EmailTriage.Outlook;
 public sealed partial class OutlookMailStore
 {
     private const string PropAttachContentId = "http://schemas.microsoft.com/mapi/proptag/0x3712001F";
+    private const string PropAttachmentHidden = "http://schemas.microsoft.com/mapi/proptag/0x7FFE000B";
+    private const string PropAttachMimeTag = "http://schemas.microsoft.com/mapi/proptag/0x370E001F";
 
     /// <summary>
     /// Where embedded images are written so the reading pane can show them.

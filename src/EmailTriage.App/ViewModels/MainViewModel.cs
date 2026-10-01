@@ -1277,6 +1277,11 @@ public sealed partial class MainViewModel : ObservableObject
         ("Reply",   "Ctrl+Shift+F", "Follow up - pick a day and who it's waiting on (the first To by default); on that day it lands in the board's Follow up column"),
         ("Reply",   "Ctrl+Shift+T", "Follow-up: toggle tracking it as a task"),
         ("Reply",   "Ctrl+K", "Insert a link - on the selected text, or type the text; a copied address is filled in"),
+        ("Reply",   "Ctrl+B / I / U, Ctrl+Shift+X", "Bold / italic / underline / strikethrough (the bar under the message has them too)"),
+        ("Reply",   "Ctrl+Shift+8 / 7 / 9", "Bullets / numbering / dashes - or start a line with \"* \", \"1. \" or \"- \"; Enter continues the list"),
+        ("Reply",   "Ctrl+] / Ctrl+[", "Indent / outdent"),
+        ("Reply",   "Ctrl+Space", "Clear formatting"),
+        ("Reply",   "Ctrl+V", "Paste a picture into the message - it gets a soft drop shadow; right-click it for its size and shadow"),
         ("Reply",   "Ctrl+Shift+O / C / B / M", "Jump to To / Cc / Bcc / the message"),
         ("Reply",   "Ctrl+Shift+,", "Discard the draft (Esc too)"),
 

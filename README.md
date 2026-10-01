@@ -147,6 +147,11 @@ their own letters.
 | `Ctrl+Shift+O` / `C` / `B` / `M` | Jump to To / Cc / Bcc / the message |
 | `Esc` / `Ctrl+Shift+,` | Discard |
 | `@` | Mention someone in the message - pick with `↑↓` `Enter`/`Tab`; they are added to To if not already on it |
+| `Ctrl+B` / `I` / `U`, `Ctrl+Shift+X` | Bold / italic / underline / strikethrough. The bar under the message has them too |
+| `Ctrl+Shift+8` / `7` / `9` | Bullets / numbering / dashes. Starting a line with `* `, `1. ` or `- ` does the same, and `Enter` continues the list |
+| `Ctrl+]` / `Ctrl+[` | Indent / outdent |
+| `Ctrl+Space` | Clear formatting |
+| `Ctrl+V` | Paste a picture into the message. It gets a soft drop shadow and is sent embedded, so it shows inline in Outlook; right-click it for its size and shadow |
 
 
 ### Action items
