@@ -824,7 +824,9 @@ public partial class MainWindow : Window
     private bool IsOverlayOpen =>
         ViewModel.Triage.Palette.IsOpen
         || ViewModel.Triage.Composer.IsOpen
+        || ViewModel.Triage.Capture.IsOpen
         || ViewModel.Actions.Editor != EditorMode.None
+        || ViewModel.Actions.IsReviewing
         || ViewModel.IsHelpVisible
         || ViewModel.Lavish.IsAnnotating;
 
@@ -922,21 +924,32 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnCaptureChanged(object? sender, PropertyChangedEventArgs e)
+    private async void OnCaptureChanged(object? sender, PropertyChangedEventArgs e)
     {
         var capture = ViewModel.Triage.Capture;
 
         if (e.PropertyName != nameof(CaptureViewModel.IsOpen)) return;
 
-        _ = UpdateAirspaceAsync();
-        if (capture.IsOpen)
+        if (!capture.IsOpen)
         {
-            // The title starts as the subject, selected, so typing replaces it.
-            Dispatcher.BeginInvoke(
-                System.Windows.Threading.DispatcherPriority.Input,
-                () => { CaptureTitle.Focus(); CaptureTitle.SelectAll(); });
+            _ = UpdateAirspaceAsync();
+            Dispatcher.BeginInvoke(Focus);
+            return;
         }
-        else Dispatcher.BeginInvoke(Focus);
+
+        // The title starts as the subject, selected, so typing replaces it.
+        Dispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.Input,
+            () => { CaptureTitle.Focus(); CaptureTitle.SelectAll(); });
+
+        // If the mail had the keyboard, it keeps it even once hidden, and Tab
+        // and typing vanish into it; take it back for the box once it is covered.
+        await UpdateAirspaceAsync();
+        if (capture.IsOpen && !CaptureCard.IsKeyboardFocusWithin)
+        {
+            CaptureTitle.Focus();
+            CaptureTitle.SelectAll();
+        }
     }
 
     private void OnCaptureWhoFocus(object sender, RoutedEventArgs e) => ViewModel.Triage.Capture.IsWhoFocused = true;
