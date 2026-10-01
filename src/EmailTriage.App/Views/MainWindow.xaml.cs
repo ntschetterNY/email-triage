@@ -1021,6 +1021,10 @@ public partial class MainWindow : Window
             ViewModel.Triage.Composer.RemoveAttachment(attachment);
     }
 
+    // Runs before the row or message under the pointer takes the click.
+    private void OnMailListMouseDown(object sender, MouseButtonEventArgs e) =>
+        ViewModel.Triage.LeaveSearchBox();
+
     private void OnConversationMessageClick(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;

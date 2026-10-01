@@ -517,6 +517,7 @@
 
                         <ListBox Grid.Row="2"
                                  x:Name="MailList"
+                                 PreviewMouseLeftButtonDown="OnMailListMouseDown"
                                  ItemsSource="{Binding Triage.Rows}"
                                  SelectedItem="{Binding Triage.Selected, Mode=TwoWay}"
                                  ItemTemplate="{StaticResource MailRowTemplate}"
