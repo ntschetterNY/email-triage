@@ -2171,7 +2171,7 @@
         <!-- needs action (a): what, who, when and how to chase, asked once -->
         <Grid Grid.RowSpan="3" Background="#B0000000"
               Visibility="{Binding Triage.Capture.IsOpen, Converter={StaticResource BoolVis}}">
-            <Border Width="620" VerticalAlignment="Top" Margin="0,80,0,0"
+            <Border x:Name="CaptureCard" Width="620" VerticalAlignment="Top" Margin="0,80,0,0"
                     Background="{StaticResource Panel}" CornerRadius="9"
                     BorderBrush="{StaticResource Border}" BorderThickness="1"
                     KeyboardNavigation.TabNavigation="Cycle">
