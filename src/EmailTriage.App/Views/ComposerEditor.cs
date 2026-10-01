@@ -726,11 +726,58 @@ public sealed class ComposerEditor
         MentionStart = null;
     }
 
+    /// <summary>
+    /// The selected text becomes the link - kept as it is, bold or not, when
+    /// the link row left its wording alone. Text changed in the row, or a link
+    /// with nothing selected, is written fresh at the caret.
+    /// </summary>
     private void OnLinkInserted(object? sender, LinkInsertion e)
     {
-        if (!_box.Selection.IsEmpty) _box.Selection.Text = "";
-        var link = Link(new Run(e.Label), e.Url, _box.Selection.Start.GetInsertionPosition(LogicalDirection.Forward));
+        var selection = _box.Selection;
+        if (!selection.IsEmpty && selection.Text.Trim() == e.Label && TryWrapSelection(e.Url) is { } wrapped)
+        {
+            _box.CaretPosition = AfterLink(wrapped);
+            return;
+        }
+
+        if (!selection.IsEmpty) selection.Text = "";
+        var link = Link(new Run(e.Label), e.Url, selection.Start.GetInsertionPosition(LogicalDirection.Forward));
         _box.CaretPosition = AfterLink(link);
+    }
+
+    /// <summary>
+    /// Puts a link around what is selected, less any whitespace at its ends.
+    /// Null when that cannot be done in place - a selection across paragraphs,
+    /// or one that already holds a link - so the caller writes it afresh.
+    /// </summary>
+    private Hyperlink? TryWrapSelection(string url)
+    {
+        var start = _box.Selection.Start;
+        var end = _box.Selection.End;
+        if (start.Paragraph is null || start.Paragraph != end.Paragraph) return null;
+
+        while (start.CompareTo(end) < 0 && IsWhitespace(start.GetTextInRun(LogicalDirection.Forward)))
+            start = start.GetNextInsertionPosition(LogicalDirection.Forward) ?? end;
+        while (end.CompareTo(start) > 0 && IsWhitespace(end.GetTextInRun(LogicalDirection.Backward), fromEnd: true))
+            end = end.GetNextInsertionPosition(LogicalDirection.Backward) ?? start;
+        if (start.CompareTo(end) >= 0) return null;
+
+        if (new TextRange(start, end).Text.Length == 0 || InsideHyperlink(start) || InsideHyperlink(end)) return null;
+
+        try
+        {
+            var link = new Hyperlink(start, end) { Tag = url };
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri)) link.NavigateUri = uri;
+            return link;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            // Something in the selection cannot sit inside a link; it is replaced instead.
+            return null;
+        }
+
+        static bool IsWhitespace(string run, bool fromEnd = false) =>
+            run.Length > 0 && char.IsWhiteSpace(fromEnd ? run[^1] : run[0]);
     }
 
     /// <summary>
