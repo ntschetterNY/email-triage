@@ -201,9 +201,13 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     public bool HasFollowUp => IsFollowingUp && FollowUpWhen.Trim().Length > 0;
 
+    /// <summary>
+    /// "Friday 2 Oct 11:00": the time too, since a parked mail comes back
+    /// then - so "tom 11am" visibly keeps its 11am.
+    /// </summary>
     public string FollowUpWhenPreview => FollowUpWhen.Trim().Length == 0
-        ? "e.g. fri, 3d, 14 oct"
-        : FollowUpDue is { } d ? d.ToLocalTime().ToString("dddd d MMM") : "not a date I understand";
+        ? "e.g. fri, tom 11am, 14 oct"
+        : FollowUpDue is { } d ? d.ToLocalTime().ToString("dddd d MMM HH:mm") : "not a date I understand";
 
     /// <summary>
     /// Who the name box means. People on the message come first, so a first
