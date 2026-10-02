@@ -1298,7 +1298,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Reply",   "Ctrl+Shift+8 / 7 / 9", "Bullets / numbering / dashes - or start a line with \"* \", \"1. \" or \"- \"; Enter continues the list"),
         ("Reply",   "Ctrl+] / Ctrl+[", "Indent / outdent"),
         ("Reply",   "Ctrl+Space", "Clear formatting"),
-        ("Reply",   "Ctrl+V", "Paste a picture into the message - it gets a soft drop shadow; right-click it for its size and shadow"),
+        ("Reply",   "Ctrl+V", "Paste a picture into the message - it gets a soft drop shadow; right-click it for its size and shadow - or copied files, to attach them"),
         ("Reply",   "Ctrl+Shift+O / C / B / M", "Jump to To / Cc / Bcc / the message"),
         ("Reply",   "Ctrl+Shift+,", "Discard the draft (Esc too)"),
 

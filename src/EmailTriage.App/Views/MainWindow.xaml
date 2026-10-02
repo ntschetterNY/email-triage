@@ -2263,10 +2263,10 @@
                             </DockPanel>
                         <Grid>
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+K link · Esc discard · @ mentions · paste pictures · drop files to attach"
+                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+K link · Esc discard · @ mentions · paste pictures · drop or paste files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
                             <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Ctrl+K link · Esc discard · @ mentions · paste pictures · drop files to attach"
+                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Ctrl+K link · Esc discard · @ mentions · paste pictures · drop or paste files to attach"
                                        Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
                                        HorizontalAlignment="Right" Foreground="{StaticResource Warn}"
