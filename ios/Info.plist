@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged with the keys Xcode generates from the build settings. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Email Triage connects to your PC on this Wi-Fi to show and triage your Outlook inbox.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- The PC is reached by its local IP address with a self-signed
+		     certificate the app pins by fingerprint. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Pairing link</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>emailtriage</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

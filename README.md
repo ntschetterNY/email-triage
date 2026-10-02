@@ -19,6 +19,7 @@ fast filing, a real action list, and snooze.
 | **Write** | `Enter` reply-all, `r` reply-to-sender, `c` a new message, all sent from inside the app. |
 | **Calendar** | Invitations show when they are and whether you're free; `y` answers them. `s` puts a mail on your calendar. The Calendar tab shows your day, work week, week or month (keys `1`-`5`), and the top bar counts down to your next meeting. |
 | **AI** (optional) | `Ctrl+G` has Claude draft the reply from the conversation - or from notes you type first - offering times you're free when it's about meeting. `Ctrl+/` asks your inbox a question in plain language. Runs through your own Claude Code sign-in; see below for what leaves the machine. |
+| **iPhone and iPad** (optional) | The iPhone and iPad app triages this inbox over your Wi-Fi: archive, snooze, move, flag, read and reply, through the PC's own Outlook. There's no cloud service and no Entra app registration. See [iPhone and iPad companion](#iphone-and-ipad-companion). |
 | **Feedback** | The **Lavish** button (top right, `Ctrl+Shift+L`) lets you click any part of the app and say what should change. Each note becomes a GitHub issue, and the Lavish panel follows it through branch, pull request, merge and release. |
 
 ## Requirements
@@ -530,6 +531,50 @@ if you tick *Include what it says*, and the reading pane is never described.
 Lavish only calls GitHub when you send a note or open comment mode with notes to
 check, and it only ever sends what the note card shows.
 
+### iPhone and iPad companion
+
+An iPhone or iPad can't talk to Outlook, and Microsoft 365's mail APIs (Graph, IMAP,
+EWS) all need an Entra app registration. So the device talks to this app instead. The
+PC keeps running Email Triage and Outlook, and the app asks it to do the work over your
+local network. Mail is read and moved by the same Outlook connection the desktop
+uses. A snooze set on the iPhone or iPad comes back through the desktop's scheduler, and a
+flag lands on the desktop's action board.
+
+It is **off by default**. Turning it on means mail leaves the PC for your iPhone or iPad, so
+check that your company allows it first.
+
+1. **Settings** (`Ctrl+,`) › **iPhone and iPad** › tick *Let my iPhone or iPad triage
+   this inbox over Wi-Fi*. The status line shows the address it is listening on.
+2. Click **Pair a device...** and scan the QR code with the Email Triage app.
+   You can also copy the link under the code to the device and paste it in the app.
+3. If the device can't connect, allow Email Triage on **private networks** when Windows
+   Firewall asks. That prompt needs an administrator, so on a managed PC it may
+   need your IT department.
+
+How it's secured:
+
+- **HTTPS with a pinned certificate.** The PC makes its own certificate. The pairing
+  code carries its SHA-256 fingerprint, and the device talks to nothing else.
+- **A 256-bit pairing token** goes with every request. The token and the certificate's
+  key are kept in `%LOCALAPPDATA%\EmailTriage\companion.key`, encrypted to your Windows
+  account. **Unpair all devices** in the pairing window makes new ones.
+- **Same network only.** Requests from anything other than a private address
+  (192.168.x, 10.x, 172.16-31.x, link-local) are refused, even with the right token.
+- Mail is shown in the device's web view with JavaScript off. It is rendered on the PC
+  under the same Content-Security-Policy the desktop uses. Embedded images are sent
+  inline, and links open in Safari.
+
+On iPad the list sits beside the open conversation, and with a keyboard the
+same keys work. The app does what the desktop's main keys do: archive (`e`), snooze (`h`, with the
+same presets and typed times), move (`v`, most-used folders first), flag (`a`, without
+the details popup), mark read and unread, and reply or reply-all with the text on
+top of Outlook's own quoted history and signature. Composing new mail, attachments,
+the calendar, the action board and AI drafts are desktop-only for now.
+
+The port is `47821`. Change it with `PhoneCompanionPort` in `settings.json` if
+something else uses it. Building the app is covered in
+[`ios/README.md`](ios/README.md).
+
 ### Identity
 Outlook `EntryID`s change whenever an item moves between stores, which is what breaks
 naive Outlook tools. Everything persisted here is keyed by the RFC 5322 `Message-ID`
@@ -541,7 +586,9 @@ moved the mail by hand - the app re-finds it by `Message-ID`.
 ```
 EmailTriage.Core      models, services, SQLite    net8.0          (no Windows deps, fully tested)
 EmailTriage.Outlook   COM/MAPI implementation     net8.0-windows
+EmailTriage.Companion HTTPS API for the app       net8.0          (Kestrel; no Windows deps, tested)
 EmailTriage.App       WPF UI                      net8.0-windows
+ios/                  iPhone and iPad app         SwiftUI, iOS 17
 ```
 
 **All COM runs on one STA thread.** Outlook's object model is apartment-bound; calling
@@ -585,6 +632,8 @@ is exactly why it sits behind `IMailStore` and everything else is tested against
 - Snoozes fire only while the app is running; overdue ones are swept on next launch.
 - No body-preview text in the list (see above).
 - Single inbox - the default account's. Folder search spans all stores.
+- The iPhone and iPad app works only while the PC is on, Email Triage is running, and the device
+  is on the same network.
 - Only the default calendar. Shared and secondary calendars aren't read, so they don't
   count toward clashes or free slots.
 

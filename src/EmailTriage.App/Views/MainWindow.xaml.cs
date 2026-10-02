@@ -690,7 +690,7 @@ public partial class MainWindow : Window
 
     private void ShowSettings()
     {
-        new SettingsWindow(ViewModel.CreateSettings(), ViewModel.Lavish, ViewModel.Keys) { Owner = this }.ShowDialog();
+        new SettingsWindow(ViewModel.CreateSettings(), ViewModel.Lavish, ViewModel.Keys, ViewModel.Phone) { Owner = this }.ShowDialog();
     }
 
     // ---- calendar ------------------------------------------------------------

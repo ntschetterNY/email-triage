@@ -188,6 +188,17 @@ public sealed class AppSettings
     public bool CheckForUpdates { get; set; } = true;
 
     /// <summary>
+    /// Let the Email Triage iPhone app triage this inbox over the local
+    /// network. Off by default: on, mail leaves this PC for the paired phone
+    /// (encrypted, and only to devices on the same network holding the
+    /// pairing token). Turned on and paired from Settings.
+    /// </summary>
+    public bool PhoneCompanionEnabled { get; set; }
+
+    /// <summary>The TCP port the phone connects to.</summary>
+    public int PhoneCompanionPort { get; set; } = 47821;
+
+    /// <summary>
     /// The GitHub repo ("owner/name") Lavish files comments to. Empty uses
     /// the repo this copy was released from. Filing directly takes a token
     /// from GH_TOKEN, GITHUB_TOKEN or a signed-in `gh` CLI; without one,

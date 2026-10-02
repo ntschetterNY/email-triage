@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 using EmailTriage.Core.Models;
 using EmailTriage.Core.Services;
 
-namespace EmailTriage.App.Services;
+namespace EmailTriage.Core.Services;
 
 /// <summary>
 /// Prepares mail bodies for display in WebView2.

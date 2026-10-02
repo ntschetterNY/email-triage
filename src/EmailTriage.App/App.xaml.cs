@@ -5,6 +5,7 @@ using EmailTriage.App.Input;
 using EmailTriage.App.Services;
 using EmailTriage.App.ViewModels;
 using EmailTriage.App.Views;
+using EmailTriage.Companion;
 using EmailTriage.Core.Abstractions;
 using EmailTriage.Core.Data;
 using EmailTriage.Core.Services;
@@ -19,6 +20,7 @@ public partial class App : Application
     private IMailStore? _store;
     private SnoozeScheduler? _scheduler;
     private ScheduledSender? _sender;
+    private PhoneCompanion? _phone;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -64,6 +66,10 @@ public partial class App : Application
             window.Show();
 
             await window.ViewModel.InitialiseAsync();
+
+            // The iPhone companion, if it was left on; failures show in Settings.
+            _phone = _services.GetRequiredService<PhoneCompanion>();
+            await _phone.StartIfEnabledAsync();
         }
         catch (Exception ex)
         {
@@ -131,6 +137,29 @@ public partial class App : Application
             SnoozeFolderPath = settings.SnoozeFolder,
         });
 
+        // The iPhone companion: the same store and database the desktop
+        // uses, so a snooze or flag from the phone is the desktop's own.
+        services.AddSingleton(sp => new CompanionService(
+            sp.GetRequiredService<IMailStore>(),
+            sp.GetRequiredService<ISnoozeRepository>(),
+            sp.GetRequiredService<IActionItemRepository>(),
+            sp.GetRequiredService<FolderSearchService>(),
+            sp.GetRequiredService<IClock>(),
+            () => new CompanionOptions
+            {
+                ActionCategory = settings.ActionCategory,
+                SnoozeFolder = settings.SnoozeFolder,
+                InboxPageSize = settings.InboxPageSize,
+                SentPageSize = settings.SentPageSize,
+                ThreadMessageLimit = settings.ThreadMessageLimit,
+                BlockRemoteImages = settings.BlockRemoteImages,
+                DayShape = settings.DayShape,
+                InlineImageFolder = OutlookMailStore.DefaultInlineImageFolder,
+                PcName = Environment.MachineName,
+                Version = AppUpdater.DisplayVersion,
+            }));
+        services.AddSingleton<PhoneCompanion>();
+
         services.AddSingleton<TriageViewModel>();
         services.AddSingleton<ActionItemsViewModel>();
         services.AddSingleton<CalendarViewModel>();
@@ -142,6 +171,8 @@ public partial class App : Application
 
     protected override async void OnExit(ExitEventArgs e)
     {
+        if (_phone is not null) await _phone.DisposeAsync();
+
         // Outlook keeps running invisibly if its COM references are not released.
         if (_scheduler is not null) await _scheduler.DisposeAsync();
         if (_sender is not null) await _sender.DisposeAsync();

@@ -54,6 +54,7 @@
   <ItemGroup>
     <ProjectReference Include="..\EmailTriage.Core\EmailTriage.Core.csproj" />
     <ProjectReference Include="..\EmailTriage.Outlook\EmailTriage.Outlook.csproj" />
+    <ProjectReference Include="..\EmailTriage.Companion\EmailTriage.Companion.csproj" />
   </ItemGroup>
 
 </Project>

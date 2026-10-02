@@ -10,3 +10,9 @@ TestResults/
 
 # Impeccable per-session cache
 .impeccable/hook.cache.json
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+.DS_Store

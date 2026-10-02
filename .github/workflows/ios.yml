@@ -1,0 +1,30 @@
+# Compiles the iPhone app for the simulator, unsigned, so a change to it is
+# known to build before anyone opens Xcode. Signing and installing on a
+# phone happen on the developer's Mac; see ios/README.md.
+name: iOS
+
+on:
+  push:
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build for the simulator
+        run: |
+          xcodebuild -version
+          xcodebuild build \
+            -project ios/EmailTriage.xcodeproj \
+            -target EmailTriage \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            CODE_SIGNING_ALLOWED=NO
