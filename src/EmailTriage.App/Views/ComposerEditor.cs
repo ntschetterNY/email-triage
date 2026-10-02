@@ -18,7 +18,8 @@ namespace EmailTriage.App.Views;
 /// The message box of the composer: a RichTextBox offering the formatting a
 /// mail carries the same way everywhere - bold, italic, underline,
 /// strikethrough, bullets, numbering, dashes, indents, links, @mentions and
-/// pasted pictures - and nothing it does not. It keeps the view model's
+/// pasted pictures, with the shadows Outlook's picture styles give them -
+/// and nothing it does not. It keeps the view model's
 /// plain-text mirror current and hands over the finished
 /// <see cref="ComposeDocument"/> at send time.
 /// </summary>
@@ -330,12 +331,15 @@ public sealed class ComposerEditor
         public string Path { get; }
         public BitmapSource Bitmap { get; }
 
-        // The shadowed copy, for the size it was painted at.
+        /// <summary>The shadow it wears; a picture that came in inside rich text has none until given one.</summary>
+        public PictureShadow Shadow { get; set; } = PictureShadow.None;
+
+        // The shadowed copy, for the size and shadow it was painted with.
         public (string Path, int Width, int Height)? Shadowed { get; set; }
-        public (int Width, int Height) ShadowedFor { get; set; }
+        public (int Width, int Height, string Shadow) ShadowedFor { get; set; }
     }
 
-    /// <summary>Puts a picture in at the caret, with a soft shadow, sized to fit the box.</summary>
+    /// <summary>Puts a picture in at the caret, with the soft shadow, sized to fit the box.</summary>
     public void InsertImage(BitmapSource source)
     {
         string path;
@@ -379,7 +383,7 @@ public sealed class ComposerEditor
         var (width, height) = Fit(info.Bitmap.PixelWidth, info.Bitmap.PixelHeight, MaxImageWidth, MaxImageHeight);
         image.Width = width;
         image.Height = height;
-        SetShadow(image, true);
+        SetShadow(image, PictureShadow.Default);
         image.ContextMenu = ImageMenu(image);
     }
 
@@ -390,16 +394,46 @@ public sealed class ComposerEditor
         return (Math.Round(width * scale), Math.Round(height * scale));
     }
 
-    private static void SetShadow(Image image, bool on) => image.Effect = on ? ComposeImageStore.Shadow() : null;
+    /// <summary>Gives the picture one of the shadows, on screen now and in the mail when it goes.</summary>
+    private void SetShadow(Image image, PictureShadow style)
+    {
+        if (Info(image) is { } info) info.Shadow = style;
+        image.Effect = ComposeImageStore.Shadow(style);
+    }
 
+    private PictureShadow ShadowOf(Image image) => (image.Tag as PastedImage)?.Shadow ?? PictureShadow.None;
+
+    /// <summary>
+    /// Right-click on a picture: its shadow, after Outlook's picture styles -
+    /// none, soft, drop, slate drop and centre - its size, and removal.
+    /// </summary>
     private ContextMenu ImageMenu(Image image)
     {
         var menu = new ContextMenu();
 
-        var shadow = new MenuItem { Header = "Drop shadow", IsCheckable = true, IsChecked = image.Effect is not null };
-        shadow.Click += (_, _) => SetShadow(image, shadow.IsChecked);
-        menu.Items.Add(shadow);
+        var shadows = new MenuItem();
+        var choices = new List<(MenuItem Item, PictureShadow Style)>();
+        foreach (var style in PictureShadow.All)
+        {
+            var choice = new MenuItem { Header = style.Name, ToolTip = style.Hint, StaysOpenOnClick = false };
+            choice.Click += (_, _) =>
+            {
+                SetShadow(image, style);
+                ShowShadowChoice();
+            };
+            choices.Add((choice, style));
+            shadows.Items.Add(choice);
+        }
+        ShowShadowChoice();
+        menu.Items.Add(shadows);
         menu.Items.Add(new Separator());
+
+        void ShowShadowChoice()
+        {
+            var current = ShadowOf(image);
+            shadows.Header = $"Shadow: {current.Name}";
+            foreach (var (item, style) in choices) item.IsChecked = style == current;
+        }
         menu.Items.Add(Item("Smaller", () => Resize(image, 0.8)));
         menu.Items.Add(Item("Larger", () => Resize(image, 1.25)));
         menu.Items.Add(Item("Fit the message", () => Resize(image, 0)));
@@ -548,18 +582,18 @@ public sealed class ComposerEditor
         var width = (int)Math.Round(double.IsNaN(image.Width) ? info.Bitmap.PixelWidth : image.Width);
         var height = (int)Math.Round(double.IsNaN(image.Height) ? info.Bitmap.PixelHeight : image.Height);
 
-        if (image.Effect is null || !bakeShadows)
+        if (info.Shadow.IsNone || !bakeShadows)
         {
             yield return new ComposeImage(info.Path, width, height);
             yield break;
         }
 
-        if (info.Shadowed is not { } shadowed || info.ShadowedFor != (width, height))
+        if (info.Shadowed is not { } shadowed || info.ShadowedFor != (width, height, info.Shadow.Name))
         {
-            shadowed = ComposeImageStore.WithShadow(info.Bitmap, width, height);
+            shadowed = ComposeImageStore.WithShadow(info.Bitmap, width, height, info.Shadow);
             _files.Add(shadowed.Path);
             info.Shadowed = shadowed;
-            info.ShadowedFor = (width, height);
+            info.ShadowedFor = (width, height, info.Shadow.Name);
         }
 
         yield return new ComposeImage(shadowed.Path, shadowed.Width, shadowed.Height);
