@@ -676,6 +676,16 @@ public partial class MainWindow : Window
 
     private void OnSettingsClick(object sender, RoutedEventArgs e) => ShowSettings();
 
+    /// <summary>A top-bar tab clicked: its Tag names the section it shows.</summary>
+    private void OnSectionTabClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string tag } && Enum.TryParse<Section>(tag, out var section))
+        {
+            ViewModel.ShowSection(section);
+            e.Handled = true;
+        }
+    }
+
     private void OnLavishButtonClick(object sender, RoutedEventArgs e) => LavishLayer.Toggle();
 
     private void ShowSettings()
