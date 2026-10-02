@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
 using EmailTriage.App.Input;
+using EmailTriage.App.Services;
 using EmailTriage.App.ViewModels;
 
 namespace EmailTriage.App.Views;
@@ -11,11 +12,17 @@ public partial class SettingsWindow : Window
 {
     public SettingsViewModel ViewModel { get; }
 
-    public SettingsWindow(SettingsViewModel viewModel, LavishViewModel lavish, KeyMap keys)
+    private readonly PhoneCompanion _phone;
+
+    public SettingsWindow(SettingsViewModel viewModel, LavishViewModel lavish, KeyMap keys, PhoneCompanion phone)
     {
         ViewModel = viewModel;
         DataContext = viewModel;
+        _phone = phone;
         InitializeComponent();
+
+        // The phone switch applies at once, like Outlook's own toggles, rather than on Save.
+        PhoneSection.DataContext = phone;
 
         LavishLayer.Attach(lavish, keys, WindowRoot, LavishButton, area: () => "Settings", panel: false);
 
@@ -32,6 +39,9 @@ public partial class SettingsWindow : Window
     private void OnSaveClick(object sender, RoutedEventArgs e) => ViewModel.Save();
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
+
+    private void OnPairPhoneClick(object sender, RoutedEventArgs e) =>
+        new PairPhoneWindow(_phone) { Owner = this }.ShowDialog();
 
     private void OnResetClick(object sender, RoutedEventArgs e) => ViewModel.ResetToDefaults();
 

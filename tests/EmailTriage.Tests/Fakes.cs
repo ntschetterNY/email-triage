@@ -67,10 +67,22 @@ public sealed class FakeMailStore : IMailStore
         => Task.FromResult(new FolderRef("snoozed", "store", $"Mailbox\\{relativePath}"));
 
     public Task SetReadAsync(MailRef mail, bool read, CancellationToken ct = default)
-        => Task.CompletedTask;
+    {
+        ReadWrites.Add((mail, read));
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Category writes, in order.</summary>
+    public List<(MailRef Mail, string Category, bool On)> CategoryWrites { get; } = new();
+
+    /// <summary>Read-state writes, in order.</summary>
+    public List<(MailRef Mail, bool Read)> ReadWrites { get; } = new();
 
     public Task SetCategoryAsync(MailRef mail, string category, bool on, CancellationToken ct = default)
-        => Task.CompletedTask;
+    {
+        CategoryWrites.Add((mail, category, on));
+        return Task.CompletedTask;
+    }
 
     public Task<FolderNode> CreateFolderAsync(
         FolderRef parent, string name, CancellationToken ct = default)
@@ -110,23 +122,48 @@ public sealed class FakeMailStore : IMailStore
         string filter, int max, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<MailSummary>>(Array.Empty<MailSummary>());
 
+    /// <summary>What GetBodyAsync returns, by EntryId; anything else fails as a vanished message would.</summary>
+    public Dictionary<string, MailBody> Bodies { get; } = new();
+
     public Task<MailBody> GetBodyAsync(MailRef mail, CancellationToken ct = default)
-        => throw new NotSupportedException("Not exercised by these tests.");
+        => Bodies.TryGetValue(mail.EntryId, out var body)
+            ? Task.FromResult(body)
+            : throw new InvalidOperationException("The message could not be found.");
 
     public Task<IReadOnlyDictionary<string, MailRecipients>> GetRecipientsAsync(
         IReadOnlyList<MailRef> mail, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyDictionary<string, MailRecipients>>(new Dictionary<string, MailRecipients>());
 
+    /// <summary>Replies built and sent: what each answered, how, and the HTML sent.</summary>
+    public List<(MailRef InReplyTo, ReplyScope Scope)> RepliesBuilt { get; } = new();
+    public List<(string Draft, string Html)> RepliesSent { get; } = new();
+    public List<string> DraftsDiscarded { get; } = new();
+
     public Task<ReplyDraft> BuildReplyAsync(
         MailRef mail, ReplyScope scope, CancellationToken ct = default)
-        => throw new NotSupportedException("Not exercised by these tests.");
+    {
+        RepliesBuilt.Add((mail, scope));
+        return Task.FromResult(new ReplyDraft
+        {
+            Ref = new DraftRef($"reply-{mail.EntryId}", mail.StoreId),
+            Scope = scope,
+            Subject = "RE:",
+            To = Array.Empty<Recipient>(),
+            Cc = Array.Empty<Recipient>(),
+            InReplyTo = mail,
+        });
+    }
 
     public Task<ReplyDraft> BuildNewMailAsync(CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");
 
     public Task SendReplyAsync(
         DraftRef draft, string bodyHtml, RecipientOverrides? recipients = null, CancellationToken ct = default)
-        => throw new NotSupportedException("Not exercised by these tests.");
+    {
+        if (NextSendFailure is { } fail) { NextSendFailure = null; throw fail; }
+        RepliesSent.Add((draft.EntryId, bodyHtml));
+        return Task.CompletedTask;
+    }
 
     // Saved drafts, for scheduled sends.
     public Dictionary<string, SavedDraftState> SavedDrafts { get; } = new();
@@ -188,7 +225,10 @@ public sealed class FakeMailStore : IMailStore
     }
 
     public Task DiscardDraftAsync(DraftRef draft, CancellationToken ct = default)
-        => Task.CompletedTask;
+    {
+        DraftsDiscarded.Add(draft.EntryId);
+        return Task.CompletedTask;
+    }
 
     public Task<DraftRef> CreateAndShowDraftAsync(
         IReadOnlyList<string> to, string subject, string bodyHtml, CancellationToken ct = default)

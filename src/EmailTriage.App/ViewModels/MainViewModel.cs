@@ -82,9 +82,11 @@ public sealed partial class MainViewModel : ObservableObject
         ClaudeCodeCli claude,
         FolderSearchService folders,
         RetentionSweep retention,
-        LavishViewModel lavish)
+        LavishViewModel lavish,
+        PhoneCompanion phone)
     {
         Lavish = lavish;
+        Phone = phone;
         _retention = retention;
         _folders = folders;
         _aiUsage = aiUsage;
@@ -1002,6 +1004,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>A fresh Settings page over the live settings, for the view to show.</summary>
     public SettingsViewModel CreateSettings() => new(_settings, _store, _folders);
+
+    /// <summary>The iPhone companion, switched on and paired from Settings.</summary>
+    public PhoneCompanion Phone { get; }
 
     public string SettingsKey => Keys.Describe(TriageAction.OpenSettings);
 

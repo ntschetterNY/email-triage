@@ -41,6 +41,7 @@ The only Superhuman-style triage client that works on **classic Outlook desktop 
 - Single inbox (default account), default calendar only; folder search spans all stores.
 - Keybindings user-editable in `%APPDATA%\EmailTriage\keybindings.json`, with versioned migration.
 - Lavish feedback (top-right button, `Ctrl+Shift+L`): click any element, comment, and it is filed as a public GitHub issue that a workflow walks through branch → PR → merged → released. User-initiated only; mail text is never included unless the user ticks it. The one deliberate exception to "nothing leaves the machine", and it sends only what the note card shows.
+- iPhone companion (opt-in, off by default): the PC serves a small HTTPS API (`EmailTriage.Companion`, Kestrel, no admin rights) to a paired SwiftUI app in `ios/`. The phone is pinned to the PC's self-signed certificate, sends a pairing token, and is refused from anything but a private network address. This is the second deliberate exception to "nothing leaves the machine", and only for the user's own paired phone on their own network. It avoids Graph and Entra app registration entirely.
 - Tabs: Triage, Action items, Calendar. Fuzzy folder palette (`v`), snooze with natural-language dates (`h`), compose/reply with @-mentions, meeting join countdown in the top bar; Calendar tab with day, work week, week, month and agenda views (`1`-`5`); AI drafts that offer times you are free.
 
 ## Brand Commitments

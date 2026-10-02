@@ -52,6 +52,28 @@
 
                 <Border Height="1" Background="{StaticResource Border}" Margin="0,26,0,22" />
 
+                <!-- ============ the iPhone companion ============ -->
+                <StackPanel x:Name="PhoneSection">
+                    <TextBlock Text="iPhone" Style="{StaticResource Heading}" />
+                    <TextBlock Style="{StaticResource Hint}" Margin="0">
+                        Triage this inbox from the Email Triage iPhone app while you're on the same Wi-Fi as this PC.
+                        This PC and Outlook have to stay on. Mail goes from this PC to your phone, encrypted, and only
+                        to a phone you've paired. Check that your company allows that before you turn it on.
+                    </TextBlock>
+
+                    <CheckBox IsChecked="{Binding IsEnabled}" Margin="0,14,0,0" VerticalContentAlignment="Center">
+                        <TextBlock FontSize="12.5" TextWrapping="Wrap"
+                                   Text="Let my iPhone triage this inbox over Wi-Fi" />
+                    </CheckBox>
+                    <TextBlock Text="{Binding Status}" Style="{StaticResource Hint}" Margin="22,5,0,0" />
+
+                    <Button Content="Pair an iPhone..." Click="OnPairPhoneClick" HorizontalAlignment="Left"
+                            Margin="0,12,0,0" Style="{StaticResource ReportButton}"
+                            IsEnabled="{Binding IsRunning}" />
+                </StackPanel>
+
+                <Border Height="1" Background="{StaticResource Border}" Margin="0,26,0,22" />
+
                 <!-- ============ how folders are named and nested ============ -->
                 <TextBlock Text="Folder structure" Style="{StaticResource Heading}" />
                 <TextBlock Style="{StaticResource Hint}" Margin="0">

@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EmailTriage.Core\EmailTriage.Core.csproj" />
+    <ProjectReference Include="..\..\src\EmailTriage.Companion\EmailTriage.Companion.csproj" />
   </ItemGroup>
 
 </Project>
