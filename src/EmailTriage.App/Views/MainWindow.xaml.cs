@@ -29,6 +29,10 @@ public partial class MainWindow : Window
     private bool _actionViewReady;
     private string _pendingActionHtml = "";
 
+    // The "125%" pills beside each mail view. Kept so the timers live as long as the window.
+    private readonly ZoomReadout _zoomReadout;
+    private readonly ZoomReadout _actionZoomReadout;
+
     public MainWindow(MainViewModel viewModel)
     {
         ViewModel = viewModel;
@@ -42,6 +46,9 @@ public partial class MainWindow : Window
             .ToList();
 
         HintStrip.ItemsSource = BuildHints();
+
+        _zoomReadout = new ZoomReadout(BodyView, ZoomBadge, ZoomBadge, ZoomBadgeText);
+        _actionZoomReadout = new ZoomReadout(ActionBodyView, ActionZoomStrip, ActionZoomBadge, ActionZoomBadgeText);
 
         viewModel.PropertyChanged += OnViewModelChanged;
         viewModel.PrintRequested += async (_, _) => await PrintAsync();
@@ -410,6 +417,62 @@ public partial class MainWindow : Window
         // scripts are exempt from the page CSP; mail's own scripts are not.
         await core.AddScriptToExecuteOnDocumentCreatedAsync(BuildKeyForwardingScript());
         core.WebMessageReceived += OnWebMessageReceived;
+    }
+
+    /// <summary>
+    /// The "125%" pill beside a mail view. The browser zooms on Ctrl+scroll and
+    /// Ctrl+Plus/Minus, but the page itself gives no number, so this shows one
+    /// on every change. Back at 100% it goes away again after a moment; at any
+    /// other zoom it stays, so bigger or smaller text is never a mystery.
+    /// Clicking it puts the zoom back to 100%. A WebView2 is its own window
+    /// that WPF cannot paint over, which is why the pill sits beside the view
+    /// rather than on it.
+    /// </summary>
+    private sealed class ZoomReadout
+    {
+        private readonly Microsoft.Web.WebView2.Wpf.WebView2 _view;
+        private readonly FrameworkElement _shown;
+        private readonly TextBlock _text;
+        private readonly System.Windows.Threading.DispatcherTimer _settle =
+            new() { Interval = TimeSpan.FromSeconds(2) };
+
+        /// <param name="shown">What appears and disappears: the pill, or a strip holding it.</param>
+        /// <param name="reset">What is clicked to go back to 100%.</param>
+        public ZoomReadout(
+            Microsoft.Web.WebView2.Wpf.WebView2 view, FrameworkElement shown, FrameworkElement reset, TextBlock text)
+        {
+            _view = view;
+            _shown = shown;
+            _text = text;
+
+            _view.ZoomFactorChanged += (_, _) => Show();
+            reset.MouseLeftButtonUp += (_, e) =>
+            {
+                e.Handled = true;
+                _view.ZoomFactor = 1.0;
+            };
+            _settle.Tick += (_, _) => Settle();
+        }
+
+        private bool IsDefault => Math.Abs(_view.ZoomFactor - 1.0) < 0.005;
+
+        private void Show()
+        {
+            _text.Text = $"{(int)Math.Round(_view.ZoomFactor * 100)}%";
+            _shown.Visibility = Visibility.Visible;
+            _shown.Opacity = 1.0;
+
+            // Restarted on every step, so a run of Ctrl+scroll reads as one change.
+            _settle.Stop();
+            _settle.Start();
+        }
+
+        private void Settle()
+        {
+            _settle.Stop();
+            if (IsDefault) _shown.Visibility = Visibility.Collapsed;
+            else _shown.Opacity = 0.75;
+        }
     }
 
     /// <summary>

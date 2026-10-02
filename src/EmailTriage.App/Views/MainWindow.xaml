@@ -559,6 +559,14 @@
                                 <Button DockPanel.Dock="Right" Content="Print" Click="OnPrint" Margin="12,0,0,0"
                                         VerticalAlignment="Top" Style="{StaticResource ReportButton}"
                                         ToolTip="Print this conversation (Ctrl+P)" />
+                                <!-- how far the message is zoomed; see MainWindow.ZoomReadout -->
+                                <Border DockPanel.Dock="Right" x:Name="ZoomBadge" Visibility="Collapsed"
+                                        Margin="12,2,0,0" VerticalAlignment="Top" Padding="8,3" CornerRadius="4"
+                                        Background="#337AA2F7" Cursor="Hand"
+                                        ToolTip="Reading pane zoom · click to go back to 100% (Ctrl+0 also resets; Ctrl+scroll or Ctrl+Plus/Minus zooms)">
+                                    <TextBlock x:Name="ZoomBadgeText" Text="100%" FontSize="11.5"
+                                               Foreground="{StaticResource Text}" />
+                                </Border>
                                 <TextBox Text="{Binding Triage.OpenBody.Subject, Mode=OneWay}" FontSize="17"
                                          FontWeight="SemiBold" Style="{StaticResource SelectableText}" />
                             </DockPanel>
@@ -1319,8 +1327,26 @@
                     <GridSplitter Grid.Column="1" Width="4" Background="{StaticResource Border}" HorizontalAlignment="Stretch" />
 
                     <!-- the email behind the card -->
-                    <Image Grid.Column="2" x:Name="ActionBodySnapshot" Stretch="Fill" />
-                    <wv2:WebView2 Grid.Column="2" x:Name="ActionBodyView" DefaultBackgroundColor="#16181D" />
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- how far the email is zoomed; only there while it matters. See MainWindow.ZoomReadout. -->
+                        <Border Grid.Row="0" x:Name="ActionZoomStrip" Visibility="Collapsed" Padding="12,6"
+                                Background="{StaticResource Bg}" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
+                            <Border x:Name="ActionZoomBadge" HorizontalAlignment="Right" Padding="8,3" CornerRadius="4"
+                                    Background="#337AA2F7" Cursor="Hand"
+                                    ToolTip="Email zoom · click to go back to 100% (Ctrl+0 also resets; Ctrl+scroll or Ctrl+Plus/Minus zooms)">
+                                <TextBlock x:Name="ActionZoomBadgeText" Text="100%" FontSize="11.5"
+                                           Foreground="{StaticResource Text}" />
+                            </Border>
+                        </Border>
+
+                        <Image Grid.Row="1" x:Name="ActionBodySnapshot" Stretch="Fill" />
+                        <wv2:WebView2 Grid.Row="1" x:Name="ActionBodyView" DefaultBackgroundColor="#16181D" />
+                    </Grid>
                 </Grid>
             </Grid>
 

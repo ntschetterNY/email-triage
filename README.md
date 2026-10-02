@@ -129,6 +129,7 @@ their own letters.
 | `u` | Toggle read / unread |
 | `Ctrl+O` | Open an attachment |
 | `Ctrl+P` | **Print** - the whole conversation, every message open (also the **Print** button in the reading pane) |
+| `Ctrl+scroll`, `Ctrl+Plus` / `Ctrl+Minus` | **Zoom the message** - the percentage shows above it while it is not 100%; click it, or press `Ctrl+0`, to go back |
 | `z` / `Ctrl+Z` | Undo the last move or snooze |
 
 ### Replying
