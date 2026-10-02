@@ -12,8 +12,8 @@ enum CompanionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unreachable(let pc):
-            return "Can't reach \(pc). Check that the phone is on the same Wi-Fi, the PC is awake, "
-                + "and \"Let my iPhone triage this inbox\" is on in Email Triage's Settings."
+            return "Can't reach \(pc). Check that this device is on the same Wi-Fi, the PC is awake, "
+                + "and \"Let my iPhone or iPad triage this inbox\" is on in Email Triage's Settings."
         case .unpaired(let message):
             return message
         case .server(_, let message):

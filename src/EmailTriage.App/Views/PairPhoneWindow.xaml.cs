@@ -30,7 +30,7 @@ public partial class PairPhoneWindow : Window
 
         if (Pairing.LocalAddresses().Count == 0)
         {
-            Warning.Text = "This PC has no address on a private network, so a phone can't reach it. " +
+            Warning.Text = "This PC has no address on a private network, so an iPhone or iPad can't reach it. " +
                            "Connect it to Wi-Fi or office Ethernet and open this again.";
             Warning.Visibility = Visibility.Visible;
         }
@@ -39,8 +39,8 @@ public partial class PairPhoneWindow : Window
     private async void OnUnpairClick(object sender, RoutedEventArgs e)
     {
         var answer = MessageBox.Show(this,
-            "Make a new pairing code? Every phone paired now stops working until you pair it again.",
-            "Unpair all phones", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+            "Make a new pairing code? Every iPhone and iPad paired now stops working until you pair it again.",
+            "Unpair all devices", MessageBoxButton.OKCancel, MessageBoxImage.Question);
         if (answer != MessageBoxResult.OK) return;
 
         await _phone.UnpairAllAsync();

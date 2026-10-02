@@ -93,7 +93,7 @@ public sealed class CompanionServer : IAsyncDisposable
         var token = header.StartsWith(bearer, StringComparison.OrdinalIgnoreCase) ? header[bearer.Length..].Trim() : null;
         if (!_identity.Accepts(token))
         {
-            await Refuse(context, StatusCodes.Status401Unauthorized, "This phone isn't paired with the PC. Pair it again from Settings on the PC.");
+            await Refuse(context, StatusCodes.Status401Unauthorized, "This device isn't paired with the PC. Pair it again from Settings on the PC.");
             return;
         }
 

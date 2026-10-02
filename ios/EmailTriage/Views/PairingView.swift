@@ -17,13 +17,13 @@ struct PairingView: View {
                         .foregroundStyle(.tint)
                         .padding(.top, 24)
 
-                    Text("Triage your Outlook inbox from your iPhone")
+                    Text("Triage your Outlook inbox from your iPhone or iPad")
                         .font(.title2.bold())
 
                     VStack(alignment: .leading, spacing: 10) {
                         Step(number: 1, text: "On your PC, open Email Triage and press Ctrl+, for Settings.")
-                        Step(number: 2, text: "Under iPhone, tick \"Let my iPhone triage this inbox over Wi-Fi\", then click Pair an iPhone.")
-                        Step(number: 3, text: "Scan the code it shows. Your phone has to be on the same Wi-Fi as the PC.")
+                        Step(number: 2, text: "Under iPhone and iPad, tick \"Let my iPhone or iPad triage this inbox over Wi-Fi\", then click Pair a device.")
+                        Step(number: 3, text: "Scan the code it shows. This device has to be on the same Wi-Fi as the PC.")
                     }
 
                     Button {
@@ -51,12 +51,15 @@ struct PairingView: View {
                             .foregroundStyle(.red)
                     }
 
-                    Text("Your mail stays in Outlook on the PC. The phone shows it only while it can reach the PC, over an encrypted connection to that PC alone.")
+                    Text("Your mail stays in Outlook on the PC. This device shows it only while it can reach the PC, over an encrypted connection to that PC alone.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.top, 8)
                 }
                 .padding(.horizontal, 24)
+                // A readable column on iPad rather than the full width.
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
             }
             .navigationTitle("Email Triage")
             .navigationBarTitleDisplayMode(.inline)
@@ -73,7 +76,7 @@ struct PairingView: View {
         if state.pair(with: link) {
             problem = nil
         } else {
-            problem = "That isn't an Email Triage pairing code. Use the one under Settings › iPhone › Pair an iPhone on the PC."
+            problem = "That isn't an Email Triage pairing code. Use the one under Settings › iPhone and iPad › Pair a device on the PC."
         }
     }
 }

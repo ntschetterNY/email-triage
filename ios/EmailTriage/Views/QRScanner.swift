@@ -52,6 +52,9 @@ final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsD
 
     private let session = AVCaptureSession()
     private var preview: AVCaptureVideoPreviewLayer?
+    /// Keeps the preview upright as an iPad turns.
+    private var rotation: AVCaptureDevice.RotationCoordinator?
+    private var rotationObservation: NSKeyValueObservation?
     private var reported = false
 
     override func viewDidLoad() {
@@ -90,6 +93,15 @@ final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsD
         layer.frame = view.bounds
         view.layer.addSublayer(layer)
         preview = layer
+
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: camera, previewLayer: layer)
+        rotation = coordinator
+        layer.connection?.videoRotationAngle = coordinator.videoRotationAngleForHorizonLevelPreview
+        rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.new]) { [weak layer] coordinator, _ in
+            DispatchQueue.main.async {
+                layer?.connection?.videoRotationAngle = coordinator.videoRotationAngleForHorizonLevelPreview
+            }
+        }
 
         let session = self.session
         DispatchQueue.global(qos: .userInitiated).async { session.startRunning() }

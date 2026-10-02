@@ -1,28 +1,48 @@
 import SwiftUI
 
 /// The triage list: swipe right to archive, left to snooze or flag, tap to read.
+/// On iPad the list sits beside the open conversation; on iPhone it pushes.
 struct InboxView: View {
     @Bindable var model: InboxModel
     @Environment(AppState.self) private var state
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
-    @State private var path: [Conversation] = []
+    /// The open conversation, by key.
+    @State private var selection: String?
     @State private var snoozing: Conversation?
     @State private var moving: Conversation?
     @State private var confirmUnpair = false
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationSplitView {
             list
                 .navigationTitle("Inbox")
                 .toolbar { toolbar }
-                .navigationDestination(for: Conversation.self) { c in
-                    ThreadView(model: model, conversation: c)
-                }
                 .refreshable { await model.refresh() }
                 .overlay { emptyState }
                 .safeAreaInset(edge: .bottom) { banner }
+                .navigationSplitViewColumnWidth(min: 300, ideal: 380, max: 480)
+        } detail: {
+            NavigationStack {
+                if let open = selected {
+                    ThreadView(
+                        model: model,
+                        conversation: open,
+                        onLeave: { leave(open) },
+                        onStep: { step($0) })
+                        .id(open.key)
+                } else {
+                    ContentUnavailableView(
+                        model.visible.isEmpty ? "Nothing to read" : "No conversation selected",
+                        systemImage: "envelope.open",
+                        description: Text(sizeClass == .regular
+                            ? "Pick one from the list. With a keyboard, j and k move between them."
+                            : ""))
+                }
+            }
         }
+        .navigationSplitViewStyle(.balanced)
         .task { await model.refresh() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await model.refresh() } }
@@ -30,12 +50,14 @@ struct InboxView: View {
         .sheet(item: $snoozing) { c in
             SnoozeSheet(client: model.client) { when in
                 snoozing = nil
+                leave(c)
                 Task { await model.snooze(c, until: when) }
             }
         }
         .sheet(item: $moving) { c in
             MoveSheet(client: model.client) { folder in
                 moving = nil
+                leave(c)
                 Task { await model.move(c, to: folder) }
             }
         }
@@ -46,13 +68,40 @@ struct InboxView: View {
         }
     }
 
+    private var selected: Conversation? {
+        selection.flatMap { key in model.conversations.first { $0.key == key } }
+    }
+
+    /// A conversation is leaving the list. On iPad the next one opens, as
+    /// on the desktop; on iPhone it's back to the list.
+    private func leave(_ c: Conversation) {
+        guard selection == c.key else { return }
+        if sizeClass == .regular, let index = model.visible.firstIndex(where: { $0.key == c.key }) {
+            let rest = model.visible
+            selection = index + 1 < rest.count ? rest[index + 1].key
+                : index > 0 ? rest[index - 1].key
+                : nil
+        } else {
+            selection = nil
+        }
+    }
+
+    /// j / k: the next or previous conversation in the list.
+    private func step(_ by: Int) {
+        let rows = model.visible
+        guard !rows.isEmpty else { return }
+        let current = selection.flatMap { key in rows.firstIndex { $0.key == key } }
+        let next = current.map { min(max($0 + by, 0), rows.count - 1) } ?? 0
+        selection = rows[next].key
+    }
+
     private var list: some View {
-        List(model.visible) { c in
-            NavigationLink(value: c) {
-                ConversationRow(conversation: c)
-            }
+        List(model.visible, selection: $selection) { c in
+            ConversationRow(conversation: c)
+                .tag(c.key)
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 Button {
+                    leave(c)
                     Task { await model.archive(c) }
                 } label: {
                     Label("Archive", systemImage: "archivebox")

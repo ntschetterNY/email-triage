@@ -88,7 +88,7 @@ public sealed partial class PhoneCompanion : ObservableObject, IAsyncDisposable
         var where = hosts.Count == 0
             ? "but this PC has no private network address - is it on Wi-Fi or office Ethernet?"
             : $"on {hosts[0]}:{Port}";
-        var seen = _lastRequest is { } at ? $" · phone last connected {at:HH:mm}" : "";
+        var seen = _lastRequest is { } at ? $" · device last connected {at:HH:mm}" : "";
         Status = $"On, listening {where}{seen}";
     }
 
