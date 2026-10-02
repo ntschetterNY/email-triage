@@ -1506,11 +1506,13 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
+                            <!-- one label per hour, each exactly an hour tall: the gap under the line is padding,
+                                 not a margin, so the labels keep step with the hour lines and blocks all day -->
                             <ItemsControl Grid.Column="0" ItemsSource="{x:Static vm:CalendarViewModel.HourLabels}" IsHitTestVisible="False">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding}" Height="{x:Static vm:CalendarViewModel.HourHeight}" FontSize="10"
-                                                   Foreground="{StaticResource Muted}" HorizontalAlignment="Right" Margin="0,2,8,0" />
+                                                   Foreground="{StaticResource Muted}" HorizontalAlignment="Right" Padding="0,2,8,0" />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
