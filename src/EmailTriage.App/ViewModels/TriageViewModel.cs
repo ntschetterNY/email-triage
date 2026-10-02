@@ -696,6 +696,13 @@ public sealed partial class TriageViewModel : ObservableObject
     /// <summary>True while an AI answer is filtering the list, so Esc knows to clear it.</summary>
     public bool HasAiFilter => _aiFilterKeys is not null;
 
+    /// <summary>
+    /// True while any search still narrows the list - including a typed filter
+    /// kept after Enter or a click closed the box - so Esc from the list goes
+    /// back to the whole inbox.
+    /// </summary>
+    public bool HasSearchFilter => HasAiFilter || SearchQuery.Length > 0;
+
     public async Task RunAiSearchAsync()
     {
         var question = SearchQuery.Trim();
@@ -2715,6 +2722,6 @@ public sealed partial class TriageViewModel : ObservableObject
         if (Palette.IsOpen) { Palette.Close(); return; }
         if (IsPreviewing) { ClosePreview(); Status = ""; return; }
         if (HasMarks) { ClearMarks(); Status = ""; return; }
-        if (IsSearching || HasAiFilter) { CloseSearch(); Status = ""; }
+        if (IsSearching || HasSearchFilter) { CloseSearch(); Status = ""; }
     }
 }
