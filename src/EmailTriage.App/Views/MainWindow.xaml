@@ -654,8 +654,13 @@
                             </Border>
 
                             <!-- attachments: click to open, or press v -->
-                            <ItemsControl ItemsSource="{Binding Triage.ThreadAttachments}" Margin="0,9,0,0"
-                                          Visibility="{Binding Triage.ThreadAttachments.Count, Converter={StaticResource CountVis}}">
+                            <DockPanel Margin="0,9,0,0"
+                                       Visibility="{Binding Triage.ThreadAttachments.Count, Converter={StaticResource CountVis}}">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top" Margin="6,0,0,6">
+                                <Button Content="Save all" Click="OnSaveAllAttachmentsClick" Style="{StaticResource ReportButton}"
+                                        ToolTip="Save every attachment to a folder · PNG pictures go into one PDF, a page each" />
+                            </StackPanel>
+                            <ItemsControl ItemsSource="{Binding Triage.ThreadAttachments}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
@@ -701,6 +706,7 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                            </DockPanel>
 
                             <!-- previewing an attachment instead of the email -->
                             <StackPanel Orientation="Horizontal" Margin="0,4,0,0"

@@ -1184,6 +1184,14 @@ public partial class MainWindow : Window
         Focus();
     }
 
+    private async void OnSaveAllAttachmentsClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Save all attachments to" };
+        if (dialog.ShowDialog(this) == true)
+            await ViewModel.Triage.SaveAllAttachmentsAsync(dialog.FolderName);
+        Focus();
+    }
+
     /// <summary>Private host the panes map onto the attachment cache, for in-app previews.</summary>
     private const string AttachmentHost = "attachments.example";
 
