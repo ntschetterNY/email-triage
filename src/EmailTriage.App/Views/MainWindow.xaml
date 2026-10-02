@@ -2136,7 +2136,7 @@
                                 <Rectangle />
                                 <Button Style="{StaticResource FormatButton}" Click="OnFormatClear" Content="Clear" ToolTip="Clear formatting (Ctrl+Space)" />
                                 <Button Style="{StaticResource FormatButton}" Click="OnInsertPicture" Content="Picture…"
-                                        ToolTip="Put a picture in the message from a file - or just paste one (Ctrl+V). Right-click a picture for its size and drop shadow" />
+                                        ToolTip="Put a picture in the message from a file - or just paste one (Ctrl+V). Right-click a picture for its size and its shadow: soft, drop, slate drop or centre, as Outlook's picture styles have them" />
                             </StackPanel>
 
                             <!-- follow-up (Ctrl+Shift+F): Tab runs by, who, what, then the two toggles -->

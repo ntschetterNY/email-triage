@@ -4,14 +4,15 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using EmailTriage.Core.Models;
 
 namespace EmailTriage.App.Services;
 
 /// <summary>
 /// Pictures pasted into a message, kept as PNG files until the message has
-/// gone: Outlook attaches them by path. A picture with a drop shadow is
-/// painted into a second file with the shadow in its pixels, since Outlook
-/// ignores CSS shadows and that way every client shows the same thing.
+/// gone: Outlook attaches them by path. A picture with a shadow is painted
+/// into a second file with the shadow in its pixels, since Outlook ignores
+/// CSS shadows and that way every client shows the same thing.
 /// </summary>
 public static class ComposeImageStore
 {
@@ -20,21 +21,26 @@ public static class ComposeImageStore
         "EmailTriage",
         "ComposeImages");
 
-    /// <summary>Room left around a shadowed picture for the blur and offset, in pixels at 1x.</summary>
-    public const double ShadowPadding = 14;
-
     /// <summary>Files from a message that was never sent are cleared after this.</summary>
     private static readonly TimeSpan Lifetime = TimeSpan.FromDays(2);
 
-    /// <summary>The soft shadow a pasted picture gets, in the editor and in the mail.</summary>
-    public static DropShadowEffect Shadow() => new()
+    /// <summary>
+    /// The shadow a picture wears, as the editor shows it and the mail
+    /// carries it; null for <see cref="PictureShadow.None"/>.
+    /// </summary>
+    public static DropShadowEffect? Shadow(PictureShadow style)
     {
-        BlurRadius = 14,
-        ShadowDepth = 3,
-        Direction = 270,
-        Opacity = 0.42,
-        Color = Colors.Black,
-    };
+        if (style.IsNone) return null;
+        var (r, g, b) = style.Rgb;
+        return new DropShadowEffect
+        {
+            BlurRadius = style.Blur,
+            ShadowDepth = style.Depth,
+            Direction = style.Direction,
+            Opacity = style.Opacity,
+            Color = Color.FromRgb(r, g, b),
+        };
+    }
 
     /// <summary>Writes the picture as a PNG and returns its path.</summary>
     public static string Save(BitmapSource source)
@@ -61,14 +67,17 @@ public static class ComposeImageStore
     }
 
     /// <summary>
-    /// Paints the picture at the size it shows at, with its shadow, into a new
-    /// PNG. Rendered at the picture's own resolution when that is higher, so
-    /// nothing is lost; the returned size is what the mail should show it at.
+    /// Paints the picture at the size it shows at, with the shadow
+    /// <paramref name="style"/> gives it, into a new PNG. Rendered at the
+    /// picture's own resolution when that is higher, so nothing is lost; the
+    /// returned size is what the mail should show it at.
     /// </summary>
-    public static (string Path, int Width, int Height) WithShadow(BitmapSource source, double width, double height)
+    public static (string Path, int Width, int Height) WithShadow(
+        BitmapSource source, double width, double height, PictureShadow style)
     {
-        var w = width + 2 * ShadowPadding;
-        var h = height + 2 * ShadowPadding;
+        var padding = style.Padding;
+        var w = width + 2 * padding;
+        var h = height + 2 * padding;
         var scale = Math.Clamp(source.PixelWidth / width, 1, 4);
 
         var image = new Image
@@ -77,10 +86,10 @@ public static class ComposeImageStore
             Width = width,
             Height = height,
             Stretch = Stretch.Fill,
-            Effect = Shadow(),
+            Effect = Shadow(style),
         };
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
-        var host = new Border { Padding = new Thickness(ShadowPadding), Child = image, Background = Brushes.Transparent };
+        var host = new Border { Padding = new Thickness(padding), Child = image, Background = Brushes.Transparent };
         host.Measure(new Size(w, h));
         host.Arrange(new Rect(0, 0, w, h));
         host.UpdateLayout();
