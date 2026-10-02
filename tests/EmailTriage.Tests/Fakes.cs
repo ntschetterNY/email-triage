@@ -93,9 +93,18 @@ public sealed class FakeMailStore : IMailStore
     public Task<FolderNode> MoveFolderAsync(FolderRef folder, string targetPath, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by these tests.");
 
+    /// <summary>What GetMailAsync returns for a folder, by its EntryId.</summary>
+    public Dictionary<string, List<MailSummary>> MailByFolder { get; } = new();
+
+    public List<string> FoldersRead { get; } = new();
+
     public Task<IReadOnlyList<MailSummary>> GetMailAsync(
         FolderRef folder, int max, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<MailSummary>>(Array.Empty<MailSummary>());
+    {
+        FoldersRead.Add(folder.EntryId);
+        var mail = MailByFolder.TryGetValue(folder.EntryId, out var list) ? list.Take(max).ToList() : new List<MailSummary>();
+        return Task.FromResult<IReadOnlyList<MailSummary>>(mail);
+    }
 
     public Task<IReadOnlyList<MailSummary>> SearchMailAsync(
         string filter, int max, CancellationToken ct = default)
@@ -203,4 +212,40 @@ public sealed class FakeFolderUsage : IFolderUsageRepository
 
     public Task<IReadOnlyDictionary<string, double>> GetScoresAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyDictionary<string, double>>(_scores);
+
+    private readonly Dictionary<(string Path, FilingFeatureKind Kind, string Token), long> _evidence = new();
+    private readonly Dictionary<string, DateTimeOffset> _studied = new(StringComparer.OrdinalIgnoreCase);
+
+    public DateTimeOffset Now { get; set; } = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
+    public void SeedEvidence(string path, FilingFeatureKind kind, string token, long count)
+        => _evidence[(path, kind, token)] = count;
+
+    public long EvidenceCount(string path, FilingFeatureKind kind, string token)
+        => _evidence.GetValueOrDefault((path, kind, token));
+
+    public IReadOnlyDictionary<string, DateTimeOffset> Studied => _studied;
+
+    public Task RecordEvidenceAsync(string folderPath, IEnumerable<FilingFeature> features, CancellationToken ct = default)
+    {
+        foreach (var f in features)
+        {
+            var key = (folderPath, f.Kind, f.Token);
+            _evidence[key] = _evidence.GetValueOrDefault(key) + 1;
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<FilingEvidence>> GetEvidenceAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<FilingEvidence>>(
+            _evidence.Select(kv => new FilingEvidence(kv.Key.Path, kv.Key.Kind, kv.Key.Token, kv.Value)).ToList());
+
+    public Task<IReadOnlyDictionary<string, DateTimeOffset>> GetStudiedAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyDictionary<string, DateTimeOffset>>(new Dictionary<string, DateTimeOffset>(_studied, StringComparer.OrdinalIgnoreCase));
+
+    public Task MarkStudiedAsync(string folderPath, CancellationToken ct = default)
+    {
+        _studied[folderPath] = Now;
+        return Task.CompletedTask;
+    }
 }

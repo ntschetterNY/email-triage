@@ -201,6 +201,17 @@ what is already there before filing or creating another. When nothing matches,
 (`Clients\Acme\Q3` creates `Q3` under an existing `Clients\Acme`) and moves the mail
 there in the same keystroke.
 
+The palette also makes an educated guess. Before you type, the folders this email
+probably belongs in sit at the top, each with its reason - `Suggested · 12 from this
+sender`, `5 from @acme.com`, `subject matches 8 emails here` - so `v` then `Enter`
+files it where mail like it went before. The guess is learned from the sender,
+their company and the subject words of mail you have filed, and from a quiet sample
+of the newest messages already sitting in each folder, read a folder at a time after
+the inbox loads and refreshed every two weeks. It is all read and kept on your
+machine, in the same local database as everything else. A folder with one
+earlier email from the same sender is enough for a suggestion; the guesses get
+better the more you file.
+
 ### Folder structure (Settings, `Ctrl+,`)
 Many people name folders with the whole hierarchy in the name -
 `Elara - Field Reports - Rimkus`. The Settings page takes that naming scheme and keeps

@@ -104,4 +104,20 @@ public interface IFolderUsageRepository
 
     /// <summary>Folder path to usage score. Higher is more used.</summary>
     Task<IReadOnlyDictionary<string, double>> GetScoresAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Remembers what the mail filed into a folder looked like - sender,
+    /// company, subject words - so the palette can guess the folder for the
+    /// next mail like it. A feature given twice counts twice.
+    /// </summary>
+    Task RecordEvidenceAsync(string folderPath, IEnumerable<FilingFeature> features, CancellationToken ct = default);
+
+    /// <summary>Everything remembered, for <see cref="Services.FolderGuesser"/>.</summary>
+    Task<IReadOnlyList<FilingEvidence>> GetEvidenceAsync(CancellationToken ct = default);
+
+    /// <summary>When each folder's existing mail was last sampled, by path.</summary>
+    Task<IReadOnlyDictionary<string, DateTimeOffset>> GetStudiedAsync(CancellationToken ct = default);
+
+    /// <summary>Stamps a folder as sampled just now.</summary>
+    Task MarkStudiedAsync(string folderPath, CancellationToken ct = default);
 }

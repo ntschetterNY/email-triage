@@ -318,7 +318,12 @@ public sealed partial class TriageViewModel : ObservableObject
     private async Task WarmFolderIndexAsync()
     {
         try { await _folders.EnsureIndexedAsync().ConfigureAwait(true); }
-        catch { /* `v` will try again and report any problem */ }
+        catch { return; /* `v` will try again and report any problem */ }
+
+        // Then, quietly, look at what already sits in each folder, so the
+        // palette can guess where a mail goes from the first day. Never
+        // throws; a run that is cut short picks up on the next launch.
+        _ = _folders.StudyFiledMailAsync();
     }
 
     private bool StillLeaving(string key, int loadNumber)
@@ -1917,6 +1922,7 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         var typed = Palette.Query.Trim();
         var within = TypedParent(typed);
+        var guesses = Palette.Mode == PaletteMode.Folder ? FolderGuesses() : Array.Empty<FolderGuess>();
         List<FolderMatch> matches;
 
         if (within is { } w)
@@ -1927,7 +1933,7 @@ public sealed partial class TriageViewModel : ObservableObject
         }
         else
         {
-            matches = _folders.Search(Palette.Query).ToList();
+            matches = _folders.Search(Palette.Query, guesses: guesses).ToList();
 
             // A name typed the way the user names folders ("Elara - Field
             // Reports - Rimkus") finds the nested folder it stands for.
@@ -1942,13 +1948,25 @@ public sealed partial class TriageViewModel : ObservableObject
         // results span more than one.
         var manyStores = matches.Select(m => m.Folder.Ref.StoreId).Distinct().Count() > 1;
 
-        Palette.SetEntries(matches.Select(m => new PaletteEntry(
+        var entries = matches.Select(m => new PaletteEntry(
             // A subfolder listed under its parent needs only its own name.
             m.Indent > 0 ? m.Folder.Name : m.Folder.Breadcrumb,
             manyStores && m.Indent == 0 ? m.Folder.StoreName : "",
             m.Folder,
             m.NameHighlights,
-            m.Indent)));
+            m.Indent));
+
+        // Before anything is typed, the educated guesses come first, each
+        // saying why, so Enter alone files where mail like this went before.
+        if (typed.Length == 0 && guesses.Count > 0)
+        {
+            var guessed = guesses.Select(g => g.Folder.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            entries = guesses
+                .Select(g => new PaletteEntry(g.Folder.Breadcrumb, $"Suggested · {g.Reason}", g.Folder, Array.Empty<int>()))
+                .Concat(entries.Where(e => e.Payload is not FolderNode f || !guessed.Contains(f.Path)));
+        }
+
+        Palette.SetEntries(entries);
 
         // When nothing matches, offer to create what was typed rather than
         // making the user leave and go build the folder in Outlook. A new
@@ -1960,6 +1978,20 @@ public sealed partial class TriageViewModel : ObservableObject
             : matches.Count == 0 ? BuildCreatePrompt(typed)
             : newPart ? $"Ctrl+Enter: {BuildCreatePrompt(typed)}"
             : null;
+    }
+
+    /// <summary>
+    /// Where the conversation being filed probably goes, from the sender and
+    /// subject of its latest message and where mail like it went before. With
+    /// several conversations marked, the first stands for them all.
+    /// </summary>
+    private IReadOnlyList<FolderGuess> FolderGuesses()
+    {
+        var rows = Targets();
+        if (rows.Count == 0) return Array.Empty<FolderGuess>();
+
+        var mail = rows[0].Summary;
+        return _folders.Suggest(mail.Subject, mail.SenderAddress);
     }
 
     /// <summary>
@@ -2235,6 +2267,7 @@ public sealed partial class TriageViewModel : ObservableObject
         {
             string? error = null;
             FolderNode? target = null;
+            var filed = new List<MailSummary>();
 
             try
             {
@@ -2248,12 +2281,15 @@ public sealed partial class TriageViewModel : ObservableObject
                     {
                         var to = await _store.MoveAsync(m.Ref, target.Ref).ConfigureAwait(true);
                         moved.Add(to);
+                        filed.Add(m);
                         await _actions.UpdateLocationAsync(m.InternetMessageId, to.EntryId, to.StoreId).ConfigureAwait(true);
                     }
                     catch (Exception ex) { error ??= ex.Message; }
                 }
 
-                if (moved.Count > 0) await _folders.RecordUseAsync(target).ConfigureAwait(true);
+                // Remembered with what the mail looked like, so the palette
+                // can suggest this folder for the next mail like it.
+                if (moved.Count > 0) await _folders.RecordFilingAsync(target, filed).ConfigureAwait(true);
             }
             catch (Exception ex) { error ??= ex.Message; }
             finally { Settle(rows); }
