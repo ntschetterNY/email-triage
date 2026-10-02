@@ -263,7 +263,15 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="Triage" FontSize="12" Padding="12,6">
+                    <TextBlock Text="Triage" FontSize="12" Padding="12,6" Tag="Triage"
+                               MouseLeftButtonUp="OnSectionTabClick">
+                        <TextBlock.ToolTip>
+                            <TextBlock>
+                                <Run Text="Show this tab · or" />
+                                <Run Text="{Binding SectionKey, Mode=OneWay}" />
+                                <Run Text="to cycle" />
+                            </TextBlock>
+                        </TextBlock.ToolTip>
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SectionTab}">
                                 <Style.Triggers>
@@ -276,7 +284,15 @@
                         </TextBlock.Style>
                     </TextBlock>
 
-                    <TextBlock Text="{Binding ActionsTabTitle}" FontSize="12" Padding="12,6">
+                    <TextBlock Text="{Binding ActionsTabTitle}" FontSize="12" Padding="12,6" Tag="Actions"
+                               MouseLeftButtonUp="OnSectionTabClick">
+                        <TextBlock.ToolTip>
+                            <TextBlock>
+                                <Run Text="Show this tab · or" />
+                                <Run Text="{Binding SectionKey, Mode=OneWay}" />
+                                <Run Text="to cycle" />
+                            </TextBlock>
+                        </TextBlock.ToolTip>
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SectionTab}">
                                 <Style.Triggers>
@@ -289,7 +305,15 @@
                         </TextBlock.Style>
                     </TextBlock>
 
-                    <TextBlock Text="Calendar" FontSize="12" Padding="12,6">
+                    <TextBlock Text="Calendar" FontSize="12" Padding="12,6" Tag="Calendar"
+                               MouseLeftButtonUp="OnSectionTabClick">
+                        <TextBlock.ToolTip>
+                            <TextBlock>
+                                <Run Text="Show this tab · or" />
+                                <Run Text="{Binding SectionKey, Mode=OneWay}" />
+                                <Run Text="to cycle" />
+                            </TextBlock>
+                        </TextBlock.ToolTip>
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SectionTab}">
                                 <Style.Triggers>

@@ -826,6 +826,22 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static readonly int SectionCount = Enum.GetValues<Section>().Length;
 
+    /// <summary>
+    /// A click on a top-bar tab: the mouse twin of Tab. It waits out the same
+    /// modal surfaces the key does, and a review walk ends as it would on Tab.
+    /// </summary>
+    public void ShowSection(Section section)
+    {
+        if (Triage.Capture.IsOpen || Triage.Composer.IsOpen || Triage.Palette.IsOpen
+            || Actions.Editor != EditorMode.None) return;
+        Actions.EndReview();
+        IsHelpVisible = false;
+        Section = section;
+    }
+
+    /// <summary>The next-tab key, for the tabs' tooltips.</summary>
+    public string SectionKey => Keys.Describe(TriageAction.SwitchSection);
+
     private async Task<bool> HandleTriageKeyAsync(TriageAction action)
     {
         switch (action)

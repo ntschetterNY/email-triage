@@ -148,10 +148,18 @@
         <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
     </Style>
 
+    <!-- A top-bar tab: Tab cycles them, a click jumps straight to one. -->
     <Style x:Key="SectionTab" TargetType="TextBlock">
         <Setter Property="Padding" Value="12,6" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="Foreground" Value="{StaticResource Muted}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="{StaticResource Text}" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <!-- Small flat buttons: the top bar, the action tab and Settings. Tag="on" marks the active toggle. -->
