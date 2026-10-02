@@ -229,3 +229,86 @@ public class FolderSearchServiceTests
         Assert.Equal(1, scores[receipts.Path]);
     }
 }
+
+public class FolderSearchServiceGuessTests
+{
+    private static FolderNode Node(string path, int depth = 1) => new()
+    {
+        Ref = new FolderRef(path, "store", path),
+        Name = path.Split('\\')[^1],
+        Path = path,
+        Depth = depth,
+        StoreName = "Mailbox",
+    };
+
+    private static MailSummary Mail(string subject, string sender) => new()
+    {
+        Ref = new MailRef(Guid.NewGuid().ToString("N"), "store"),
+        InternetMessageId = Guid.NewGuid().ToString("N"),
+        Subject = subject,
+        SenderName = sender,
+        SenderAddress = sender,
+        ReceivedUtc = DateTimeOffset.UtcNow,
+        IsUnread = false,
+        HasAttachments = false,
+    };
+
+    private static (FolderSearchService Service, FakeMailStore Store, FakeFolderUsage Usage) Build()
+    {
+        var store = new FakeMailStore();
+        store.Folders.AddRange(new[]
+        {
+            Node(@"Mailbox\Archive"),
+            Node(@"Mailbox\Clients\Acme", 2),
+            Node(@"Mailbox\Clients\Beta", 2),
+            Node(@"Mailbox\Receipts"),
+        });
+        var usage = new FakeFolderUsage();
+        return (new FolderSearchService(store, usage, new FakeClock { UtcNow = usage.Now }), store, usage);
+    }
+
+    [Fact]
+    public async Task Filing_a_mail_teaches_the_palette_where_the_next_one_from_that_sender_goes()
+    {
+        var (service, store, _) = Build();
+        await service.EnsureIndexedAsync();
+        Assert.Empty(service.Suggest("Invoice 12", "pat@acme.com"));
+
+        await service.RecordFilingAsync(store.Folders[1], new[] { Mail("Invoice 11", "pat@acme.com") });
+
+        var guess = Assert.Single(service.Suggest("Invoice 12", "pat@acme.com"));
+        Assert.Equal(@"Mailbox\Clients\Acme", guess.Folder.Path);
+        Assert.Equal("1 from this sender", guess.Reason);
+    }
+
+    [Fact]
+    public async Task A_guessed_folder_is_nudged_up_a_typed_search_without_overriding_it()
+    {
+        var (service, _, usage) = Build();
+        usage.SeedEvidence(@"Mailbox\Clients\Beta", FilingFeatureKind.Sender, "kim@beta.io", 8);
+        await service.EnsureIndexedAsync();
+
+        var guesses = service.Suggest("Hello", "kim@beta.io");
+
+        // Both Clients folders fit "cli" equally; the guess breaks the tie.
+        Assert.Equal(@"Mailbox\Clients\Beta", service.Search("cli", guesses: guesses).First().Folder.Path);
+        Assert.Equal(@"Mailbox\Clients\Acme", service.Search("cli").First().Folder.Path);
+
+        // A clear textual match still wins.
+        Assert.Equal(@"Mailbox\Receipts", service.Search("receipts", guesses: guesses).First().Folder.Path);
+    }
+
+    [Fact]
+    public async Task Studying_filed_mail_fills_in_guesses_from_what_is_already_there()
+    {
+        var (service, store, _) = Build();
+        var acme = store.Folders[1];
+        store.MailByFolder[acme.Ref.EntryId] = new() { Mail("Pay app 3", "pat@acme.com"), Mail("Pay app 4", "pat@acme.com") };
+        await service.EnsureIndexedAsync();
+
+        await service.StudyFiledMailAsync();
+
+        var guess = Assert.Single(service.Suggest("Pay app 5", "pat@acme.com"));
+        Assert.Equal(acme.Path, guess.Folder.Path);
+    }
+}

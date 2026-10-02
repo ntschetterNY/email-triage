@@ -226,5 +226,28 @@ public sealed class Database
             ALTER TABLE action_items ADD COLUMN touched_utc TEXT NULL;
             UPDATE action_items SET touched_utc = created_utc;
             """),
+
+        (8, """
+            -- What the mail filed into each folder looked like (sender, company,
+            -- subject words), so the move palette can guess the folder for the
+            -- next one like it. Filled by moves made here and by a quiet sample
+            -- of what already sits in each folder.
+            CREATE TABLE filing_evidence (
+                folder_path   TEXT    NOT NULL,
+                kind          INTEGER NOT NULL,
+                token         TEXT    NOT NULL,
+                count         INTEGER NOT NULL DEFAULT 0,
+                last_seen_utc TEXT    NOT NULL,
+                PRIMARY KEY (folder_path, kind, token)
+            );
+
+            CREATE INDEX ix_filing_evidence_token ON filing_evidence (kind, token);
+
+            -- When each folder's existing mail was last sampled.
+            CREATE TABLE folder_study (
+                folder_path TEXT PRIMARY KEY,
+                studied_utc TEXT NOT NULL
+            );
+            """),
     };
 }

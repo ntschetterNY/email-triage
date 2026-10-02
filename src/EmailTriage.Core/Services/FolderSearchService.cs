@@ -15,16 +15,20 @@ public sealed record FolderMatch(FolderNode Folder, int Score, int[] NameHighlig
 /// <summary>
 /// Backs the move palette. Holds a cached flat folder index and ranks it
 /// against whatever the user has typed, blending match quality with how often
-/// that folder is actually used.
+/// that folder is actually used - and, for the mail being filed, where mail
+/// like it went before.
 /// </summary>
 public sealed class FolderSearchService
 {
     private readonly IMailStore _store;
     private readonly IFolderUsageRepository _usage;
+    private readonly IClock _clock;
 
     private IReadOnlyList<FolderNode> _index = Array.Empty<FolderNode>();
     private IReadOnlyDictionary<string, double> _scores =
         new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<FilingEvidence> _evidence = Array.Empty<FilingEvidence>();
+    private int _studying;
 
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private DateTimeOffset _indexedAt = DateTimeOffset.MinValue;
@@ -38,10 +42,11 @@ public sealed class FolderSearchService
     /// <summary>Cap on subfolders listed under any one parent.</summary>
     public int SubfoldersPerParent { get; init; } = 60;
 
-    public FolderSearchService(IMailStore store, IFolderUsageRepository usage)
+    public FolderSearchService(IMailStore store, IFolderUsageRepository usage, IClock? clock = null)
     {
         _store = store;
         _usage = usage;
+        _clock = clock ?? SystemClock.Instance;
     }
 
     public bool IsIndexed => _index.Count > 0;
@@ -81,6 +86,7 @@ public sealed class FolderSearchService
 
             _index = await _store.GetFolderIndexAsync(ct).ConfigureAwait(false);
             _scores = await _usage.GetScoresAsync(ct).ConfigureAwait(false);
+            _evidence = await _usage.GetEvidenceAsync(ct).ConfigureAwait(false);
             _indexedAt = DateTimeOffset.UtcNow;
         }
         finally
@@ -106,10 +112,61 @@ public sealed class FolderSearchService
     }
 
     /// <summary>
-    /// Ranks folders for the given query. With no query, returns the most-used
-    /// folders so the palette is useful before a single key is pressed.
+    /// Records a move: the folder was used, and this is what the mail filed
+    /// there looked like, so the next mail from that sender or on that subject
+    /// can be offered the same folder.
     /// </summary>
-    public IReadOnlyList<FolderMatch> Search(string query, int limit = 40)
+    public async Task RecordFilingAsync(
+        FolderNode folder, IEnumerable<MailSummary> mail, CancellationToken ct = default)
+    {
+        await _usage.RecordUseAsync(folder.Path, ct).ConfigureAwait(false);
+
+        var features = mail.SelectMany(m => FolderGuesser.Features(m.Subject, m.SenderAddress)).ToList();
+        if (features.Count > 0)
+            await _usage.RecordEvidenceAsync(folder.Path, features, ct).ConfigureAwait(false);
+
+        _scores = await _usage.GetScoresAsync(ct).ConfigureAwait(false);
+        _evidence = await _usage.GetEvidenceAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Where this mail probably goes, best first, from mail like it filed
+    /// before. Empty until something is known.
+    /// </summary>
+    public IReadOnlyList<FolderGuess> Suggest(string subject, string senderAddress, int limit = 3) =>
+        FolderGuesser.Guess(subject, senderAddress, _evidence, _index, limit);
+
+    /// <summary>
+    /// Samples what already sits in the folders, so guesses work before the
+    /// user has filed much here. Runs at most once at a time, never throws,
+    /// and takes the new evidence into use when it finishes.
+    /// </summary>
+    public async Task StudyFiledMailAsync(CancellationToken ct = default)
+    {
+        if (_index.Count == 0) return;
+        if (Interlocked.Exchange(ref _studying, 1) == 1) return;
+
+        try
+        {
+            var study = new FolderStudy(_store, _usage, _clock);
+            var read = await study.RunAsync(_index, ct).ConfigureAwait(false);
+            if (read > 0) _evidence = await _usage.GetEvidenceAsync(ct).ConfigureAwait(false);
+        }
+        catch { /* guesses just stay as good as the moves made so far */ }
+        finally
+        {
+            Interlocked.Exchange(ref _studying, 0);
+        }
+    }
+
+    /// <summary>
+    /// Ranks folders for the given query. With no query, returns the most-used
+    /// folders so the palette is useful before a single key is pressed. Folders
+    /// in <paramref name="guesses"/> get a nudge, so typing a letter or two
+    /// lands on the likely folder sooner; what is typed still decides.
+    /// </summary>
+    public IReadOnlyList<FolderMatch> Search(
+        string query, int limit = 40, IReadOnlyList<FolderGuess>? guesses = null)
     {
         query = query.Trim();
 
@@ -140,6 +197,7 @@ public sealed class FolderSearchService
                 (pathScore ?? int.MinValue / 4) * 1.0);
 
             score += UsageBoost(folder);
+            score += GuessBoost(folder, guesses);
 
             // Mildly prefer shallow folders; deep ones are usually archives.
             score -= folder.Depth * 1.5;
@@ -285,6 +343,18 @@ public sealed class FolderSearchService
         _scores.TryGetValue(folder.Path, out var uses) && uses > 0
             ? 14.0 * Math.Log(1 + uses)
             : 0.0;
+
+    /// <summary>A nudge for a guessed folder, well short of a strong usage boost.</summary>
+    private static double GuessBoost(FolderNode folder, IReadOnlyList<FolderGuess>? guesses)
+    {
+        if (guesses is null) return 0.0;
+        foreach (var g in guesses)
+        {
+            if (g.Folder.Path.Equals(folder.Path, StringComparison.OrdinalIgnoreCase))
+                return 5.0 * Math.Log(1 + g.Score);
+        }
+        return 0.0;
+    }
 
     /// <summary>
     /// Splits typed text into a parent folder and a new leaf name, for the

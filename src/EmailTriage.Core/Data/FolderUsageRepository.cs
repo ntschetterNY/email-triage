@@ -1,11 +1,13 @@
 using Dapper;
 using EmailTriage.Core.Abstractions;
+using EmailTriage.Core.Models;
 
 namespace EmailTriage.Core.Data;
 
 /// <summary>
-/// Remembers where mail actually gets filed. This is what lets the move palette
-/// put the right folder first after a week of use.
+/// Remembers where mail actually gets filed, and what the filed mail looked
+/// like. This is what lets the move palette put the right folder first after
+/// a week of use, and guess the folder for a mail it has seen the likes of.
 /// </summary>
 public sealed class FolderUsageRepository : IFolderUsageRepository
 {
@@ -56,6 +58,84 @@ public sealed class FolderUsageRepository : IFolderUsageRepository
         }
 
         return result;
+    }
+
+    public async Task RecordEvidenceAsync(
+        string folderPath, IEnumerable<FilingFeature> features, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath)) return;
+
+        var counts = features
+            .Where(f => !string.IsNullOrWhiteSpace(f.Token))
+            .GroupBy(f => f)
+            .Select(g => new { path = folderPath, kind = (int)g.Key.Kind, token = g.Key.Token, count = g.Count(), now = _clock.UtcNow })
+            .ToList();
+        if (counts.Count == 0) return;
+
+        await using var conn = _db.Open();
+        await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        await conn.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO filing_evidence (folder_path, kind, token, count, last_seen_utc)
+            VALUES (@path, @kind, @token, @count, @now)
+            ON CONFLICT(folder_path, kind, token) DO UPDATE SET
+                count = count + excluded.count,
+                last_seen_utc = excluded.last_seen_utc;
+            """, counts, transaction: tx, cancellationToken: ct)).ConfigureAwait(false);
+
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<FilingEvidence>> GetEvidenceAsync(CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+
+        var rows = await conn.QueryAsync<EvidenceRow>(new CommandDefinition(
+            "SELECT folder_path AS Path, kind AS Kind, token AS Token, count AS Count FROM filing_evidence WHERE count > 0",
+            cancellationToken: ct)).ConfigureAwait(false);
+
+        return rows
+            .Select(r => new FilingEvidence(r.Path, (FilingFeatureKind)r.Kind, r.Token, r.Count))
+            .ToList();
+    }
+
+    public async Task<IReadOnlyDictionary<string, DateTimeOffset>> GetStudiedAsync(CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+
+        var rows = await conn.QueryAsync<StudyRow>(new CommandDefinition(
+            "SELECT folder_path AS Path, studied_utc AS StudiedUtc FROM folder_study",
+            cancellationToken: ct)).ConfigureAwait(false);
+
+        var result = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows) result[row.Path] = row.StudiedUtc;
+        return result;
+    }
+
+    public async Task MarkStudiedAsync(string folderPath, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath)) return;
+
+        await using var conn = _db.Open();
+        await conn.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO folder_study (folder_path, studied_utc) VALUES (@path, @now)
+            ON CONFLICT(folder_path) DO UPDATE SET studied_utc = excluded.studied_utc;
+            """, new { path = folderPath, now = _clock.UtcNow }, cancellationToken: ct))
+            .ConfigureAwait(false);
+    }
+
+    private sealed class EvidenceRow
+    {
+        public string Path { get; set; } = "";
+        public long Kind { get; set; }
+        public string Token { get; set; } = "";
+        public long Count { get; set; }
+    }
+
+    private sealed class StudyRow
+    {
+        public string Path { get; set; } = "";
+        public DateTimeOffset StudiedUtc { get; set; }
     }
 
     private sealed class UsageRow
