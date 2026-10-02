@@ -21,8 +21,31 @@ public enum MeetingResponse
     NotResponded = 5,
 }
 
-/// <summary>What you can say back to an invitation.</summary>
-public enum InviteResponse { Accept, Tentative, Decline }
+/// <summary>
+/// What you can say back to an invitation. Follow is Outlook's "Follow": you
+/// won't attend, but the meeting stays on your calendar, shown as free, so
+/// its updates and notes still reach you.
+/// </summary>
+public enum InviteResponse { Accept, Tentative, Decline, Follow }
+
+/// <summary>
+/// Following a meeting. Outlook's object model has no Follow response, so it
+/// is sent as a tentative answer with a note saying you won't attend -
+/// unlike a decline it keeps you on the invitation and the meeting on your
+/// calendar - and the entry is then shown as free so its time stays bookable.
+/// </summary>
+public static class Following
+{
+    public const string DefaultNote =
+        "I won't be able to attend, but I'm following this meeting - please keep me posted.";
+
+    /// <summary>The note sent with a Follow: yours if you typed one, a standard one otherwise.</summary>
+    public static string Note(string note) => string.IsNullOrWhiteSpace(note) ? DefaultNote : note.Trim();
+
+    /// <summary>How a followed meeting reads back from Outlook: answered maybe, shown as free.</summary>
+    public static bool Is(MeetingResponse response, BusyStatus busy) =>
+        response == MeetingResponse.Tentative && busy == BusyStatus.Free;
+}
 
 /// <summary>
 /// One appointment or meeting on your calendar. Recurring meetings appear once
@@ -58,14 +81,18 @@ public sealed record CalendarEvent
     /// <summary>Someone else's meeting you can still accept or decline.</summary>
     public bool CanRespond => IsMeeting && !IsOrganizer;
 
+    /// <summary>Someone else's meeting you follow: you won't attend, but it stays on your calendar as free.</summary>
+    public bool IsFollowing => CanRespond && Following.Is(Response, Busy);
+
     /// <summary>Takes up the time: not all day, not shown as free, not declined.</summary>
     public bool BlocksTime => !IsAllDay && Busy != BusyStatus.Free && !IsDeclined;
 
     /// <summary>
     /// Pencilled in: shown as tentative, or answered "maybe". A hold still
-    /// shows on the calendar, but its time can be booked over.
+    /// shows on the calendar, but its time can be booked over. A meeting you
+    /// follow is not a hold: you are not going.
     /// </summary>
-    public bool IsHold => Busy == BusyStatus.Tentative || Response == MeetingResponse.Tentative;
+    public bool IsHold => !IsFollowing && (Busy == BusyStatus.Tentative || Response == MeetingResponse.Tentative);
 
     /// <summary>Takes up the time firmly: it blocks the time and is not a hold.</summary>
     public bool IsFirm => BlocksTime && !IsHold;
@@ -106,6 +133,12 @@ public sealed record MeetingInvite
 
     /// <summary>Your current answer, read from the meeting on your calendar.</summary>
     public MeetingResponse Response { get; init; }
+
+    /// <summary>How the meeting on your calendar shows the time.</summary>
+    public BusyStatus Busy { get; init; } = BusyStatus.Busy;
+
+    /// <summary>You follow it: answered maybe, shown as free.</summary>
+    public bool IsFollowing => Following.Is(Response, Busy);
 
     /// <summary>
     /// The meeting's own calendar entry. Outlook pencils a request in as soon

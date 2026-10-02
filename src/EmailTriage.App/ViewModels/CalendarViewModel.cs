@@ -114,7 +114,7 @@ public sealed class AgendaRow
 
             if (Event.CanRespond)
             {
-                parts.Add(Event.Response switch
+                parts.Add(Event.IsFollowing ? "you're following" : Event.Response switch
                 {
                     MeetingResponse.Accepted => "you accepted",
                     MeetingResponse.Tentative => "you said maybe",

@@ -261,6 +261,7 @@ public sealed partial class OutlookMailStore : ICalendarStore
                     IsAllDay = ComUtil.Bool(() => appt!.AllDayEvent),
                     IsRecurring = ComUtil.Bool(() => appt!.IsRecurring),
                     Response = (MeetingResponse)ComUtil.Int(() => appt!.ResponseStatus),
+                    Busy = (BusyStatus)ComUtil.Int(() => appt!.BusyStatus, (int)BusyStatus.Busy),
                     Appointment = new MailRef(ComUtil.Str(() => appt!.EntryID), ComUtil.Str(() => appt!.Parent.StoreID)),
                     JoinUrl = MeetingLinks.Find(where + "\n" + body),
                 };
@@ -315,12 +316,16 @@ public sealed partial class OutlookMailStore : ICalendarStore
                 if ((MeetingResponse)ComUtil.Int(() => appt!.ResponseStatus) == MeetingResponse.Organized)
                     throw new InvalidOperationException("This is your own meeting - there is nobody to answer.");
 
+                // Follow has no OlMeetingResponse of its own: it goes out as a
+                // tentative answer that says you won't attend (see Following),
+                // which keeps you on the invitation and the meeting on your calendar.
                 var code = response switch
                 {
                     InviteResponse.Accept => RespondAccepted,
-                    InviteResponse.Tentative => RespondTentative,
+                    InviteResponse.Tentative or InviteResponse.Follow => RespondTentative,
                     _ => RespondDeclined,
                 };
+                if (response == InviteResponse.Follow) note = Following.Note(note);
 
                 // No dialog: Respond hands back the answer as an unsent message.
                 reply = appt!.Respond(code, true, false);
@@ -334,6 +339,13 @@ public sealed partial class OutlookMailStore : ICalendarStore
                 {
                     // The organizer asked for no answer: record it, send nothing.
                     if (reply is not null) ComUtil.Try<object?>(() => { reply!.Close(1 /* olDiscard */); return null; });
+                    ComUtil.Try<object?>(() => { appt!.Save(); return null; });
+                }
+
+                // Followed: you are not going, so the time shows as free, as Outlook's Follow does.
+                if (response == InviteResponse.Follow)
+                {
+                    ComUtil.Try<object?>(() => { appt!.BusyStatus = (int)BusyStatus.Free; return null; });
                     ComUtil.Try<object?>(() => { appt!.Save(); return null; });
                 }
 
