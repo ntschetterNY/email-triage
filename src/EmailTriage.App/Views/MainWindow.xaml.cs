@@ -1095,6 +1095,23 @@ public partial class MainWindow : Window
         ViewModel.Triage.Composer.AddAttachments(files);
     }
 
+    /// <summary>
+    /// Ctrl+V with files copied in Explorer attaches them wherever the
+    /// composer's focus sits - the message, a recipient line, the subject, or
+    /// nowhere in particular - as dropping them does. Taken before the text
+    /// boxes see the key: they would paste nothing, or the file names.
+    /// </summary>
+    private bool TryPasteFilesIntoComposer(KeyEventArgs e)
+    {
+        if (!ViewModel.Triage.Composer.IsOpen) return false;
+        if (e.Key != Key.V || Keyboard.Modifiers != ModifierKeys.Control) return false;
+        if (ClipboardFiles() is not { Length: > 0 } files) return false;
+
+        e.Handled = true;
+        ViewModel.Triage.Composer.AddAttachments(files);
+        return true;
+    }
+
     private void OnFollowUpButtonClick(object sender, RoutedEventArgs e)
     {
         var composer = ViewModel.Triage.Composer;
@@ -1236,6 +1253,13 @@ public partial class MainWindow : Window
     private static string? ClipboardText()
     {
         try { return Clipboard.ContainsText() ? Clipboard.GetText() : null; }
+        catch (System.Runtime.InteropServices.ExternalException) { return null; }
+    }
+
+    /// <summary>The files copied to the clipboard, or null - another app can hold it locked.</summary>
+    private static string[]? ClipboardFiles()
+    {
+        try { return Clipboard.ContainsFileDropList() ? Clipboard.GetFileDropList().Cast<string>().ToArray() : null; }
         catch (System.Runtime.InteropServices.ExternalException) { return null; }
     }
 
@@ -1415,6 +1439,8 @@ public partial class MainWindow : Window
         // Lavish sits over everything, so it hears keys first: its chord works
         // over any pop-up, and while it is on nothing else hears them.
         if (LavishLayer.HandleKey(e)) return;
+
+        if (TryPasteFilesIntoComposer(e)) return;
 
         // Typing in the action form: its own keys, never shortcuts.
         if (ViewModel.Section == Section.Actions && TryHandleFormKey(e, out var submit))
