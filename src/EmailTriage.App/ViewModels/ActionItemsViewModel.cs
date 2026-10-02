@@ -44,6 +44,14 @@ public sealed partial class BoardColumn : ObservableObject
         foreach (var i in items) Items.Add(i);
         OnPropertyChanged(nameof(Count));
     }
+
+    /// <summary>Takes one card off the column; true if it was there.</summary>
+    public bool Remove(ActionItem item)
+    {
+        if (!Items.Remove(item)) return false;
+        OnPropertyChanged(nameof(Count));
+        return true;
+    }
 }
 
 /// <summary>Which form field a shortcut key should put the cursor in.</summary>
@@ -439,8 +447,9 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     {
         if (ReviewItem is not { } item) return;
         await _repo.SetCompletedAsync(item.Id, true).ConfigureAwait(true);
-        await ClearCategoryAsync(item).ConfigureAwait(true);
         _lastDone = item;
+        // Outlook's category is cleared behind the walk, not ahead of the next card.
+        _ = ClearCategoryAsync(item);
         await AdvanceReviewAsync().ConfigureAwait(true);
     }
 
@@ -449,7 +458,7 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     {
         if (ReviewItem is not { } item) return;
         await _repo.DeleteAsync(item.Id).ConfigureAwait(true);
-        await ClearCategoryAsync(item).ConfigureAwait(true);
+        _ = ClearCategoryAsync(item);
         await AdvanceReviewAsync().ConfigureAwait(true);
     }
 
@@ -789,7 +798,13 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     private async Task LoadBodyAsync(ActionItem? item)
     {
         _bodyLoad?.Cancel();
-        _prefetch?.Cancel();
+
+        // A prefetch part way through this very card is left to finish: stopping
+        // it would throw away the reads it has made and start the card over.
+        var underway = item is not null
+                       && _bodies.TryGet(item.InternetMessageId, out var pending)
+                       && !pending.IsCompleted;
+        if (!underway) _prefetch?.Cancel();
 
         if (item is null) { BodyHtml = ""; return; }
 
@@ -1258,12 +1273,19 @@ public sealed partial class ActionItemsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// `x`: a finished card leaves the board at once - the strip below counts
-    /// it and `z` brings it back. On a card in the done log, reopens it.
+    /// `x`: a finished card leaves the board at once and the cursor lands on
+    /// the next one - the strip below counts it and `z` brings it back. On a
+    /// card in the done log, reopens it.
     /// </summary>
     public async Task ToggleCompleteAsync()
     {
         if (Selected is not { } item) return;
+
+        if (item.IsComplete)
+        {
+            await ReopenAsync(item).ConfigureAwait(true);
+            return;
+        }
 
         // Where the cursor was, so it lands on the next card rather than the top.
         var column = ActiveColumn;
@@ -1271,24 +1293,77 @@ public sealed partial class ActionItemsViewModel : ObservableObject
 
         try
         {
-            var target = !item.IsComplete;
-            await _repo.SetCompletedAsync(item.Id, target).ConfigureAwait(true);
+            await _repo.SetCompletedAsync(item.Id, true).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not update: {ex.Message}";
+            return;
+        }
 
-            // Clear the Outlook category too, so the two views agree.
-            if (target) await ClearCategoryAsync(item).ConfigureAwait(true);
+        // The board is changed in hand rather than reloaded: the card goes
+        // and the next one is selected before anything else happens. The
+        // done strip and Outlook's category catch up behind, so a run of
+        // `x` presses never waits on Outlook's single thread.
+        _lastDone = item;
+        RemoveFromBoard(item);
+        if (!IsDoneLog && index >= 0) SelectInColumn(column, index);
 
-            if (target) _lastDone = item;
-            Status = target
-                ? $"Done · {item.DisplayTitle} · {UndoKey} puts it back"
-                : "Reopened · back in Doing";
+        Status = $"Done · {item.DisplayTitle} · {UndoKey} puts it back";
+
+        _ = CatchUpAfterDoneAsync(item);
+    }
+
+    /// <summary>A card in the done log goes back to Doing, and the board is read again.</summary>
+    private async Task ReopenAsync(ActionItem item)
+    {
+        try
+        {
+            await _repo.SetCompletedAsync(item.Id, false).ConfigureAwait(true);
+            Status = "Reopened · back in Doing";
             await LoadAsync().ConfigureAwait(true);
-
-            if (target && !IsDoneLog && index >= 0) SelectInColumn(column, index);
         }
         catch (Exception ex)
         {
             Status = $"Could not update: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Takes a finished card out of everything the board shows, and brings
+    /// the counts and the report into line, without going back to the database.
+    /// </summary>
+    private void RemoveFromBoard(ActionItem item)
+    {
+        _all = _all.Where(i => i != item).ToList();
+        foreach (var column in Columns) column.Remove(item);
+
+        OpenCount = _all.Count;
+        WaitingCount = _all.Count(i => i.IsWaiting);
+        OverdueCount = _all.Count(i => i.IsOverdue);
+        if (item.IsInFollowUp) ScheduledFollowUpCount = Math.Max(0, ScheduledFollowUpCount - 1);
+        if (item.IsFollowUpDue) FollowUpDueCount = Math.Max(0, FollowUpDueCount - 1);
+        if (item.IsStale) StaleCount = Math.Max(0, StaleCount - 1);
+
+        WaitingOnPeople.Clear();
+        foreach (var (person, count, overdue) in ActionWorkflow.WaitingOn(_all))
+            WaitingOnPeople.Add(new WaitingChip(person, count, overdue));
+
+        RebuildReport();
+    }
+
+    /// <summary>
+    /// What a finished card still needs that the user need not wait for: the
+    /// done strip counting it, and its Outlook category cleared so the two
+    /// views agree. Each reports nothing on failure - the card is done
+    /// either way, and the next load puts the strip right.
+    /// </summary>
+    private async Task CatchUpAfterDoneAsync(ActionItem item)
+    {
+        var strip = RefreshDoneAsync();
+        await ClearCategoryAsync(item).ConfigureAwait(true);
+        try { await strip.ConfigureAwait(true); }
+        catch { /* the strip is only a summary; the next load fills it */ }
     }
 
     private async Task ClearCategoryAsync(ActionItem item)

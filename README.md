@@ -161,7 +161,7 @@ their own letters.
 | `t` | Edit notes |
 | `b` | Add a blocker |
 | `Shift+A` | Assign someone a task |
-| `x` | Mark done - the card leaves the board; `z` puts it back. In the done log, reopens it |
+| `x` | Mark done - the card leaves the board at once and the cursor lands on the next one, so a run of `x` presses clears a column; `z` puts the last one back. In the done log, reopens it |
 | `Shift+D` | Done log - everything you have finished, newest first |
 | `Shift+R` | **Review stale cards** - the ones nobody has touched for 30 days, one at a time: `x` done, `#` drop, `Enter` keep, `d` give it a date |
 | `Shift+P` | Cycle priority |
