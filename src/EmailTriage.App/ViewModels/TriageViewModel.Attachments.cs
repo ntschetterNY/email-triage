@@ -9,6 +9,12 @@ namespace EmailTriage.App.ViewModels;
 // everything else is copied as it is.
 public sealed partial class TriageViewModel
 {
+    /// <summary>Whether any attachment is a PNG, for the copy-as-PDF button.</summary>
+    public bool HasPngAttachments => ThreadAttachments.Any(a => AttachmentExport.IsPng(a.Name));
+
+    partial void OnThreadAttachmentsChanged(IReadOnlyList<MailAttachment> value) =>
+        OnPropertyChanged(nameof(HasPngAttachments));
+
     /// <summary>Saves every attachment in the reading pane into <paramref name="folder"/>.</summary>
     public async Task SaveAllAttachmentsAsync(string folder)
     {
@@ -56,6 +62,46 @@ public sealed partial class TriageViewModel
             failed.Count > 0 ? $" · could not save {string.Join(", ", failed)}" : "",
             blocked.Count > 0 ? $" · left {string.Join(", ", blocked.Select(b => b.Name))} for Outlook (programs or scripts)" : "");
         Status = $"Saved {saved} file(s) to {folder}" + (pngs.Count > 0 ? " · pictures as one PDF" : "") + note;
+    }
+
+    /// <summary>
+    /// Puts the PNG attachments, as one PDF with a page each, into
+    /// <paramref name="folder"/> and returns its path, for copying to the
+    /// clipboard. Null (with a status) when there is nothing to copy.
+    /// </summary>
+    public async Task<string?> PicturesToPdfFileAsync(string folder)
+    {
+        if (OpenBody is not { } body) return null;
+
+        var pngs = ThreadAttachments.Where(a => AttachmentExport.IsPng(a.Name)).ToList();
+        if (pngs.Count == 0)
+        {
+            Status = "No PNG pictures attached to copy";
+            return null;
+        }
+
+        Status = $"Making a PDF of {pngs.Count} picture(s)...";
+        var failed = new List<string>();
+        try
+        {
+            if (await PicturesToPdfAsync(pngs, body, failed).ConfigureAwait(true) is not { } pdf)
+            {
+                Status = $"Could not read {string.Join(", ", failed)}";
+                return null;
+            }
+
+            Directory.CreateDirectory(folder);
+            var path = AttachmentExport.UniquePath(folder, pdf.Name);
+            await Task.Run(() => File.WriteAllBytes(path, pdf.Bytes)).ConfigureAwait(true);
+            Status = $"Copied {Path.GetFileName(path)} ({pngs.Count - failed.Count} page(s)) · paste it into a folder, an email or a chat" +
+                     (failed.Count > 0 ? $" · could not read {string.Join(", ", failed)}" : "");
+            return path;
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not make the PDF: {ex.Message}";
+            return null;
+        }
     }
 
     /// <summary>

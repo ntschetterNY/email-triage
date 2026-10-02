@@ -1192,6 +1192,22 @@ public partial class MainWindow : Window
         Focus();
     }
 
+    private async void OnCopyPicturesAsPdfClick(object sender, RoutedEventArgs e)
+    {
+        // A fresh folder in the attachment cache, which is pruned after a few
+        // days; the PDF has to outlive the paste, so it can't be deleted sooner.
+        var folder = Path.Combine(EmailTriage.Outlook.OutlookMailStore.DefaultAttachmentFolder,
+            "copied-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff"));
+        if (await ViewModel.Triage.PicturesToPdfFileAsync(folder) is { } path)
+        {
+            // A file drop list, the same thing Explorer's Copy puts there, so
+            // it pastes into folders, Outlook and Teams alike.
+            try { Clipboard.SetFileDropList(new System.Collections.Specialized.StringCollection { path }); }
+            catch (Exception ex) { ViewModel.Triage.Status = $"Could not reach the clipboard: {ex.Message}"; }
+        }
+        Focus();
+    }
+
     /// <summary>Private host the panes map onto the attachment cache, for in-app previews.</summary>
     private const string AttachmentHost = "attachments.example";
 

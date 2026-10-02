@@ -659,6 +659,9 @@
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top" Margin="6,0,0,6">
                                 <Button Content="Save all" Click="OnSaveAllAttachmentsClick" Style="{StaticResource ReportButton}"
                                         ToolTip="Save every attachment to a folder · PNG pictures go into one PDF, a page each" />
+                                <Button Content="Copy as PDF" Click="OnCopyPicturesAsPdfClick" Style="{StaticResource ReportButton}" Margin="6,0,0,0"
+                                        Visibility="{Binding Triage.HasPngAttachments, Converter={StaticResource BoolVis}}"
+                                        ToolTip="Copy the PNG pictures as one PDF, a page each, to paste into a folder, an email or a chat" />
                             </StackPanel>
                             <ItemsControl ItemsSource="{Binding Triage.ThreadAttachments}">
                                 <ItemsControl.ItemsPanel>
