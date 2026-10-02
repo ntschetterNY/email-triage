@@ -171,7 +171,7 @@ their own letters.
 ### Calendar
 | Key | |
 |---|---|
-| `y` | Answer an invitation: `Enter` accepts, `↓` for maybe or decline. Type first to send a note with it. On a cancellation, takes it off your calendar |
+| `y` | Answer an invitation: `Enter` accepts, `↓` for maybe (tentative), follow (you won't attend; it stays on your calendar as free) or decline. Type first to send a note with it. On a cancellation, takes it off your calendar |
 | `s` | Put the mail (or the card, on the board) on your calendar: `Enter` blocks the time for you, `Ctrl+Enter` invites the people on the thread |
 | `Shift+S` | Reply with a meeting to everyone on the thread. In the palette, `Ctrl+T` turns Teams on or off, `Ctrl+D` makes it all day, `Ctrl+R` cycles one time / weekly / fortnightly / monthly / daily / weekdays, `Ctrl+B` cycles how it shows (busy, tentative, free, out of office, working elsewhere). `Enter` opens it in Outlook to send |
 | `Ctrl+J` | Join the meeting on now or about to start, from any tab |

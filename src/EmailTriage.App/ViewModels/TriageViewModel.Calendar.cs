@@ -13,7 +13,8 @@ public sealed record RsvpTarget(
     MeetingResponse Current,
     bool IsCancellation = false,
     bool IsSeries = false,
-    bool ArchiveAfter = false);
+    bool ArchiveAfter = false,
+    bool IsFollowing = false);
 
 /// <summary>
 /// What the schedule palette is putting on the calendar, and who would be
@@ -109,7 +110,7 @@ public sealed partial class TriageViewModel
             InviteHasClash = false;
             InviteAction = invite.Kind switch
             {
-                MailKind.MeetingRequest => "accept, maybe or decline",
+                MailKind.MeetingRequest => "accept, maybe, follow or decline",
                 MailKind.MeetingCancellation when invite.Appointment is not null => "remove it from your calendar",
                 _ => "",
             };
@@ -144,7 +145,7 @@ public sealed partial class TriageViewModel
         switch (invite.Kind)
         {
             case MailKind.MeetingRequest:
-                parts.Add(invite.Response switch
+                parts.Add(invite.IsFollowing ? "You're following" : invite.Response switch
                 {
                     MeetingResponse.Accepted => "You accepted",
                     MeetingResponse.Tentative => "You said maybe",
@@ -208,7 +209,8 @@ public sealed partial class TriageViewModel
             invite?.Response ?? MeetingResponse.NotResponded,
             IsCancellation: kind == MailKind.MeetingCancellation,
             IsSeries: invite?.IsRecurring ?? false,
-            ArchiveAfter: true));
+            ArchiveAfter: true,
+            IsFollowing: invite?.IsFollowing ?? false));
     }
 
     public void OpenRsvpPalette(RsvpTarget target)
@@ -243,10 +245,10 @@ public sealed partial class TriageViewModel
         var note = Palette.Query.Trim();
         var who = t.Organizer.Length > 0 ? t.Organizer : "the organizer";
 
-        string Secondary(InviteResponse response, MeetingResponse same, string extra = "")
+        string Secondary(bool isCurrent, string extra = "")
         {
             var parts = new List<string>();
-            if (t.Current == same) parts.Add("your answer now");
+            if (isCurrent) parts.Add("your answer now");
             parts.Add(note.Length > 0 ? $"with your note to {who}" : $"lets {who} know");
             if (extra.Length > 0) parts.Add(extra);
             return string.Join(" · ", parts);
@@ -255,9 +257,10 @@ public sealed partial class TriageViewModel
         var keep = Palette.SelectedIndex;
         Palette.SetEntries(new[]
         {
-            new PaletteEntry("Accept", Secondary(InviteResponse.Accept, MeetingResponse.Accepted), new RsvpChoice(InviteResponse.Accept), Array.Empty<int>()),
-            new PaletteEntry("Maybe", Secondary(InviteResponse.Tentative, MeetingResponse.Tentative, "tentative"), new RsvpChoice(InviteResponse.Tentative), Array.Empty<int>()),
-            new PaletteEntry("Decline", Secondary(InviteResponse.Decline, MeetingResponse.Declined, "takes it off your calendar"), new RsvpChoice(InviteResponse.Decline), Array.Empty<int>()),
+            new PaletteEntry("Accept", Secondary(t.Current == MeetingResponse.Accepted), new RsvpChoice(InviteResponse.Accept), Array.Empty<int>()),
+            new PaletteEntry("Maybe (tentative)", Secondary(t.Current == MeetingResponse.Tentative && !t.IsFollowing, "pencilled in as tentative"), new RsvpChoice(InviteResponse.Tentative), Array.Empty<int>()),
+            new PaletteEntry("Follow", Secondary(t.IsFollowing, "you won't attend · stays on your calendar as free"), new RsvpChoice(InviteResponse.Follow), Array.Empty<int>()),
+            new PaletteEntry("Decline", Secondary(t.Current == MeetingResponse.Declined, "takes it off your calendar"), new RsvpChoice(InviteResponse.Decline), Array.Empty<int>()),
         });
 
         // SetEntries goes back to the top; a note typed after picking Decline must not turn it into Accept.
@@ -289,6 +292,7 @@ public sealed partial class TriageViewModel
         {
             InviteResponse.Accept => $"Accepted \"{t.Subject}\"",
             InviteResponse.Tentative => $"Said maybe to \"{t.Subject}\"",
+            InviteResponse.Follow => $"Following \"{t.Subject}\"",
             InviteResponse.Decline => $"Declined \"{t.Subject}\"",
             _ => $"Took \"{t.Subject}\" off your calendar",
         };

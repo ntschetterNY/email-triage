@@ -94,7 +94,7 @@ public enum TriageAction
 
     // Calendar
 
-    /// <summary>Accept, tentatively accept or decline an invitation, optionally with a note.</summary>
+    /// <summary>Accept, tentatively accept, follow or decline an invitation, optionally with a note.</summary>
     Rsvp,
 
     /// <summary>Put the mail or task on the calendar: time for yourself, or a meeting with the people on it.</summary>

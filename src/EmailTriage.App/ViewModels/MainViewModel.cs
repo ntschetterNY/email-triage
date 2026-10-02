@@ -1049,7 +1049,8 @@ public sealed partial class MainViewModel : ObservableObject
             $"{ev.Start:ddd d MMM} {CalendarMath.TimeRange(ev.Start, ev.End, ev.IsAllDay)}",
             ev.Organizer,
             ev.Response,
-            IsSeries: ev.IsRecurring));
+            IsSeries: ev.IsRecurring,
+            IsFollowing: ev.IsFollowing));
     }
 
     /// <summary>s on the board: time on the calendar to get the task done.</summary>
@@ -1323,7 +1324,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Calendar", $"{Keys.Describe(TriageAction.CalendarDay)}-{Keys.Describe(TriageAction.CalendarAgenda)}", "On the Calendar tab: Day, Work week, Week, Month or Agenda view"),
         ("Calendar", $"{Keys.Describe(TriageAction.PrevColumn)} {Keys.Describe(TriageAction.NextColumn)}  /  {Keys.Describe(TriageAction.FirstMail)}", "On the Calendar tab: previous / next day, week or month  /  back to today"),
         ("Calendar", $"{Keys.Describe(TriageAction.NextMail)} / {Keys.Describe(TriageAction.PrevMail)}", "On the Calendar tab: next / previous meeting (Enter in the month opens its day)"),
-        ("Calendar", Keys.Describe(TriageAction.Rsvp), "Answer an invitation - accept, maybe or decline, with a note if you type one"),
+        ("Calendar", Keys.Describe(TriageAction.Rsvp), "Answer an invitation - accept, maybe, follow or decline, with a note if you type one"),
         ("Calendar", Keys.Describe(TriageAction.ScheduleTime), "Put the mail or task on your calendar (Ctrl+Enter invites its people instead)"),
         ("Calendar", Keys.Describe(TriageAction.ReplyWithMeeting), "Reply with a meeting: Ctrl+T Teams, Ctrl+D all day, Ctrl+R repeat, Ctrl+B show as - opens in Outlook to send"),
         ("Calendar", Keys.Describe(TriageAction.JoinMeeting), "Join the meeting on now or about to start - from any tab"),

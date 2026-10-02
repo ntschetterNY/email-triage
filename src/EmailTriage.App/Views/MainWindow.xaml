@@ -1794,7 +1794,7 @@
                             <Button Content="Open in Outlook" Click="OnAgendaOpen" Margin="0,0,8,0" Style="{StaticResource ReportButton}"
                                     ToolTip="o" />
                             <Button Content="Answer…" Click="OnAgendaAnswer" Style="{StaticResource ReportButton}"
-                                    ToolTip="Accept, maybe or decline (y)"
+                                    ToolTip="Accept, maybe, follow or decline (y)"
                                     Visibility="{Binding Selected.CanRespond, Converter={StaticResource BoolVis}}" />
                         </StackPanel>
 
