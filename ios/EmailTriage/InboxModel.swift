@@ -62,20 +62,31 @@ final class InboxModel {
         showUnreadOnly ? conversations.filter(\.unread) : conversations
     }
 
+    /// A refresh was asked for while one was under way.
+    private var refreshAgain = false
+
     func refresh() async {
-        guard !isLoading else { return }
+        // Asked again mid-load - say, on coming back from the Local Network
+        // prompt the first load set off - go round once more rather than drop it.
+        guard !isLoading else { refreshAgain = true; return }
         isLoading = true
         defer { isLoading = false }
 
-        do {
-            let inbox = try await client.inbox()
-            conversations = inbox.conversations
-            lastUpdated = Date()
-            hasLoaded = true
-            error = nil
-        } catch {
-            report(error)
-        }
+        repeat {
+            refreshAgain = false
+            do {
+                let inbox = try await client.inbox()
+                conversations = inbox.conversations
+                lastUpdated = Date()
+                hasLoaded = true
+                error = nil
+                isUnpaired = false
+            } catch is CancellationError {
+                return
+            } catch {
+                report(error)
+            }
+        } while refreshAgain
     }
 
     func archive(_ c: Conversation) async {

@@ -13,9 +13,12 @@ struct InboxView: View {
     @State private var snoozing: Conversation?
     @State private var moving: Conversation?
     @State private var confirmUnpair = false
+    /// Both columns, always: left to itself an iPad in portrait hides the
+    /// list behind a sidebar button and shows only the empty reading pane.
+    @State private var columns = NavigationSplitViewVisibility.all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             list
                 .navigationTitle("Inbox")
                 .toolbar { toolbar }
@@ -32,6 +35,9 @@ struct InboxView: View {
                         onLeave: { leave(open) },
                         onStep: { step($0) })
                         .id(open.key)
+                } else if !model.hasLoaded {
+                    // Loading, or failed: say so here too, in case the list is tucked away.
+                    emptyState
                 } else {
                     ContentUnavailableView(
                         model.visible.isEmpty ? "Nothing to read" : "No conversation selected",
