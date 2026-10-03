@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 
 enum CompanionError: LocalizedError {
     /// None of the PC's addresses answered.
@@ -28,8 +29,15 @@ enum CompanionError: LocalizedError {
 final class CompanionClient: NSObject, URLSessionDelegate {
     let pairing: PairingInfo
 
-    /// The address that answered last; tried first next time.
-    private var preferredHost: String?
+    /// The address that answered last, tried first next time; and the
+    /// addresses whose certificate was not the pinned one. Calls run
+    /// concurrently and the pinning callback on the session's queue, so both
+    /// sit behind a lock.
+    private struct Memory {
+        var preferredHost: String?
+        var wrongCertificate: Set<String> = []
+    }
+    private let memory = OSAllocatedUnfairLock(initialState: Memory())
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -104,9 +112,10 @@ final class CompanionClient: NSObject, URLSessionDelegate {
         _ method: String, _ path: String, query: [URLQueryItem] = [], body: (any Encodable)? = nil
     ) async throws -> T {
         var hosts = pairing.hosts
-        if let preferred = preferredHost, let index = hosts.firstIndex(of: preferred) {
+        if let preferred = memory.withLock({ $0.preferredHost }), let index = hosts.firstIndex(of: preferred) {
             hosts.swapAt(0, index)
         }
+        var wrongCertificate = false
 
         let payload = try body.map { try JSONEncoder.companion.encode($0) }
 
@@ -133,10 +142,14 @@ final class CompanionClient: NSObject, URLSessionDelegate {
             do {
                 (data, response) = try await session.data(for: request)
             } catch let error as URLError where Self.isUnreachable(error) {
+                // The caller gave up: stop, rather than try every other address
+                // and report the PC unreachable.
+                try Task.checkCancellation()
+                if memory.withLock({ $0.wrongCertificate.remove(host) != nil }) { wrongCertificate = true }
                 continue
             }
 
-            preferredHost = host
+            memory.withLock { $0.preferredHost = host }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
 
             if (200..<300).contains(status) {
@@ -150,6 +163,12 @@ final class CompanionClient: NSObject, URLSessionDelegate {
             throw CompanionError.server(status: status, message: message)
         }
 
+        // Something answered, but not with the PC's pinned certificate: the
+        // PC made a new pairing code ("Unpair all devices"), so pair again.
+        if wrongCertificate {
+            throw CompanionError.unpaired(
+                "\(pairing.pcName) has a new pairing code. Pair this device again from Settings on the PC.")
+        }
         throw CompanionError.unreachable(pcName: pairing.pcName)
     }
 
@@ -187,6 +206,8 @@ final class CompanionClient: NSObject, URLSessionDelegate {
             completionHandler(.useCredential, URLCredential(trust: trust))
         } else {
             // Not the PC this phone was paired with - whatever else it is.
+            let host = challenge.protectionSpace.host
+            memory.withLock { _ = $0.wrongCertificate.insert(host) }
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }
