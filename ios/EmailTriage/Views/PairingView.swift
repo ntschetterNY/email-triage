@@ -6,6 +6,7 @@ import UIKit
 struct PairingView: View {
     @Environment(AppState.self) private var state
     @State private var scanning = false
+    @State private var typed = ""
     @State private var problem: String?
 
     var body: some View {
@@ -26,15 +27,17 @@ struct PairingView: View {
                         Step(number: 3, text: "Scan the code it shows. This device has to be on the same Wi-Fi as the PC.")
                     }
 
-                    Button {
-                        scanning = true
-                    } label: {
-                        Label("Scan pairing code", systemImage: "qrcode.viewfinder")
-                            .frame(maxWidth: .infinity)
+                    if Camera.isAvailable {
+                        Button {
+                            scanning = true
+                        } label: {
+                            Label("Scan pairing code", systemImage: "qrcode.viewfinder")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .padding(.top, 8)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .padding(.top, 8)
 
                     Button {
                         pair(UIPasteboard.general.string ?? "")
@@ -44,6 +47,20 @@ struct PairingView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
+
+                    // For the Simulator, or anywhere the clipboard won't reach:
+                    // the link from the PC's pairing window, typed or pasted.
+                    HStack {
+                        TextField("emailtriage://pair?...", text: $typed)
+                            .textFieldStyle(.roundedBorder)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .submitLabel(.go)
+                            .onSubmit { pair(typed) }
+                        Button("Pair") { pair(typed) }
+                            .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
 
                     if let problem {
                         Text(problem)

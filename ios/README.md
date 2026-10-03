@@ -31,6 +31,15 @@ registration. How the PC side works and how it's secured is in the main
    General › VPN & Device Management, tap your Apple ID and choose **Trust**. To use
    both an iPhone and an iPad, install it on each one.
 
+### Trying it in the Simulator
+
+Picking an *iPad* or *iPhone* simulator instead of your device works for a look around,
+but the Simulator has no camera. Messages like `FigCaptureSourceSimulator signalled
+err=-12784` in Xcode's console are that missing camera, and they're harmless. Paste the
+pairing link instead. Copy it on the Mac, and the Simulator's clipboard picks it up
+(Simulator › Edit › Automatically Sync Pasteboard). The Mac must be on the same network
+as the PC.
+
 ## Pair it with the PC
 
 1. On the PC, open Email Triage › Settings (`Ctrl+,`) › **iPhone and iPad**. Tick *Let

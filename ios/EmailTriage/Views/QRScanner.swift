@@ -2,6 +2,18 @@ import AVFoundation
 import SwiftUI
 import UIKit
 
+/// True on a device with a camera to scan with. The Simulator has none, and
+/// starting a capture session there only fills the console with errors.
+enum Camera {
+    static var isAvailable: Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return AVCaptureDevice.default(for: .video) != nil
+        #endif
+    }
+}
+
 /// The camera, looking for a QR code; reports the first one it reads.
 struct QRScannerSheet: View {
     let onCode: (String) -> Void
@@ -11,11 +23,15 @@ struct QRScannerSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if denied {
-                    ContentUnavailableView(
+                if !Camera.isAvailable {
+                    noCamera(
+                        "No camera here",
+                        "This device can't scan, so copy the pairing link from the PC and paste it instead.")
+                } else if denied {
+                    noCamera(
                         "Camera access is off",
-                        systemImage: "camera.fill",
-                        description: Text("Allow the camera for Email Triage in the Settings app, or copy the pairing link from the PC and paste it instead."))
+                        "Allow the camera for Email Triage in the Settings app, or copy the pairing link from the PC and paste it instead.",
+                        openSettings: true)
                 } else {
                     QRScannerView(onCode: onCode, onDenied: { denied = true })
                         .ignoresSafeArea(edges: .bottom)
@@ -27,6 +43,20 @@ struct QRScannerSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+            }
+        }
+    }
+
+    private func noCamera(_ title: String, _ detail: String, openSettings: Bool = false) -> some View {
+        ContentUnavailableView {
+            Label(title, systemImage: "camera.fill")
+        } description: {
+            Text(detail)
+        } actions: {
+            Button("Paste pairing link") { onCode(UIPasteboard.general.string ?? "") }
+                .buttonStyle(.borderedProminent)
+            if openSettings, let url = URL(string: UIApplication.openSettingsURLString) {
+                Button("Open Settings") { UIApplication.shared.open(url) }
             }
         }
     }
