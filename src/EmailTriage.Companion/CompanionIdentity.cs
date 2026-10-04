@@ -6,8 +6,9 @@ namespace EmailTriage.Companion;
 
 /// <summary>
 /// What a paired phone needs to trust this PC and be trusted by it: a
-/// self-signed TLS certificate the phone pins by fingerprint, and a secret
-/// token it sends with every request. Both are made on first use and kept in
+/// self-signed TLS certificate the phone pins by fingerprint, a secret
+/// token it sends with every request, and the key that seals traffic sent
+/// through the relay. All are made on first use and kept in
 /// one file, encrypted to the Windows user with DPAPI where that exists.
 /// Resetting makes new ones, which unpairs every phone.
 /// </summary>
@@ -18,13 +19,17 @@ public sealed class CompanionIdentity
     /// <summary>The bearer token, base64url, 256 bits.</summary>
     public string Token { get; }
 
+    /// <summary>The AES-256 key for traffic through the relay, which only ever sees it sealed.</summary>
+    public byte[] RelayKey { get; }
+
     /// <summary>SHA-256 of the certificate's DER bytes, lower-case hex: what the phone pins.</summary>
     public string Fingerprint => Convert.ToHexString(SHA256.HashData(Certificate.RawData)).ToLowerInvariant();
 
-    private CompanionIdentity(X509Certificate2 certificate, string token)
+    private CompanionIdentity(X509Certificate2 certificate, string token, byte[] relayKey)
     {
         Certificate = certificate;
         Token = token;
+        RelayKey = relayKey;
     }
 
     public static string DefaultPath =>
@@ -43,7 +48,17 @@ public sealed class CompanionIdentity
             {
                 var saved = JsonSerializer.Deserialize<Saved>(Unprotect(File.ReadAllBytes(path)));
                 if (saved is { Token.Length: > 0, Pfx.Length: > 0 })
-                    return new CompanionIdentity(LoadPfx(Convert.FromBase64String(saved.Pfx)), saved.Token);
+                {
+                    // Saved before the relay existed: add a key, and keep the
+                    // token and certificate so paired devices still work nearby.
+                    if (saved.RelayKey.Length == 0)
+                    {
+                        saved.RelayKey = Convert.ToBase64String(RelaySeal.NewKey());
+                        Save(path, saved);
+                    }
+                    return new CompanionIdentity(LoadPfx(Convert.FromBase64String(saved.Pfx)), saved.Token,
+                        Convert.FromBase64String(saved.RelayKey));
+                }
             }
         }
         catch (Exception ex) when (ex is CryptographicException or JsonException or FormatException)
@@ -75,13 +90,18 @@ public sealed class CompanionIdentity
         // ephemeral key CreateSelfSigned returns.
         var pfx = created.Export(X509ContentType.Pfx);
         var token = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var relayKey = RelaySeal.NewKey();
 
+        Save(path, new Saved { Token = token, Pfx = Convert.ToBase64String(pfx), RelayKey = Convert.ToBase64String(relayKey) });
+
+        return new CompanionIdentity(LoadPfx(pfx), token, relayKey);
+    }
+
+    private static void Save(string path, Saved saved)
+    {
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        File.WriteAllBytes(path, Protect(JsonSerializer.SerializeToUtf8Bytes(
-            new Saved { Token = token, Pfx = Convert.ToBase64String(pfx) })));
-
-        return new CompanionIdentity(LoadPfx(pfx), token);
+        File.WriteAllBytes(path, Protect(JsonSerializer.SerializeToUtf8Bytes(saved)));
     }
 
     /// <summary>Compares in constant time, so the token cannot be guessed a byte at a time.</summary>
@@ -96,7 +116,7 @@ public sealed class CompanionIdentity
     private static X509Certificate2 LoadPfx(byte[] pfx) =>
         new(pfx, (string?)null, X509KeyStorageFlags.UserKeySet);
 
-    private static string Base64Url(byte[] bytes) =>
+    internal static string Base64Url(byte[] bytes) =>
         Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private static byte[] Protect(byte[] data) =>
@@ -113,5 +133,6 @@ public sealed class CompanionIdentity
     {
         public string Token { get; set; } = "";
         public string Pfx { get; set; } = "";
+        public string RelayKey { get; set; } = "";
     }
 }

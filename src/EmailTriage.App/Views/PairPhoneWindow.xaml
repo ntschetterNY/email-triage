@@ -13,8 +13,8 @@
     <StackPanel Margin="28,22,28,22">
         <TextBlock Text="Scan this with the Email Triage app" FontSize="15" FontWeight="SemiBold" />
         <TextBlock FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,6,0,0">
-            Open the app on your iPhone or iPad, tap Scan pairing code, and point the camera here. It has to be
-            on the same Wi-Fi as this PC.
+            Open the app on your iPhone or iPad, tap Scan pairing code, and point the camera here. It connects over
+            the same Wi-Fi as this PC, or from anywhere through the relay when one is set up in Settings.
         </TextBlock>
 
         <!-- QR codes need a light quiet zone around them to scan. -->

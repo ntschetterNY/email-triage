@@ -75,12 +75,14 @@ The filter button at the top right shows unread mail only, and has **Unpair**.
 ## If it can't connect
 
 - Check that the device and the PC are on the same Wi-Fi. Guest networks often keep
-  devices apart.
+  devices apart. Away from the PC, or when its network is *Public* and can't be
+  changed, set up the relay (Settings › iPhone and iPad on the PC) and pair again.
 - Look at the status line under Settings › iPhone and iPad on the PC. It shows the
   address and port the PC is listening on, and when a device last connected.
 - Windows Firewall has to allow Email Triage on private networks. That prompt needs
   an administrator, so on a managed PC ask IT. If the PC's network is set to
-  *Public*, switching it to *Private* may be all that's needed.
+  *Public*, switching it to *Private* may be all that's needed. If it's locked, use
+  the relay instead: it needs nothing from the firewall.
 - Check that iOS Settings › Privacy & Security › Local Network has Email Triage on.
 - If you pressed *Unpair all devices* on the PC, pair the device again.
 
@@ -90,7 +92,8 @@ The filter button at the top right shows unread mail only, and has **Unpair**.
 |---|---|
 | `EmailTriageApp.swift` | App entry, and opening `emailtriage://pair` links |
 | `Pairing.swift` | Reading the pairing link, and keeping it in the Keychain |
-| `CompanionClient.swift` | HTTPS calls to the PC, certificate pinning, trying each PC address |
+| `CompanionClient.swift` | HTTPS calls to the PC, certificate pinning, trying each PC address and then the relay |
+| `Relay.swift` | The relay: a Supabase Realtime channel, every call sealed with AES-GCM under the pairing code's key |
 | `InboxModel.swift` | The list and every triage move; a move shows at once and is undone if the PC refuses it |
 | `Views/` | Inbox (a split view on iPad), thread, snooze, move, reply, pairing and QR scanner screens |
 
