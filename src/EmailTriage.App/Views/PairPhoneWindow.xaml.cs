@@ -28,7 +28,7 @@ public partial class PairPhoneWindow : Window
         LinkBox.Text = link;
         QrImage.Source = _phone.PairingQr(link);
 
-        if (Pairing.LocalAddresses().Count == 0)
+        if (Pairing.LocalAddresses().Count == 0 && _phone.Relay is null)
         {
             Warning.Text = "This PC has no address on a private network, so an iPhone or iPad can't reach it. " +
                            "Connect it to Wi-Fi or office Ethernet and open this again.";

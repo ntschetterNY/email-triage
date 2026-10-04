@@ -9,7 +9,8 @@ namespace EmailTriage.App.Services;
 /// <summary>
 /// The iPhone companion as Settings shows it: on or off, what it is doing,
 /// and the pairing code. Off by default - turning it on is the user's choice
-/// to let mail leave this PC for their phone over the local network.
+/// to let mail leave this PC for their phone over the local network, or
+/// sealed through the relay when one is set up.
 /// </summary>
 public sealed partial class PhoneCompanion : ObservableObject, IAsyncDisposable
 {
@@ -17,18 +18,26 @@ public sealed partial class PhoneCompanion : ObservableObject, IAsyncDisposable
     private readonly CompanionService _service;
     private CompanionIdentity? _identity;
     private CompanionServer? _server;
+    private RelayHost? _relay;
     private DateTimeOffset? _lastRequest;
 
     [ObservableProperty] private bool _isEnabled;
     [ObservableProperty] private string _status = "Off";
     [ObservableProperty] private bool _isRunning;
+    [ObservableProperty] private string _relayUrl;
+    [ObservableProperty] private string _relayKey;
 
     public PhoneCompanion(AppSettings settings, CompanionService service)
     {
         _settings = settings;
         _service = service;
         _isEnabled = settings.PhoneCompanionEnabled;
+        _relayUrl = settings.PhoneRelayUrl;
+        _relayKey = settings.PhoneRelayKey;
     }
+
+    /// <summary>The relay, when both boxes hold something usable.</summary>
+    public RelaySettings? Relay => RelaySettings.From(RelayUrl, RelayKey);
 
     public int Port => _settings.PhoneCompanionPort is > 0 and < 65536 ? _settings.PhoneCompanionPort : CompanionServer.DefaultPort;
 
@@ -42,6 +51,21 @@ public sealed partial class PhoneCompanion : ObservableObject, IAsyncDisposable
         _settings.PhoneCompanionEnabled = value;
         try { _settings.Save(); } catch (IOException) { /* still applies for this session */ }
         _ = value ? StartAsync() : StopAsync();
+    }
+
+    partial void OnRelayUrlChanged(string value) => RelayChanged();
+
+    partial void OnRelayKeyChanged(string value) => RelayChanged();
+
+    private async void RelayChanged()
+    {
+        _settings.PhoneRelayUrl = RelayUrl.Trim();
+        _settings.PhoneRelayKey = RelayKey.Trim();
+        try { _settings.Save(); } catch (IOException) { /* still applies for this session */ }
+
+        await StopRelayAsync();
+        StartRelay();
+        UpdateStatus();
     }
 
     private async Task StartAsync()
@@ -59,6 +83,7 @@ public sealed partial class PhoneCompanion : ObservableObject, IAsyncDisposable
             await server.StartAsync();
             _server = server;
             IsRunning = true;
+            StartRelay();
             UpdateStatus();
         }
         catch (Exception ex)
@@ -71,8 +96,28 @@ public sealed partial class PhoneCompanion : ObservableObject, IAsyncDisposable
         }
     }
 
+    /// <summary>Dials out to the relay, alongside the server it forwards to on loopback.</summary>
+    private void StartRelay()
+    {
+        if (_server is null || _relay is not null || Relay is not { } relay) return;
+
+        var channel = RelaySeal.Channel(Identity.RelayKey);
+        var host = new RelayHost(() => new RealtimeChannel(relay.ProjectUrl, relay.ApiKey, channel), Identity, Port);
+        host.StateChanged += (_, _) => Application.Current?.Dispatcher.BeginInvoke(UpdateStatus);
+        _relay = host;
+        host.Start();
+    }
+
+    private async Task StopRelayAsync()
+    {
+        var relay = _relay;
+        _relay = null;
+        if (relay is not null) await relay.DisposeAsync();
+    }
+
     public async Task StopAsync()
     {
+        await StopRelayAsync();
         var server = _server;
         _server = null;
         IsRunning = false;
@@ -86,15 +131,22 @@ public sealed partial class PhoneCompanion : ObservableObject, IAsyncDisposable
 
         var hosts = Pairing.LocalAddresses();
         var where = hosts.Count == 0
-            ? "but this PC has no private network address - is it on Wi-Fi or office Ethernet?"
+            ? _relay is null ? "but this PC has no private network address - is it on Wi-Fi or office Ethernet?" : "through the relay only"
             : $"on {hosts[0]}:{Port}";
+        var relay = _relay?.State switch
+        {
+            RelayState.Connected => " · relay connected",
+            RelayState.Connecting => " · connecting to the relay",
+            RelayState.Retrying => $" · relay unreachable, retrying ({_relay.Problem})",
+            _ => Relay is null && (RelayUrl.Length > 0 || RelayKey.Length > 0) ? " · relay needs an https:// URL and a key" : "",
+        };
         var seen = _lastRequest is { } at ? $" · device last connected {at:HH:mm}" : "";
-        Status = $"On, listening {where}{seen}";
+        Status = $"On, listening {where}{relay}{seen}";
     }
 
     /// <summary>The link the phone scans, with this PC's current addresses.</summary>
     public string PairingLink() =>
-        Pairing.Link(Pairing.LocalAddresses(), Port, Identity, Environment.MachineName);
+        Pairing.Link(Pairing.LocalAddresses(), Port, Identity, Environment.MachineName, Relay);
 
     public BitmapImage PairingQr(string link)
     {

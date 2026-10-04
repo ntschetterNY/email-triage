@@ -13,8 +13,9 @@ enum CompanionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unreachable(let pc):
-            return "Can't reach \(pc). Check that this device is on the same Wi-Fi, the PC is awake, "
-                + "and \"Let my iPhone or iPad triage this inbox\" is on in Email Triage's Settings."
+            return "Can't reach \(pc). Check that the PC is awake, Email Triage is running, "
+                + "and \"Let my iPhone or iPad triage this inbox\" is on in its Settings. "
+                + "Away from the PC's Wi-Fi, a relay has to be set up there too."
         case .unpaired(let message):
             return message
         case .server(_, let message):
@@ -25,9 +26,17 @@ enum CompanionError: LocalizedError {
 
 /// Talks to the Email Triage companion on the PC over HTTPS, trusting only
 /// the certificate whose fingerprint came in the pairing code, and sending
-/// the pairing token with every request.
+/// the pairing token with every request. When the PC can't be reached
+/// directly and it has a relay set up, the same calls go sealed through that.
 final class CompanionClient: NSObject, URLSessionDelegate {
     let pairing: PairingInfo
+
+    /// Stands for the relay among the PC's addresses.
+    private static let relayRoute = "relay"
+    /// How long to wait on an address that hasn't answered before, when the relay is there to fall back to.
+    private static let probeTimeout: TimeInterval = 5
+
+    private let relay: RelayClient?
 
     /// The address that answered last, tried first next time; and the
     /// addresses whose certificate was not the pinned one. Calls run
@@ -49,6 +58,7 @@ final class CompanionClient: NSObject, URLSessionDelegate {
 
     init(pairing: PairingInfo) {
         self.pairing = pairing
+        self.relay = RelayClient(pairing: pairing)
     }
 
     // MARK: - API
@@ -112,7 +122,9 @@ final class CompanionClient: NSObject, URLSessionDelegate {
         _ method: String, _ path: String, query: [URLQueryItem] = [], body: (any Encodable)? = nil
     ) async throws -> T {
         var hosts = pairing.hosts
-        if let preferred = memory.withLock({ $0.preferredHost }), let index = hosts.firstIndex(of: preferred) {
+        if relay != nil { hosts.append(Self.relayRoute) }
+        let preferred = memory.withLock { $0.preferredHost }
+        if let preferred, let index = hosts.firstIndex(of: preferred) {
             hosts.swapAt(0, index)
         }
         var wrongCertificate = false
@@ -120,6 +132,24 @@ final class CompanionClient: NSObject, URLSessionDelegate {
         let payload = try body.map { try JSONEncoder.companion.encode($0) }
 
         for host in hosts {
+            if host == Self.relayRoute, let relay {
+                var components = URLComponents()
+                components.path = path
+                if !query.isEmpty { components.queryItems = query }
+                let target = components.percentEncodedPath
+                    + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
+
+                let answer: (status: Int, body: Data)
+                do {
+                    answer = try await relay.send(method: method, path: target, body: payload)
+                } catch is RelayError {
+                    try Task.checkCancellation()
+                    continue
+                }
+                memory.withLock { $0.preferredHost = host }
+                return try Self.decode(status: answer.status, data: answer.body)
+            }
+
             var components = URLComponents()
             components.scheme = "https"
             components.host = host
@@ -136,6 +166,9 @@ final class CompanionClient: NSObject, URLSessionDelegate {
                 request.httpBody = payload
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             }
+            // Don't sit out the full timeout on an address that may be
+            // unreachable from here when the relay could answer instead.
+            if relay != nil, host != preferred { request.timeoutInterval = Self.probeTimeout }
 
             let data: Data
             let response: URLResponse
@@ -151,16 +184,7 @@ final class CompanionClient: NSObject, URLSessionDelegate {
 
             memory.withLock { $0.preferredHost = host }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-
-            if (200..<300).contains(status) {
-                if status == 204 || data.isEmpty, let empty = Empty() as? T { return empty }
-                return try JSONDecoder.companion.decode(T.self, from: data)
-            }
-
-            let message = (try? JSONDecoder.companion.decode(APIErrorBody.self, from: data))?.error
-                ?? "The PC answered \(status)."
-            if status == 401 { throw CompanionError.unpaired(message) }
-            throw CompanionError.server(status: status, message: message)
+            return try Self.decode(status: status, data: data)
         }
 
         // Something answered, but not with the PC's pinned certificate: the
@@ -170,6 +194,19 @@ final class CompanionClient: NSObject, URLSessionDelegate {
                 "\(pairing.pcName) has a new pairing code. Pair this device again from Settings on the PC.")
         }
         throw CompanionError.unreachable(pcName: pairing.pcName)
+    }
+
+    /// The PC's answer, the same whichever way it came.
+    private static func decode<T: Decodable>(status: Int, data: Data) throws -> T {
+        if (200..<300).contains(status) {
+            if status == 204 || data.isEmpty, let empty = Empty() as? T { return empty }
+            return try JSONDecoder.companion.decode(T.self, from: data)
+        }
+
+        let message = (try? JSONDecoder.companion.decode(APIErrorBody.self, from: data))?.error
+            ?? "The PC answered \(status)."
+        if status == 401 { throw CompanionError.unpaired(message) }
+        throw CompanionError.server(status: status, message: message)
     }
 
     private static func isUnreachable(_ error: URLError) -> Bool {

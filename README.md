@@ -549,7 +549,26 @@ check that your company allows it first.
    You can also copy the link under the code to the device and paste it in the app.
 3. If the device can't connect, allow Email Triage on **private networks** when Windows
    Firewall asks. That prompt needs an administrator, so on a managed PC it may
-   need your IT department.
+   need your IT department. If you can't do that, or the PC's network is locked to
+   *Public*, set up the relay below.
+
+#### Through a relay
+
+Windows Firewall blocks connections coming in to a PC on a *Public* network. Guest
+and hotel Wi-Fi usually keep devices apart anyway. With a relay, the PC and the device
+both connect **out** to a Supabase project's Realtime channel on port 443, which
+those networks allow. The device then works from anywhere, cellular included, as
+long as the PC is on and online.
+
+1. In **Settings** › **iPhone and iPad**, fill in *Supabase project URL*
+   (`https://<ref>.supabase.co`) and *Publishable key* (`sb_publishable_...`, or the
+   legacy anon key). Any project works. Nothing is stored there and no tables are
+   used: it only needs Realtime with public channels allowed, which is the default.
+2. The status line shows *relay connected*. Pair the device again so its code
+   carries the relay.
+
+The device tries the PC directly first, then the relay, and remembers which one
+answered.
 
 How it's secured:
 
@@ -558,8 +577,15 @@ How it's secured:
 - **A 256-bit pairing token** goes with every request. The token and the certificate's
   key are kept in `%LOCALAPPDATA%\EmailTriage\companion.key`, encrypted to your Windows
   account. **Unpair all devices** in the pairing window makes new ones.
-- **Same network only.** Requests from anything other than a private address
+- **Same network only, unless you set up a relay.** Requests from anything other than a private address
   (192.168.x, 10.x, 172.16-31.x, link-local) are refused, even with the right token.
+- **The relay sees only ciphertext.** Each request and answer is compressed and
+  sealed with AES-256-GCM under a key that exists only on the PC
+  (in `companion.key`) and in the pairing code. The relay channel's name is
+  derived from that key too. The PC drops anything that doesn't open with it, any
+  request more than 5 minutes old, and any request it has already answered. It then
+  passes the request to its own HTTPS server on loopback, which checks the token as
+  usual. **Unpair all devices** makes a new key as well.
 - Mail is shown in the device's web view with JavaScript off. It is rendered on the PC
   under the same Content-Security-Policy the desktop uses. Embedded images are sent
   inline, and links open in Safari.
@@ -572,7 +598,7 @@ top of Outlook's own quoted history and signature. Composing new mail, attachmen
 the calendar, the action board and AI drafts are desktop-only for now.
 
 The port is `47821`. Change it with `PhoneCompanionPort` in `settings.json` if
-something else uses it. Building the app is covered in
+something else uses it. The relay is `PhoneRelayUrl` and `PhoneRelayKey` there. Building the app is covered in
 [`ios/README.md`](ios/README.md).
 
 ### Identity
@@ -586,7 +612,8 @@ moved the mail by hand - the app re-finds it by `Message-ID`.
 ```
 EmailTriage.Core      models, services, SQLite    net8.0          (no Windows deps, fully tested)
 EmailTriage.Outlook   COM/MAPI implementation     net8.0-windows
-EmailTriage.Companion HTTPS API for the app       net8.0          (Kestrel; no Windows deps, tested)
+EmailTriage.Companion HTTPS API for the app,      net8.0          (Kestrel; no Windows deps, tested)
+                      and its Realtime relay
 EmailTriage.App       WPF UI                      net8.0-windows
 ios/                  iPhone and iPad app         SwiftUI, iOS 17
 ```

@@ -7,19 +7,25 @@ namespace EmailTriage.Companion;
 
 /// <summary>
 /// The pairing link the phone scans: where to find this PC, the token to
-/// send, and the certificate fingerprint to pin. Shown as a QR code, and as
-/// text to paste for when the camera is not an option.
+/// send, and the certificate fingerprint to pin - and, when a relay is set
+/// up, where it is and the key that seals traffic through it. Shown as a QR
+/// code, and as text to paste for when the camera is not an option.
 /// </summary>
 public static class Pairing
 {
     public const string Scheme = "emailtriage";
 
-    public static string Link(IEnumerable<IPAddress> hosts, int port, CompanionIdentity identity, string pcName)
+    public static string Link(IEnumerable<IPAddress> hosts, int port, CompanionIdentity identity, string pcName, RelaySettings? relay = null)
     {
         var h = string.Join(",", hosts.Select(a => a.ToString()));
-        return $"{Scheme}://pair?h={Uri.EscapeDataString(h)}&p={port}" +
-               $"&t={Uri.EscapeDataString(identity.Token)}&f={identity.Fingerprint}" +
-               $"&n={Uri.EscapeDataString(pcName)}";
+        var link = $"{Scheme}://pair?h={Uri.EscapeDataString(h)}&p={port}" +
+                   $"&t={Uri.EscapeDataString(identity.Token)}&f={identity.Fingerprint}" +
+                   $"&n={Uri.EscapeDataString(pcName)}";
+        if (relay is not null)
+            link += $"&r={Uri.EscapeDataString(relay.ProjectUrl.ToString().TrimEnd('/'))}" +
+                    $"&a={Uri.EscapeDataString(relay.ApiKey)}" +
+                    $"&k={CompanionIdentity.Base64Url(identity.RelayKey)}";
+        return link;
     }
 
     /// <summary>The link as a PNG QR code, for the pairing window to show.</summary>
@@ -65,6 +71,18 @@ public static class Pairing
         }
 
         return found.OrderBy(f => f.Rank).Select(f => f.Address).Distinct().ToList();
+    }
+}
+
+/// <summary>The Supabase project whose Realtime channels carry the relay, and its publishable key.</summary>
+public sealed record RelaySettings(Uri ProjectUrl, string ApiKey)
+{
+    /// <summary>The settings, when both are filled in and the URL is an https address; otherwise null.</summary>
+    public static RelaySettings? From(string? url, string? apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(apiKey)) return null;
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return null;
+        return new RelaySettings(new Uri(uri.GetLeftPart(UriPartial.Authority)), apiKey.Trim());
     }
 }
 

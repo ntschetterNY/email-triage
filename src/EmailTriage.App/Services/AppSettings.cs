@@ -199,6 +199,18 @@ public sealed class AppSettings
     public int PhoneCompanionPort { get; set; } = 47821;
 
     /// <summary>
+    /// A Supabase project whose Realtime channels relay traffic when the
+    /// device can't reach this PC directly (a Public network, guest Wi-Fi,
+    /// or away from the office), e.g. https://abcd.supabase.co. Both this
+    /// PC and the device connect out to it; it only sees sealed traffic.
+    /// Empty: nearby only.
+    /// </summary>
+    public string PhoneRelayUrl { get; set; } = "";
+
+    /// <summary>That project's publishable key (sb_publishable_..., or the legacy anon key).</summary>
+    public string PhoneRelayKey { get; set; } = "";
+
+    /// <summary>
     /// The GitHub repo ("owner/name") Lavish files comments to. Empty uses
     /// the repo this copy was released from. Filing directly takes a token
     /// from GH_TOKEN, GITHUB_TOKEN or a signed-in `gh` CLI; without one,

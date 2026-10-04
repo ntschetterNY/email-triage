@@ -56,7 +56,8 @@
                 <StackPanel x:Name="PhoneSection">
                     <TextBlock Text="iPhone and iPad" Style="{StaticResource Heading}" />
                     <TextBlock Style="{StaticResource Hint}" Margin="0">
-                        Triage this inbox from the Email Triage app on your iPhone or iPad while you're on the same Wi-Fi as this PC.
+                        Triage this inbox from the Email Triage app on your iPhone or iPad while you're on the same Wi-Fi as this PC,
+                        or from anywhere through a relay.
                         This PC and Outlook have to stay on. Mail goes from this PC to your device, encrypted, and only
                         to a device you've paired. Check that your company allows that before you turn it on.
                     </TextBlock>
@@ -66,6 +67,17 @@
                                    Text="Let my iPhone or iPad triage this inbox over Wi-Fi" />
                     </CheckBox>
                     <TextBlock Text="{Binding Status}" Style="{StaticResource Hint}" Margin="22,5,0,0" />
+
+                    <TextBlock Text="Relay (optional)" Style="{StaticResource Label}" />
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,6">
+                        For when the device can't reach this PC directly: a Public network, guest Wi-Fi, or away from the office.
+                        This PC and the device both connect out to a Supabase project's Realtime channel, which only ever sees
+                        sealed traffic. Pair again after setting it.
+                    </TextBlock>
+                    <TextBlock Text="Supabase project URL" Style="{StaticResource Hint}" Margin="0,0,0,3" />
+                    <TextBox Style="{StaticResource FlatInput}" Text="{Binding RelayUrl}" />
+                    <TextBlock Text="Publishable key" Style="{StaticResource Hint}" Margin="0,8,0,3" />
+                    <TextBox Style="{StaticResource FlatInput}" Text="{Binding RelayKey}" />
 
                     <Button Content="Pair a device..." Click="OnPairPhoneClick" HorizontalAlignment="Left"
                             Margin="0,12,0,0" Style="{StaticResource ReportButton}"
