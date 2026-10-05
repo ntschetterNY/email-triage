@@ -240,6 +240,92 @@ public class CompanionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Thread_lists_only_the_newest_messages_attachments()
+    {
+        MailBody Body(string id, int minutesAgo, params MailAttachment[] files) => new()
+        {
+            Ref = new MailRef(id, "store"),
+            Subject = "Plans",
+            SenderName = "Alice",
+            SenderAddress = "alice@corp.com",
+            ReceivedUtc = _clock.UtcNow.AddMinutes(-minutesAgo),
+            Html = "<p>See attached</p>",
+            Attachments = files,
+        };
+        _store.Bodies["new"] = Body("new", 1, new MailAttachment(1, "plan-v2.pdf", 2048), new MailAttachment(2, "setup.exe", 10));
+        _store.Bodies["old"] = Body("old", 60, new MailAttachment(1, "plan-v1.pdf", 1024));
+
+        var page = await _service.GetThreadAsync(new ThreadRequest(
+            new[] { new RefDto("new", "store"), new RefDto("old", "store") }));
+
+        Assert.Equal(new[] { "plan-v2.pdf", "setup.exe" }, page.Attachments!.Select(a => a.Name));
+        Assert.All(page.Attachments!, a => Assert.Equal("new", a.Message.E));
+        Assert.Equal(new[] { false, true }, page.Attachments!.Select(a => a.Blocked));
+    }
+
+    [Fact]
+    public async Task Attachment_comes_back_as_base64_and_programs_stay_on_the_pc()
+    {
+        Directory.CreateDirectory(_images);
+        var pdf = Path.Combine(_images, "plan.pdf");
+        File.WriteAllBytes(pdf, new byte[] { 0x25, 0x50, 0x44, 0x46 });
+        var exe = Path.Combine(_images, "setup.exe");
+        File.WriteAllBytes(exe, new byte[] { 0x4d, 0x5a });
+        _store.AttachmentFiles[("m1", 1)] = pdf;
+        _store.AttachmentFiles[("m1", 2)] = exe;
+
+        var file = await _service.GetAttachmentAsync(new AttachmentRequest(new RefDto("m1", "store"), 1));
+
+        Assert.Equal("plan.pdf", file.Name);
+        Assert.Equal("application/pdf", file.ContentType);
+        Assert.Equal(new byte[] { 0x25, 0x50, 0x44, 0x46 }, Convert.FromBase64String(file.Data));
+
+        var blocked = await Assert.ThrowsAsync<CompanionException>(() =>
+            _service.GetAttachmentAsync(new AttachmentRequest(new RefDto("m1", "store"), 2)));
+        Assert.Equal(403, blocked.Status);
+
+        var missing = await Assert.ThrowsAsync<CompanionException>(() =>
+            _service.GetAttachmentAsync(new AttachmentRequest(new RefDto("m1", "store"), 9)));
+        Assert.Equal(404, missing.Status);
+    }
+
+    [Fact]
+    public async Task Feedback_goes_to_the_pcs_lavish_trimmed_and_needs_words()
+    {
+        var feedback = new RecordingFeedback();
+        var service = new CompanionService(_store, _snoozes, _actions,
+            new FolderSearchService(_store, new FakeFolderUsage(), _clock), _clock, () => new CompanionOptions(), feedback);
+
+        var result = await service.SendFeedbackAsync(new FeedbackRequest("  Move should focus search  ", "Move", null, "iPad · iPadOS 18.1", "1.0"));
+
+        Assert.True(result.Filed);
+        Assert.Equal("Move should focus search", Assert.Single(feedback.Sent).Comment);
+
+        var empty = await Assert.ThrowsAsync<CompanionException>(() =>
+            service.SendFeedbackAsync(new FeedbackRequest("   ", "Inbox", null, "iPhone", "1.0")));
+        Assert.Equal(400, empty.Status);
+
+        var unsupported = await Assert.ThrowsAsync<CompanionException>(() =>
+            _service.SendFeedbackAsync(new FeedbackRequest("Hi", "Inbox", null, "iPhone", "1.0")));
+        Assert.Equal(501, unsupported.Status);
+        Assert.Empty(await _service.ListFeedbackAsync());
+    }
+
+    private sealed class RecordingFeedback : ICompanionFeedback
+    {
+        public List<FeedbackRequest> Sent { get; } = new();
+
+        public Task<FeedbackResultDto> SendAsync(FeedbackRequest request, CancellationToken ct)
+        {
+            Sent.Add(request);
+            return Task.FromResult(new FeedbackResultDto(true, 7, "https://github.com/o/r/issues/7", "Filed #7 on GitHub."));
+        }
+
+        public Task<IReadOnlyList<FeedbackNoteDto>> ListAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<FeedbackNoteDto>>(Array.Empty<FeedbackNoteDto>());
+    }
+
+    [Fact]
     public async Task Thread_with_nothing_readable_is_not_found()
     {
         var ex = await Assert.ThrowsAsync<CompanionException>(() =>

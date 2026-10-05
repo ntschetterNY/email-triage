@@ -71,6 +71,30 @@ final class CompanionClient: NSObject, URLSessionDelegate {
         try await call("POST", "/api/thread", body: ThreadBody(refs: refs, dark: dark))
     }
 
+    /// One attachment, saved to a temporary file named as it was sent, for Quick Look.
+    func attachment(_ attachment: Attachment) async throws -> URL {
+        let file: AttachmentFile = try await call(
+            "POST", "/api/attachment", body: AttachmentBody(message: attachment.message, index: attachment.index))
+        guard let data = Data(base64Encoded: file.data) else {
+            throw CompanionError.server(status: 0, message: "\(file.name) came through damaged. Try again.")
+        }
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("attachments", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = (file.name as NSString).lastPathComponent
+        let url = folder.appendingPathComponent(name.isEmpty ? "attachment" : name)
+        try data.write(to: url, options: .completeFileProtection)
+        return url
+    }
+
+    func sendFeedback(comment: String, screen: String, detail: String?, device: String, appVersion: String) async throws -> FeedbackResult {
+        try await call("POST", "/api/feedback", body: FeedbackBody(
+            comment: comment, screen: screen, detail: detail, device: device, appVersion: appVersion))
+    }
+
+    func feedbackNotes() async throws -> [FeedbackNote] { try await call("GET", "/api/feedback") }
+
     @discardableResult
     func archive(_ refs: [Ref]) async throws -> Done {
         try await call("POST", "/api/archive", body: RefsBody(refs: refs))
@@ -254,6 +278,14 @@ final class CompanionClient: NSObject, URLSessionDelegate {
 
 private struct RefsBody: Encodable { let refs: [Ref] }
 private struct ThreadBody: Encodable { let refs: [Ref]; let dark: Bool }
+private struct AttachmentBody: Encodable { let message: Ref; let index: Int }
+private struct FeedbackBody: Encodable {
+    let comment: String
+    let screen: String
+    let detail: String?
+    let device: String
+    let appVersion: String
+}
 private struct MoveBody: Encodable { let refs: [Ref]; let folder: Folder }
 private struct SnoozeBody: Encodable { let refs: [Ref]; let when: Date }
 private struct ReadBody: Encodable { let refs: [Ref]; let read: Bool }

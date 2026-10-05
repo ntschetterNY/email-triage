@@ -13,6 +13,7 @@ struct InboxView: View {
     @State private var snoozing: Conversation?
     @State private var moving: Conversation?
     @State private var confirmUnpair = false
+    @State private var givingFeedback = false
     /// Both columns, always: left to itself an iPad in portrait hides the
     /// list behind a sidebar button and shows only the empty reading pane.
     @State private var columns = NavigationSplitViewVisibility.all
@@ -66,6 +67,9 @@ struct InboxView: View {
                 leave(c)
                 Task { await model.move(c, to: folder) }
             }
+        }
+        .sheet(isPresented: $givingFeedback) {
+            FeedbackSheet(client: model.client, screen: selected == nil ? .inbox : .conversation)
         }
         .confirmationDialog("Unpair from \(state.pairing?.pcName ?? "the PC")?", isPresented: $confirmUnpair, titleVisibility: .visible) {
             Button("Unpair", role: .destructive) { state.unpair() }
@@ -152,6 +156,10 @@ struct InboxView: View {
             Menu {
                 Toggle(isOn: $model.showUnreadOnly) {
                     Label("Unread only", systemImage: "envelope.badge")
+                }
+                Divider()
+                Button("Send feedback...", systemImage: "exclamationmark.bubble") {
+                    givingFeedback = true
                 }
                 Divider()
                 if let pc = state.pairing?.pcName {

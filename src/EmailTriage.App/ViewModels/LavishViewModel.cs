@@ -142,33 +142,14 @@ public sealed partial class LavishViewModel : ObservableObject
         IsSending = true;
         try
         {
-            var github = await _connection.ConnectAsync();
-            string? problem = null;
-            if (github.CanFile)
-            {
-                try
-                {
-                    var (number, url) = await github.CreateAsync(title, body);
-                    note.IssueNumber = number;
-                    note.IssueUrl = url;
-                    note.Stage = LavishStage.Filed;
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-                {
-                    _connection.ForgetToken();
-                    problem = ex is TaskCanceledException ? "GitHub did not answer in time" : ex.Message;
-                }
-            }
-
+            var problem = await FileAsync(note, title, body);
             if (note.IssueNumber is null)
             {
                 // No token, or GitHub said no: the form, filled in, in the browser.
                 Open(LavishIssue.NewIssueUrl(_connection.Repo, title, body));
             }
 
-            _notes.Insert(0, note);
-            Save();
-            Rebuild();
+            Keep(note);
             Cancel();
             NoteSent?.Invoke(this, note);
 
@@ -186,6 +167,60 @@ public sealed partial class LavishViewModel : ObservableObject
         {
             IsSending = false;
         }
+    }
+
+    /// <summary>
+    /// A note from the iPhone or iPad, through the companion. Filed the same
+    /// way and kept in the same panel; without a token the filled-in form goes
+    /// back to the device to submit there, rather than opening on the PC.
+    /// Returns the new note, the form's link when it wasn't filed, and why not.
+    /// </summary>
+    public async Task<(LavishNote Note, string? FormUrl, string? Problem)> SendFromDeviceAsync(
+        string comment, LavishTarget target, string version, string os)
+    {
+        var note = new LavishNote { Comment = comment.Trim(), Target = target };
+        var title = LavishIssue.Title(note.Comment);
+        var body = LavishIssue.Body(note, version, os);
+
+        var problem = await FileAsync(note, title, body);
+        Keep(note);
+        Status = note.IssueNumber is { } n ? $"Filed #{n} from {target.Area}." : $"A note from {target.Area} is waiting to be submitted there.";
+        return (note, note.IssueNumber is null ? LavishIssue.NewIssueUrl(_connection.Repo, title, body) : null, problem);
+    }
+
+    /// <summary>Every note, newest first, for the device's list.</summary>
+    public IReadOnlyList<LavishNote> All => _notes.ToList();
+
+    /// <summary>Reads progress back unless that was done in the last minute.</summary>
+    public Task RefreshIfStaleAsync() =>
+        DateTimeOffset.Now - _refreshedAt > RefreshEvery ? RefreshAsync() : Task.CompletedTask;
+
+    /// <summary>Files the note on GitHub when there is a token. Returns why it wasn't filed, when it was tried and failed.</summary>
+    private async Task<string?> FileAsync(LavishNote note, string title, string body)
+    {
+        var github = await _connection.ConnectAsync();
+        if (!github.CanFile) return null;
+
+        try
+        {
+            var (number, url) = await github.CreateAsync(title, body);
+            note.IssueNumber = number;
+            note.IssueUrl = url;
+            note.Stage = LavishStage.Filed;
+            return null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _connection.ForgetToken();
+            return ex is TaskCanceledException ? "GitHub did not answer in time" : ex.Message;
+        }
+    }
+
+    private void Keep(LavishNote note)
+    {
+        _notes.Insert(0, note);
+        Save();
+        Rebuild();
     }
 
     /// <summary>Reads each note's progress back from GitHub.</summary>

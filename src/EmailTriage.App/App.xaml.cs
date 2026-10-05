@@ -157,7 +157,8 @@ public partial class App : Application
                 InlineImageFolder = OutlookMailStore.DefaultInlineImageFolder,
                 PcName = Environment.MachineName,
                 Version = AppUpdater.DisplayVersion,
-            }));
+            },
+            new PhoneFeedback(sp.GetRequiredService<LavishViewModel>())));
         services.AddSingleton<PhoneCompanion>();
 
         services.AddSingleton<TriageViewModel>();
