@@ -208,8 +208,13 @@ public sealed class FakeMailStore : IMailStore
     public Task<FolderRef> GetSentItemsAsync(CancellationToken ct = default)
         => Task.FromResult(new FolderRef("sent", "store", "Mailbox\\Sent Items"));
 
+    /// <summary>Where SaveAttachmentAsync says each (EntryId, index) was saved.</summary>
+    public Dictionary<(string EntryId, int Index), string> AttachmentFiles { get; } = new();
+
     public Task<string> SaveAttachmentAsync(MailRef mail, int index, CancellationToken ct = default)
-        => throw new NotSupportedException("Not exercised by these tests.");
+        => AttachmentFiles.TryGetValue((mail.EntryId, index), out var path)
+            ? Task.FromResult(path)
+            : throw new InvalidOperationException("No such attachment.");
 
     public List<ContactEntry> FrequentContacts { get; } = new();
     public List<ContactEntry> Directory { get; } = new();

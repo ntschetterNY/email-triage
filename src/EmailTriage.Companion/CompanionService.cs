@@ -36,12 +36,22 @@ public sealed partial class CompanionService
     /// <summary>Most a single embedded image may add to a page, before base64.</summary>
     private const int MaxInlineImageBytes = 4 * 1024 * 1024;
 
+    /// <summary>
+    /// Most an attachment sent to the device may be. Base64 in JSON, wrapped
+    /// again for the relay, it has to fit the relay's 32 MB with room to spare.
+    /// </summary>
+    public const int MaxAttachmentBytes = 10 * 1024 * 1024;
+
+    /// <summary>Longest note the device may send; GitHub's issue form link holds little more.</summary>
+    private const int MaxFeedbackLength = 4000;
+
     private readonly IMailStore _store;
     private readonly ISnoozeRepository _snoozes;
     private readonly IActionItemRepository _actions;
     private readonly FolderSearchService _folders;
     private readonly IClock _clock;
     private readonly Func<CompanionOptions> _options;
+    private readonly ICompanionFeedback? _feedback;
 
     /// <summary>
     /// The Inbox messages the phone was last sent, by EntryId: snooze and flag
@@ -55,7 +65,8 @@ public sealed partial class CompanionService
         IActionItemRepository actions,
         FolderSearchService folders,
         IClock clock,
-        Func<CompanionOptions> options)
+        Func<CompanionOptions> options,
+        ICompanionFeedback? feedback = null)
     {
         _store = store;
         _snoozes = snoozes;
@@ -63,6 +74,7 @@ public sealed partial class CompanionService
         _folders = folders;
         _clock = clock;
         _options = options;
+        _feedback = feedback;
     }
 
     public HelloDto Hello()
@@ -139,8 +151,57 @@ public sealed partial class CompanionService
 
         var hidden = request.Refs.Count - bodies.Count;
         var html = HtmlPresenter.RenderThread(bodies, o.BlockRemoteImages, hidden, request.Dark);
-        return new ThreadPageDto(EmbedInlineImages(html, o.InlineImageFolder), bodies.Count, hidden);
+        return new ThreadPageDto(EmbedInlineImages(html, o.InlineImageFolder), bodies.Count, hidden, LatestAttachments(bodies[0]));
     }
+
+    /// <summary>
+    /// The newest message's files only: a long thread repeats the same
+    /// attachment on every forward, and the latest is the one that matters.
+    /// </summary>
+    public static IReadOnlyList<AttachmentDto> LatestAttachments(MailBody newest) =>
+        newest.Attachments
+            .Select(a => new AttachmentDto(RefDto.From(newest.Ref), a.Index, a.Name, a.Size, a.IsBlockedType))
+            .ToList();
+
+    /// <summary>One attachment's bytes, to open on the device. Programs and scripts stay on the PC, as Outlook keeps them.</summary>
+    public async Task<AttachmentFileDto> GetAttachmentAsync(AttachmentRequest request, CancellationToken ct = default)
+    {
+        if (request.Message is null || string.IsNullOrEmpty(request.Message.E) || request.Index < 1)
+            throw new CompanionException(400, "No attachment given.");
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+
+        string path;
+        try { path = await _store.SaveAttachmentAsync(request.Message.ToRef(), request.Index, ct).ConfigureAwait(false); }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            throw new CompanionException(404, $"That attachment could not be opened: {ex.Message}");
+        }
+
+        var name = Path.GetFileName(path);
+        if (new MailAttachment(request.Index, name, 0).IsBlockedType)
+            throw new CompanionException(403, $"{name} is a program or script. Open it in Outlook on the PC.");
+
+        var file = new FileInfo(path);
+        if (file.Length > MaxAttachmentBytes)
+            throw new CompanionException(413, $"{name} is {MailAttachment.FormatSize(file.Length)}, too big to send to the device. Open it on the PC.");
+
+        var bytes = await File.ReadAllBytesAsync(path, ct).ConfigureAwait(false);
+        return new AttachmentFileDto(name, ContentType(name), Convert.ToBase64String(bytes));
+    }
+
+    /// <summary>A Lavish note from the device, filed on GitHub by the PC.</summary>
+    public async Task<FeedbackResultDto> SendFeedbackAsync(FeedbackRequest request, CancellationToken ct = default)
+    {
+        if (_feedback is null) throw new CompanionException(501, "This PC's Email Triage can't take feedback from the device. Update it.");
+        if (string.IsNullOrWhiteSpace(request.Comment)) throw new CompanionException(400, "Say what should change.");
+        if (request.Comment.Length > MaxFeedbackLength)
+            throw new CompanionException(400, $"Keep it under {MaxFeedbackLength} characters.");
+
+        return await _feedback.SendAsync(request with { Comment = request.Comment.Trim() }, ct).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<FeedbackNoteDto>> ListFeedbackAsync(CancellationToken ct = default) =>
+        _feedback is null ? [] : await _feedback.ListAsync(ct).ConfigureAwait(false);
 
     public async Task<int> ArchiveAsync(RefsRequest request, CancellationToken ct = default)
     {
@@ -419,6 +480,24 @@ public sealed partial class CompanionService
             }
         });
     }
+
+    private static string ContentType(string name) => Path.GetExtension(name).ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".txt" or ".log" => "text/plain",
+        ".csv" => "text/csv",
+        ".doc" => "application/msword",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xls" => "application/vnd.ms-excel",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".ppt" => "application/vnd.ms-powerpoint",
+        ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".zip" => "application/zip",
+        ".eml" => "message/rfc822",
+        ".ics" => "text/calendar",
+        ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".svg" => ImageType(name),
+        _ => "application/octet-stream",
+    };
 
     private static string ImageType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {

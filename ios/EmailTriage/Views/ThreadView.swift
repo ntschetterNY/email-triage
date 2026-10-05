@@ -3,7 +3,8 @@ import SwiftUI
 /// One conversation, rendered on the PC exactly as the desktop reading pane
 /// shows it, with the triage moves along the bottom. With a hardware
 /// keyboard (iPad) the desktop's keys work: e archive, h snooze, v move,
-/// a flag, r reply all, Shift+R reply to sender, j / k next and previous.
+/// a flag, r reply all, Shift+R reply to sender, j / k next and previous,
+/// Cmd+Shift+L feedback.
 struct ThreadView: View {
     let model: InboxModel
     let conversation: Conversation
@@ -20,6 +21,7 @@ struct ThreadView: View {
     @State private var snoozing = false
     @State private var moving = false
     @State private var replying: ReplyMode?
+    @State private var givingFeedback = false
 
     init(model: InboxModel, conversation: Conversation,
          onLeave: @escaping () -> Void = {}, onStep: @escaping (Int) -> Void = { _ in }) {
@@ -35,6 +37,15 @@ struct ThreadView: View {
             .navigationTitle(conversation.displaySubject)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { bottomBar }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        givingFeedback = true
+                    } label: {
+                        Label("Feedback", systemImage: "exclamationmark.bubble")
+                    }
+                }
+            }
             .background { keyboardShortcuts }
             .task(id: colorScheme) { await load() }
             .sheet(isPresented: $snoozing) {
@@ -49,6 +60,9 @@ struct ThreadView: View {
                     leave { await model.move(conversation, to: folder) }
                 }
             }
+            .sheet(isPresented: $givingFeedback) {
+                FeedbackSheet(client: model.client, screen: .conversation)
+            }
             .sheet(item: $replying) { mode in
                 ReplySheet(model: model, conversation: conversation, senderOnly: mode == .sender) { archived in
                     replying = nil
@@ -62,6 +76,12 @@ struct ThreadView: View {
         if let page {
             MailWebView(html: page.html)
                 .ignoresSafeArea(edges: .bottom)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let files = page.attachments, !files.isEmpty {
+                        AttachmentStrip(client: model.client, attachments: files)
+                            .id(conversation.key)
+                    }
+                }
         } else if let loadError {
             ContentUnavailableView {
                 Label("Can't open this conversation", systemImage: "envelope.badge.shield.half.filled")
@@ -164,6 +184,8 @@ struct ThreadView: View {
                 .keyboardShortcut("j", modifiers: [])
             Button("Previous") { onStep(-1) }
                 .keyboardShortcut("k", modifiers: [])
+            Button("Feedback") { givingFeedback = true }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
         }
         .opacity(0)
         .accessibilityHidden(true)

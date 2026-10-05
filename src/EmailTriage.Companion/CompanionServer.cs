@@ -132,6 +132,7 @@ public sealed class CompanionServer : IAsyncDisposable
         api.MapGet("/hello", () => s.Hello());
         api.MapGet("/inbox", (CancellationToken ct) => s.GetInboxAsync(ct));
         api.MapPost("/thread", (ThreadRequest r, CancellationToken ct) => s.GetThreadAsync(r, ct));
+        api.MapPost("/attachment", (AttachmentRequest r, CancellationToken ct) => s.GetAttachmentAsync(r, ct));
         api.MapPost("/archive", async (RefsRequest r, CancellationToken ct) => new { done = await s.ArchiveAsync(r, ct) });
         api.MapPost("/move", async (MoveRequest r, CancellationToken ct) => new { done = await s.MoveAsync(r, ct) });
         api.MapGet("/folders", (string? q, CancellationToken ct) => s.SearchFoldersAsync(q, ct));
@@ -145,6 +146,8 @@ public sealed class CompanionServer : IAsyncDisposable
         api.MapPost("/read", async (ReadRequest r, CancellationToken ct) => { await s.SetReadAsync(r, ct); return Results.NoContent(); });
         api.MapPost("/flag", async (FlagRequest r, CancellationToken ct) => { await s.SetFlagAsync(r, ct); return Results.NoContent(); });
         api.MapPost("/reply", async (ReplyRequest r, CancellationToken ct) => { await s.ReplyAsync(r, ct); return Results.NoContent(); });
+        api.MapPost("/feedback", (FeedbackRequest r, CancellationToken ct) => s.SendFeedbackAsync(r, ct));
+        api.MapGet("/feedback", (CancellationToken ct) => s.ListFeedbackAsync(ct));
     }
 
     /// <summary>The addresses to put in the pairing link.</summary>

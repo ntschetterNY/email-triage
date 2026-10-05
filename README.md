@@ -594,8 +594,19 @@ On iPad the list sits beside the open conversation, and with a keyboard the
 same keys work. The app does what the desktop's main keys do: archive (`e`), snooze (`h`, with the
 same presets and typed times), move (`v`, most-used folders first), flag (`a`, without
 the details popup), mark read and unread, and reply or reply-all with the text on
-top of Outlook's own quoted history and signature. Composing new mail, attachments,
-the calendar, the action board and AI drafts are desktop-only for now.
+top of Outlook's own quoted history and signature. The newest message's attachments
+show above the conversation; tapping one fetches it from the PC (up to 10 MB) and opens
+it in Quick Look. Programs and scripts stay on the PC, as Outlook keeps them. Composing
+new mail, sending attachments, the calendar, the action board and AI drafts are
+desktop-only for now.
+
+**Feedback from the device.** *Send feedback...* in the inbox menu, the bubble at the top of
+a conversation, or `Cmd+Shift+L` on an iPad keyboard opens a Lavish note: pick the screen
+it's about and say what should change. The PC files it with its own GitHub sign-in, the
+same as a desktop note, and it shows in the desktop's Lavish panel. If the PC isn't
+signed in, GitHub's form opens on the device, filled in, to submit there. The sheet lists
+the notes sent so far and how far each has got. Only the comment, the screen's name and
+the app and OS versions are sent, never mail.
 
 The port is `47821`. Change it with `PhoneCompanionPort` in `settings.json` if
 something else uses it. The relay is `PhoneRelayUrl` and `PhoneRelayKey` there. Building the app is covered in

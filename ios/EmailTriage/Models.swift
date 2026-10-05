@@ -45,6 +45,95 @@ struct ThreadPage: Codable {
     let html: String
     let shown: Int
     let hidden: Int
+    /// The newest message's files. Older PCs don't send it.
+    let attachments: [Attachment]?
+}
+
+/// A file on the newest message. `index` is Outlook's position on `message`.
+struct Attachment: Codable, Identifiable, Hashable {
+    let message: Ref
+    let index: Int
+    let name: String
+    let size: Int64
+    /// A program or script, which stays on the PC as Outlook keeps it.
+    let blocked: Bool
+
+    var id: String { "\(message.e)#\(index)" }
+
+    var sizeText: String {
+        size > 0 ? ByteCountFormatter.string(fromByteCount: size, countStyle: .file) : ""
+    }
+
+    var symbol: String {
+        switch (name as NSString).pathExtension.lowercased() {
+        case "pdf": return "doc.richtext"
+        case "png", "jpg", "jpeg", "gif", "heic", "bmp", "webp": return "photo"
+        case "xls", "xlsx", "csv": return "tablecells"
+        case "doc", "docx", "txt", "rtf": return "doc.text"
+        case "ppt", "pptx": return "rectangle.on.rectangle"
+        case "zip": return "doc.zipper"
+        case "ics": return "calendar"
+        default: return blocked ? "exclamationmark.shield" : "paperclip"
+        }
+    }
+}
+
+struct AttachmentFile: Codable {
+    let name: String
+    let contentType: String
+    /// The file, base64.
+    let data: String
+}
+
+/// What became of a feedback note: filed on GitHub, or a filled-in form to submit there.
+struct FeedbackResult: Codable {
+    let filed: Bool
+    let number: Int?
+    let url: String
+    let message: String
+}
+
+/// A Lavish note in the PC's log, and how far it has got.
+struct FeedbackNote: Codable, Identifiable, Hashable {
+    let comment: String
+    /// "iPad app › Move to folder", or the desktop element it was about.
+    let location: String
+    let number: Int?
+    let url: String?
+    /// "draft", "filed", "branch", "inReview", "merged", "released" or "declined".
+    let stage: String
+    let createdAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case comment, location = "where", number, url, stage, createdAt
+    }
+
+    var id: String { "\(number ?? -1)@\(createdAt.timeIntervalSince1970)" }
+
+    var stageText: String {
+        switch stage {
+        case "draft": return "Not submitted"
+        case "filed": return "Filed"
+        case "branch": return "Branch"
+        case "inReview": return "Pull request"
+        case "merged": return "Merged"
+        case "released": return "Released"
+        case "declined": return "Closed"
+        default: return stage
+        }
+    }
+
+    /// Filed, Branch, PR, Merged, Released: how many of the five it has reached.
+    var stepsReached: Int {
+        switch stage {
+        case "filed": return 1
+        case "branch": return 2
+        case "inReview": return 3
+        case "merged": return 4
+        case "released": return 5
+        default: return 0
+        }
+    }
 }
 
 struct Folder: Codable, Identifiable, Hashable {

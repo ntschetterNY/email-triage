@@ -57,6 +57,7 @@ a conversation is open:
 | `a` | Flag or unflag |
 | `r` | Reply all |
 | `Shift+R` | Reply to sender |
+| `⌘⇧L` | Send feedback |
 
 Hold ⌘ to see them listed. The app also works in Split View and Slide Over.
 
@@ -69,6 +70,13 @@ Hold ⌘ to see them listed. The app also works in Split View and Slide Over.
   sender*.
 - **Pull down** to refresh. The list also refreshes whenever you come back to the app.
 - **Long-press** a conversation to mark it read or unread.
+- **Attachments** on the newest message sit above the conversation. Tap one to open it
+  in Quick Look, where you can also share or save it.
+- **Move** puts the keyboard straight in the folder search. Type a few letters and
+  press Return (or Go) to move to the top match.
+- **Feedback**: *Send feedback...* in the filter menu, or the bubble at the top of a
+  conversation. Say what should change and the PC files it on GitHub, as the
+  desktop's Lavish button does. The sheet shows each note's progress.
 
 The filter button at the top right shows unread mail only, and has **Unpair**.
 
@@ -95,7 +103,7 @@ The filter button at the top right shows unread mail only, and has **Unpair**.
 | `CompanionClient.swift` | HTTPS calls to the PC, certificate pinning, trying each PC address and then the relay |
 | `Relay.swift` | The relay: a Supabase Realtime channel, every call sealed with AES-GCM under the pairing code's key |
 | `InboxModel.swift` | The list and every triage move; a move shows at once and is undone if the PC refuses it |
-| `Views/` | Inbox (a split view on iPad), thread, snooze, move, reply, pairing and QR scanner screens |
+| `Views/` | Inbox (a split view on iPad), thread and its attachments, snooze, move, reply, feedback, pairing and QR scanner screens |
 
 The API it talks to is `src/EmailTriage.Companion`. The `iOS` GitHub workflow builds
 the app for the simulator on every change under `ios/`.
