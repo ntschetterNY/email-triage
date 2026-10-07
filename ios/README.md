@@ -7,14 +7,23 @@ registration. How the PC side works and how it's secured is in the main
 
 ## What you need
 
-- A Mac with **Xcode 16 or later**. Apple only lets iOS apps be built on a Mac.
-- An **Apple ID**. A free one works, but Apple makes apps installed that way stop
-  opening after **7 days**. Plug the device in and press Run again to renew it. A paid
-  Apple Developer Program membership ($99/yr) makes it last a year and lets you
-  share the app through TestFlight.
-- An iPhone or iPad on **iOS / iPadOS 17** or later, on the same Wi-Fi as the PC.
+There are two ways to get the app onto a device:
 
-## Install it on your iPhone or iPad
+- **TestFlight (recommended).** GitHub builds the app on every change and TestFlight
+  installs it on your iPhone and iPad by itself. No Mac or cable needed after the
+  one-time set-up. Needs the paid **Apple Developer Program** ($99/yr). See
+  [Updates through TestFlight](#updates-through-testflight).
+- **From Xcode.** Needs a Mac with **Xcode 16 or later** and an **Apple ID**. A free
+  Apple ID works, but Apple makes apps installed that way stop opening after **7 days**.
+  Plug the device in and press Run again to renew it.
+
+Either way, the iPhone or iPad needs **iOS / iPadOS 17** or later.
+
+Updating the desktop app never needs a new build on the device. The app only talks to
+the PC's companion API, so it gets new behavior as soon as the PC updates. A new build
+is only needed when something under `ios/` changes.
+
+## Install it from Xcode
 
 1. Open `ios/EmailTriage.xcodeproj` in Xcode.
 2. Select the **EmailTriage** target › **Signing & Capabilities**, tick *Automatically
@@ -30,6 +39,88 @@ registration. How the PC side works and how it's secured is in the main
 6. Press **Run** (⌘R). If iOS says the developer is untrusted, go to Settings ›
    General › VPN & Device Management, tap your Apple ID and choose **Trust**. To use
    both an iPhone and an iPad, install it on each one.
+
+## Updates through TestFlight
+
+Every push to `main` that touches `ios/` runs the `iOS` workflow. It builds the app,
+signs it, uploads it to App Store Connect and numbers the build after the workflow
+run. TestFlight then installs it on each device with *Automatic Updates* on, usually
+10–30 minutes after the merge. Builds for yourself as an internal tester skip App Review.
+
+### One-time set-up
+
+Everything is done in a browser. Only step 4 uses a terminal, and any machine with
+`openssl` will do (Linux, macOS, or Git Bash on Windows).
+
+1. **Join** the [Apple Developer Program](https://developer.apple.com/programs/enroll/).
+   Approval can take a day or two.
+2. **Register the app ID.** In [Certificates, Identifiers &
+   Profiles](https://developer.apple.com/account/resources/identifiers/list), add
+   an *App ID* of type *App* with the explicit bundle ID
+   `io.github.ntschetterny.emailtriage`. Leave every capability off.
+3. **Create the app.** In [App Store Connect](https://appstoreconnect.apple.com/apps),
+   go to **+** › *New App*, choose iOS, pick that bundle ID, and enter any SKU. The
+   name has to be unique across the App Store, so if *Email Triage* is taken, add a
+   word. Only you see it in TestFlight.
+4. **Create a distribution certificate.** Make a key and a signing request:
+
+   ```sh
+   openssl genrsa -out dist.key 2048
+   openssl req -new -key dist.key -out dist.csr -subj "/CN=Email Triage/emailAddress=you@example.com"
+   ```
+
+   Under *Certificates*, add an **Apple Distribution** certificate and upload `dist.csr`.
+   Download `distribution.cer`, then bundle it with the key:
+
+   ```sh
+   openssl x509 -inform DER -in distribution.cer -out dist.pem
+   openssl pkcs12 -export -legacy -inkey dist.key -in dist.pem -out dist.p12 -passout pass:CHOOSE-A-PASSWORD
+   ```
+
+   If your `openssl` is older than 3.0, leave out `-legacy`.
+5. **Create the profile.** Under *Profiles*, add an **App Store Connect** distribution
+   profile for the app ID and the certificate. Name it, for example,
+   *Email Triage App Store*, and download it.
+6. **Create an API key.** In App Store Connect, go to *Users and Access* ›
+   *Integrations* › *App Store Connect API* › *Team Keys*, and add a key with the
+   **App Manager** role. Download the `.p8` file, which Apple offers only once, and
+   note its *Key ID* and the *Issuer ID* shown above the list.
+7. **Add the GitHub secrets.** Your Team ID is under *Membership details* on
+   developer.apple.com.
+
+   ```sh
+   gh secret set APPLE_TEAM_ID --body "ABCDE12345"
+   gh secret set ASC_KEY_ID --body "KEYID12345"
+   gh secret set ASC_ISSUER_ID --body "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+   gh secret set ASC_KEY_P8 < AuthKey_KEYID12345.p8
+   base64 -w0 dist.p12 | gh secret set IOS_DIST_CERT_P12
+   gh secret set IOS_DIST_CERT_PASSWORD --body "CHOOSE-A-PASSWORD"
+   base64 -w0 Email_Triage_App_Store.mobileprovision | gh secret set IOS_APPSTORE_PROFILE
+   ```
+
+   On macOS, use `base64 -i FILE` in place of `base64 -w0 FILE`. Then delete the local
+   copies of `dist.key`, `dist.p12` and the `.p8` file, or keep them somewhere safe.
+8. **Start the first build.** Under *Actions* › *iOS*, choose *Run workflow* on `main`.
+9. **Add yourself as a tester.** When the build appears in App Store Connect ›
+   *TestFlight*, make an *Internal Testing* group, add yourself, and turn on automatic
+   distribution so every new build goes to the group.
+10. **Install TestFlight** from the App Store on each iPhone and iPad. Accept the
+    invitation, install Email Triage, and in TestFlight's page for the app, turn on
+    **Automatic Updates**.
+
+If the app was installed from Xcode before, TestFlight replaces it. If it was signed
+with a free Apple ID, which is a different team, iOS keeps the old pairing out of
+reach, so pair once more.
+
+### Keeping it going
+
+- Until all seven secrets are set, the workflow only builds for the simulator and
+  notes why it skipped the upload.
+- The certificate and profile last a year. When they expire, repeat steps 4, 5 and 7.
+- TestFlight builds expire after 90 days. Any change under `ios/`, or running the
+  workflow by hand, starts a new 90 days.
+- Raise `MARKETING_VERSION` in the Xcode project when you want the visible version
+  to change. The build number takes care of itself.
 
 ## Pair it with the PC
 
@@ -106,4 +197,5 @@ The filter button at the top right shows unread mail only, and has **Unpair**.
 | `Views/` | Inbox (a split view on iPad), thread and its attachments, snooze, move, reply, feedback, pairing and QR scanner screens |
 
 The API it talks to is `src/EmailTriage.Companion`. The `iOS` GitHub workflow builds
-the app for the simulator on every change under `ios/`.
+the app for the simulator on every change under `ios/`, and on `main` uploads it to
+TestFlight.
