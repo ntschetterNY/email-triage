@@ -609,7 +609,7 @@ the notes sent so far and how far each has got. Only the comment, the screen's n
 the app and OS versions are sent, never mail.
 
 The port is `47821`. Change it with `PhoneCompanionPort` in `settings.json` if
-something else uses it. The relay is `PhoneRelayUrl` and `PhoneRelayKey` there. Building the app is covered in
+something else uses it. The relay is `PhoneRelayUrl` and `PhoneRelayKey` there. Building the app, and having GitHub update it through TestFlight, is covered in
 [`ios/README.md`](ios/README.md).
 
 ### Identity
