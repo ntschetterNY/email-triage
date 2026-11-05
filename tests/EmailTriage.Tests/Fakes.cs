@@ -137,6 +137,9 @@ public sealed class FakeMailStore : IMailStore
     /// <summary>Replies built and sent: what each answered, how, and the HTML sent.</summary>
     public List<(MailRef InReplyTo, ReplyScope Scope)> RepliesBuilt { get; } = new();
     public List<(string Draft, string Html)> RepliesSent { get; } = new();
+
+    /// <summary>The overrides each send carried, in the same order as <see cref="RepliesSent"/>.</summary>
+    public List<RecipientOverrides?> ReplyOverrides { get; } = new();
     public List<string> DraftsDiscarded { get; } = new();
 
     public Task<ReplyDraft> BuildReplyAsync(
@@ -162,6 +165,7 @@ public sealed class FakeMailStore : IMailStore
     {
         if (NextSendFailure is { } fail) { NextSendFailure = null; throw fail; }
         RepliesSent.Add((draft.EntryId, bodyHtml));
+        ReplyOverrides.Add(recipients);
         return Task.CompletedTask;
     }
 

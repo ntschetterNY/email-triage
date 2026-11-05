@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using EmailTriage.App.Services;
 using EmailTriage.Core.Abstractions;
+using EmailTriage.Core.Models;
 using EmailTriage.Core.Services;
 
 namespace EmailTriage.App.ViewModels;
@@ -25,10 +26,14 @@ public sealed partial class FolderPlanRow : ObservableObject
 /// <summary>A model on offer in a picker; an empty value means "use AiModel".</summary>
 public sealed record ModelChoice(string Label, string Value);
 
+/// <summary>A signature on offer in a picker; the value is what settings.json keeps.</summary>
+public sealed record SignatureChoice(string Label, string Value);
+
 /// <summary>
-/// The Settings page: which model follow-up chases run on, how folders are named, how those names nest, and
-/// reorganizing the folders already in Outlook to match. Edits apply to the
-/// shared <see cref="AppSettings"/> only on Save.
+/// The Settings page: which model follow-up chases run on, which of Outlook's
+/// signatures mail goes out with, how folders are named, how those names nest,
+/// and reorganizing the folders already in Outlook to match. Edits apply to
+/// the shared <see cref="AppSettings"/> only on Save.
 /// </summary>
 public sealed partial class SettingsViewModel : ObservableObject
 {
@@ -41,6 +46,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _home;
     [ObservableProperty] private bool _nestNewFolders;
     [ObservableProperty] private ModelChoice _followUpModel;
+    [ObservableProperty] private SignatureChoice _newMailSignature;
+    [ObservableProperty] private SignatureChoice _replySignature;
 
     /// <summary>A name to try the scheme on, shown nested underneath.</summary>
     [ObservableProperty] private string _example = "Elara - Field Reports - Rimkus";
@@ -60,7 +67,21 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>The models a follow-up chase can be drafted with.</summary>
     public IReadOnlyList<ModelChoice> FollowUpModels { get; }
 
+    /// <summary>
+    /// The signatures Outlook has on this PC, behind "Outlook's choice" and
+    /// "No signature". Read once when the page opens; one just made in Outlook
+    /// shows after the page is reopened.
+    /// </summary>
+    public IReadOnlyList<SignatureChoice> Signatures { get; }
+
+    /// <summary>What the pickers can say when Outlook has no signatures to offer.</summary>
+    public bool HasOutlookSignatures { get; }
+
     public SettingsViewModel(AppSettings settings, IMailStore store, FolderSearchService folders)
+        : this(settings, store, folders, OutlookSignatures.DefaultFolder) { }
+
+    /// <summary><paramref name="signaturesFolder"/> is where Outlook's signatures are read from.</summary>
+    public SettingsViewModel(AppSettings settings, IMailStore store, FolderSearchService folders, string signaturesFolder)
     {
         _settings = settings;
         _store = store;
@@ -72,6 +93,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         _nestNewFolders = settings.NestNewFolders;
 
         (FollowUpModels, _followUpModel) = ModelChoices(settings.AiFollowUpModel, settings.AiModel);
+
+        var found = OutlookSignatures.Find(signaturesFolder);
+        HasOutlookSignatures = found.Count > 0;
+        (Signatures, _newMailSignature, _replySignature) =
+            SignatureChoices(found, settings.SignatureForNewMail, settings.SignatureForReplies);
 
         UpdatePreview();
     }
@@ -94,6 +120,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnHomeChanged(string value) => Changed();
     partial void OnNestNewFoldersChanged(bool value) => IsDirty = true;
     partial void OnFollowUpModelChanged(ModelChoice value) => IsDirty = true;
+    partial void OnNewMailSignatureChanged(SignatureChoice value) => IsDirty = true;
+    partial void OnReplySignatureChanged(SignatureChoice value) => IsDirty = true;
     partial void OnExampleChanged(string value) => UpdatePreview();
 
     private void Changed()
@@ -131,6 +159,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.FolderHome = FolderOrganizer.NormalisePath(Home);
         _settings.NestNewFolders = NestNewFolders;
         _settings.AiFollowUpModel = FollowUpModel.Value;
+        _settings.SignatureForNewMail = NewMailSignature.Value;
+        _settings.SignatureForReplies = ReplySignature.Value;
 
         try
         {
@@ -178,6 +208,39 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
 
         return (choices, match);
+    }
+
+    /// <summary>
+    /// Outlook's choice, none, then every signature Outlook has - and, as
+    /// with the models, a saved name Outlook no longer has stays on offer,
+    /// marked, so opening Settings never quietly changes it: it is what the
+    /// send will refuse on until it is changed here.
+    /// </summary>
+    private static (IReadOnlyList<SignatureChoice> Choices, SignatureChoice NewMail, SignatureChoice Reply) SignatureChoices(
+        IReadOnlyList<MailSignature> found, string newMail, string reply)
+    {
+        var choices = new List<SignatureChoice>
+        {
+            new("Outlook's choice - its default for new mail, and for replies", OutlookSignatures.OutlookDefault),
+            new("No signature", OutlookSignatures.NoSignature),
+        };
+        choices.AddRange(found.Select(s => new SignatureChoice(s.Name, s.Name)));
+
+        SignatureChoice Pick(string value)
+        {
+            value = value.Trim();
+            var match = choices.FirstOrDefault(c => string.Equals(c.Value, value, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                match = new SignatureChoice($"{value} - not in Outlook any more", value);
+                choices.Add(match);
+            }
+            return match;
+        }
+
+        var current = Pick(newMail);
+        var replyCurrent = Pick(reply);
+        return (choices, current, replyCurrent);
     }
 
     /// <summary>Reads every folder afresh and lists the ones not yet nested by the scheme.</summary>

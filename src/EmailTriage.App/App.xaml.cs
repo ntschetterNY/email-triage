@@ -155,6 +155,7 @@ public partial class App : Application
                 BlockRemoteImages = settings.BlockRemoteImages,
                 DayShape = settings.DayShape,
                 InlineImageFolder = OutlookMailStore.DefaultInlineImageFolder,
+                SignatureForReplies = settings.SignatureForReplies,
                 PcName = Environment.MachineName,
                 Version = AppUpdater.DisplayVersion,
             },

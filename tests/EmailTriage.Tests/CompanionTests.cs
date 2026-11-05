@@ -195,6 +195,55 @@ public class CompanionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Reply_from_the_phone_carries_the_signature_the_pc_chose()
+    {
+        var folder = Path.Combine(_images, "signatures");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "Short.htm"), "<p>Nate</p>");
+        var service = new CompanionService(_store, _snoozes, _actions,
+            new FolderSearchService(_store, new FakeFolderUsage(), _clock), _clock,
+            () => new CompanionOptions { InlineImageFolder = _images, SignatureForReplies = "Short", SignaturesFolder = folder });
+        await SeedInboxAsync(Mail("a1", "A", 30));
+
+        await service.ReplyAsync(new ReplyRequest(new RefDto("a1", "store"), "all", "ok"));
+
+        var overrides = Assert.Single(_store.ReplyOverrides);
+        Assert.Equal("Short", overrides?.Signature?.Name);
+        Assert.Equal(Path.Combine(folder, "Short.htm"), overrides?.Signature?.HtmlPath);
+        // Only the signature is written: the recipients stay as Outlook resolved them.
+        Assert.False(overrides!.ChangesRecipients);
+    }
+
+    [Fact]
+    public async Task Reply_with_outlooks_own_signature_writes_nothing_extra_onto_the_draft()
+    {
+        await SeedInboxAsync(Mail("a1", "A", 30));
+
+        await _service.ReplyAsync(new ReplyRequest(new RefDto("a1", "store"), "all", "ok"));
+
+        Assert.Null(Assert.Single(_store.ReplyOverrides));
+    }
+
+    [Fact]
+    public async Task Reply_under_a_signature_outlook_no_longer_has_is_refused_before_outlook_is_touched()
+    {
+        var folder = Path.Combine(_images, "signatures");
+        Directory.CreateDirectory(folder);
+        var service = new CompanionService(_store, _snoozes, _actions,
+            new FolderSearchService(_store, new FakeFolderUsage(), _clock), _clock,
+            () => new CompanionOptions { InlineImageFolder = _images, SignatureForReplies = "Gone", SignaturesFolder = folder });
+        await SeedInboxAsync(Mail("a1", "A", 30));
+
+        var ex = await Assert.ThrowsAsync<CompanionException>(() =>
+            service.ReplyAsync(new ReplyRequest(new RefDto("a1", "store"), "all", "ok")));
+
+        Assert.Equal(409, ex.Status);
+        Assert.Contains("\"Gone\"", ex.Message);
+        Assert.Empty(_store.RepliesBuilt);
+        Assert.Empty(_store.RepliesSent);
+    }
+
+    [Fact]
     public async Task Reply_that_fails_to_send_leaves_no_draft_behind()
     {
         _store.NextSendFailure = new InvalidOperationException("Recipient could not be resolved.");

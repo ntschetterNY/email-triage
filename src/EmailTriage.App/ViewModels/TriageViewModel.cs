@@ -159,7 +159,7 @@ public sealed partial class TriageViewModel : ObservableObject
         _aiDraft = aiDraft;
         _aiSearch = aiSearch;
 
-        Composer = new ComposerViewModel(store, contacts, scheduled, clock, settings.DayShape);
+        Composer = new ComposerViewModel(store, contacts, scheduled, clock, settings.DayShape, settings);
         Capture = new CaptureViewModel(contacts, clock, settings);
         Palette.QueryChanged += (_, _) => RefreshPalette();
     }

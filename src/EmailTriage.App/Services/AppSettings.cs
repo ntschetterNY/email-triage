@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using EmailTriage.Core.Models;
 using EmailTriage.Core.Services;
 
 namespace EmailTriage.App.Services;
@@ -31,6 +32,20 @@ public sealed class AppSettings
 
     /// <summary>A folder created from the move palette with a name in the scheme is made nested.</summary>
     public bool NestNewFolders { get; set; } = true;
+
+    /// <summary>
+    /// Which of Outlook's signatures goes on mail sent from here, by the name
+    /// it has in Outlook (File › Options › Mail › Signatures): one for new
+    /// messages, one for replies and forwards, as Outlook itself splits them.
+    /// Empty leaves the draft as Outlook built it; "(none)" sends without one.
+    /// Picked on the Settings page (Ctrl+,); see <see cref="OutlookSignatures"/>.
+    /// </summary>
+    public string SignatureForNewMail { get; set; } = OutlookSignatures.OutlookDefault;
+    public string SignatureForReplies { get; set; } = OutlookSignatures.OutlookDefault;
+
+    /// <summary>The signature setting a draft of this kind sends with. A method, so it stays out of settings.json.</summary>
+    public string SignatureChoiceFor(ReplyScope scope) =>
+        scope == ReplyScope.New ? SignatureForNewMail : SignatureForReplies;
 
     /// <summary>A method, not a property, so it stays out of settings.json.</summary>
     public FolderScheme GetFolderScheme() => new(FolderNamePattern, FolderLayout);
