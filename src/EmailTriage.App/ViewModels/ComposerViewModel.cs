@@ -39,6 +39,7 @@ public sealed partial class ComposerViewModel : ObservableObject
     private readonly IScheduledSendRepository _scheduled;
     private readonly IClock _clock;
     private readonly SnoozeDayShape _dayShape;
+    private readonly AppSettings _settings;
 
     [ObservableProperty] private bool _isOpen;
     [ObservableProperty] private string _bodyText = "";
@@ -90,13 +91,14 @@ public sealed partial class ComposerViewModel : ObservableObject
 
     public ComposerViewModel(
         IMailStore store, ContactDirectory contacts,
-        IScheduledSendRepository scheduled, IClock clock, SnoozeDayShape dayShape)
+        IScheduledSendRepository scheduled, IClock clock, SnoozeDayShape dayShape, AppSettings settings)
     {
         _store = store;
         _contacts = contacts;
         _scheduled = scheduled;
         _clock = clock;
         _dayShape = dayShape;
+        _settings = settings;
     }
 
     /// <summary>
@@ -663,6 +665,17 @@ public sealed partial class ComposerViewModel : ObservableObject
 
         var rendered = body.IsBlank ? null : ComposeHtml.Render(body, _mentions);
 
+        // The signature Settings chose for this kind of mail. One Outlook no
+        // longer has stops the send here, with the draft still open, rather
+        // than going out under a signature nobody picked.
+        MailSignature? signature;
+        try { signature = OutlookSignatures.Resolve(_settings.SignatureChoiceFor(Draft.Scope)); }
+        catch (InvalidOperationException ex)
+        {
+            Status = ex.Message;
+            return;
+        }
+
         // Only the lines the user changed are rewritten; the rest keep the
         // exact recipients Outlook resolved when it built the draft.
         var overrides = new RecipientOverrides(
@@ -677,6 +690,7 @@ public sealed partial class ComposerViewModel : ObservableObject
                 .Select(c => c.Index)
                 .ToList(),
             InlineImages = rendered?.Images ?? Array.Empty<InlineImage>(),
+            Signature = signature,
         };
         var changes = overrides.IsEmpty ? null : overrides;
 

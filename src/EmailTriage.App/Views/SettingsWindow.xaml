@@ -52,6 +52,35 @@
 
                 <Border Height="1" Background="{StaticResource Border}" Margin="0,26,0,22" />
 
+                <!-- ============ which of Outlook's signatures mail goes out with ============ -->
+                <TextBlock Text="Signature" Style="{StaticResource Heading}" />
+                <TextBlock Style="{StaticResource Hint}" Margin="0">
+                    Mail sent from here carries one of the signatures you keep in Outlook (File › Options › Mail › Signatures),
+                    the same way Outlook splits them: one for new messages, one for replies and forwards.
+                    "Outlook's choice" sends whatever Outlook would have put on; the others take that off and put the chosen one on.
+                </TextBlock>
+
+                <TextBlock Text="New messages" Style="{StaticResource Label}" />
+                <ComboBox Width="320" HorizontalAlignment="Left" FontSize="12.5"
+                          ItemsSource="{Binding Signatures}" DisplayMemberPath="Label"
+                          SelectedItem="{Binding NewMailSignature}" />
+
+                <TextBlock Text="Replies and forwards" Style="{StaticResource Label}" />
+                <ComboBox Width="320" HorizontalAlignment="Left" FontSize="12.5"
+                          ItemsSource="{Binding Signatures}" DisplayMemberPath="Label"
+                          SelectedItem="{Binding ReplySignature}" />
+
+                <TextBlock Style="{StaticResource Hint}"
+                           Visibility="{Binding HasOutlookSignatures, Converter={StaticResource BoolVis}}">
+                    Read from Outlook's signatures folder when this page opened. One you make in Outlook now shows after Settings is reopened.
+                </TextBlock>
+                <TextBlock Style="{StaticResource Hint}"
+                           Visibility="{Binding HasOutlookSignatures, Converter={StaticResource BoolVisInv}}">
+                    Outlook has no signatures on this PC yet. Make one in Outlook under File › Options › Mail › Signatures, then reopen Settings to pick it.
+                </TextBlock>
+
+                <Border Height="1" Background="{StaticResource Border}" Margin="0,26,0,22" />
+
                 <!-- ============ the iPhone and iPad companion ============ -->
                 <StackPanel x:Name="PhoneSection">
                     <TextBlock Text="iPhone and iPad" Style="{StaticResource Heading}" />

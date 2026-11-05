@@ -15,6 +15,12 @@ public sealed partial class OutlookMailStore
     /// </summary>
     private readonly ConcurrentDictionary<string, object> _openDrafts = new();
 
+    /// <summary>
+    /// The bookmark Word puts round the signature Outlook inserted - the one
+    /// thing about it that does not change between Outlook versions.
+    /// </summary>
+    private const string SignatureBookmark = "_MailAutoSig";
+
     public Task<ReplyDraft> BuildReplyAsync(
         MailRef mail, ReplyScope scope, CancellationToken ct = default) =>
         RunAsync(() =>
@@ -196,6 +202,10 @@ public sealed partial class OutlookMailStore
             finally { ComUtil.Release(attachments); }
         }
 
+        // Before the draft is given up: a signature that cannot be put on
+        // leaves it open, to send once Settings says otherwise.
+        if (recipients?.Signature is { } signature) ApplySignature(item, signature);
+
         _openDrafts.TryRemove(draft.EntryId, out _);
 
         if (recipients is { InlineImages.Count: > 0 }) EmbedImages(item, recipients.InlineImages);
@@ -206,6 +216,61 @@ public sealed partial class OutlookMailStore
         item.HTMLBody = bodyHtml + existing;
 
         return stored;
+    }
+
+    /// <summary>
+    /// Takes the signature Outlook put on the draft off and puts the chosen
+    /// one where it was, through Outlook's editor rather than the HTML: the
+    /// editor is Word, which marks the signature it inserted with the
+    /// <see cref="SignatureBookmark"/> bookmark, whereas in the HTML it is
+    /// spread over spans and styles that differ by Outlook version. The
+    /// chosen signature's own .htm goes in through Word too, so its pictures
+    /// come with it as they do when Outlook inserts it. <see cref="PrepareOpenDraft"/>
+    /// then reads the body back and puts the typed text above it all.
+    /// </summary>
+    private static void ApplySignature(dynamic item, MailSignature signature)
+    {
+        if (!signature.IsNone && !File.Exists(signature.HtmlPath))
+            throw new InvalidOperationException(
+                $"The signature \"{signature.Name}\" is no longer in Outlook. Pick another in Settings (Ctrl+,) › Signature.");
+
+        dynamic? inspector = null, doc = null, bookmarks = null, range = null;
+        try
+        {
+            // Asking for the inspector is also what makes Outlook put its
+            // default signature on a new message, so there is one to take off.
+            inspector = item.GetInspector;
+            doc = inspector is null ? null : ComUtil.Try<object?>(() => inspector!.WordEditor);
+            if (doc is null)
+                throw new InvalidOperationException(
+                    "Outlook's editor is not available for this message, so its signature could not be changed. " +
+                    "Set the signature to \"Outlook's choice\" in Settings (Ctrl+,) to send it as Outlook built it.");
+
+            bookmarks = doc.Bookmarks;
+            if ((bool)bookmarks!.Exists(SignatureBookmark))
+            {
+                dynamic? bookmark = null;
+                try
+                {
+                    bookmark = bookmarks.Item(SignatureBookmark);
+                    range = bookmark!.Range;
+                }
+                finally { ComUtil.Release(bookmark); }
+
+                // Leaves the range collapsed where the signature began.
+                range!.Delete();
+            }
+            else
+            {
+                // Outlook put none on, so the chosen one goes where it would
+                // have: the top, above any quoted history. The typed text is
+                // put above it afterwards.
+                range = doc.Range(0, 0);
+            }
+
+            if (!signature.IsNone) range!.InsertFile(signature.HtmlPath);
+        }
+        finally { ComUtil.ReleaseAll(range, bookmarks, doc, inspector); }
     }
 
     /// <summary>

@@ -13,6 +13,7 @@ fast filing, a real action list, and snooze.
 |---|---|
 | **Triage** | Walk the inbox, decide action / no action, file it, move on - without the mouse. |
 | **Move** | `v` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. |
+| **Signature** | Pick which of your Outlook signatures goes on new messages, and which on replies, in Settings (`Ctrl+,`); or leave both to Outlook. |
 | **Folders** | Name folders your way (`Elara - Field Reports - Rimkus`) and they're kept nested (`Elara › Field Reports › Rimkus`). Settings (`Ctrl+,`) sets the scheme and tidies existing folders to match. `Shift+V` opens any folder in Outlook. |
 | **Snooze** | `h` parks a mail and puts it back in your inbox at a time you pick. |
 | **Action list** | Flagged mail gets notes, blockers, and tasks assigned to other people. Set a follow-up day as you send, and on that day the mail turns up in the board's Follow up column, ready for Claude to draft the nudge. |
@@ -242,6 +243,23 @@ Drafts, Outbox and Junk are never touched.
 
 The scheme is saved in `settings.json` as `FolderNamePattern`, `FolderLayout`,
 `FolderHome` and `NestNewFolders`.
+
+### Signature (Settings, `Ctrl+,`)
+Mail sent from here goes out with one of the signatures you keep in Outlook (File ›
+Options › Mail › Signatures). Settings lists them - read from Outlook's own signatures
+folder, `%APPDATA%\Microsoft\Signatures` - with one picker for new messages and one for
+replies and forwards, the way Outlook splits them. **Outlook's choice**, the default,
+sends whatever Outlook would have put on; any other choice takes Outlook's signature off
+the draft and puts the chosen one where it was, pictures included, and **No signature**
+puts nothing there. A reply from the iPhone or iPad app is signed the same way as one
+from the PC.
+
+The swap happens in Outlook's own editor, which marks the signature it inserted, so it
+is found exactly rather than guessed at in the HTML. If a chosen signature is no longer
+in Outlook, or the editor cannot be reached for a message, the send stops and says so,
+with the draft still open - it never goes out under a signature you did not pick. The
+settings are `SignatureForNewMail` and `SignatureForReplies` in `settings.json`, each
+holding a signature's name, `(none)`, or empty for Outlook's choice.
 
 ### Snooze (`h`)
 Outlook has no snooze for received mail, so the app implements it: the message moves
@@ -594,7 +612,7 @@ On iPad the list sits beside the open conversation, and with a keyboard the
 same keys work. The app does what the desktop's main keys do: archive (`e`), snooze (`h`, with the
 same presets and typed times), move (`v`, most-used folders first), flag (`a`, without
 the details popup), mark read and unread, and reply or reply-all with the text on
-top of Outlook's own quoted history and signature. The newest message's attachments
+top of Outlook's own quoted history, signed the way Settings on the PC chose. The newest message's attachments
 show above the conversation; tapping one fetches it from the PC (up to 10 MB) and opens
 it in Quick Look. Programs and scripts stay on the PC, as Outlook keeps them. Composing
 new mail, sending attachments, the calendar, the action board and AI drafts are

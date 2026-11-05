@@ -21,6 +21,16 @@ public sealed record CompanionOptions
     /// <summary>Where the mail store saves embedded images; null when it saves none.</summary>
     public string? InlineImageFolder { get; init; }
 
+    /// <summary>
+    /// The signature replies go out with, as Settings on the PC keeps it (a
+    /// name Outlook has, "(none)", or empty for Outlook's own), so a reply
+    /// from the phone is signed the same as one from the desktop.
+    /// </summary>
+    public string SignatureForReplies { get; init; } = OutlookSignatures.OutlookDefault;
+
+    /// <summary>Where Outlook keeps its signatures; null for the usual folder.</summary>
+    public string? SignaturesFolder { get; init; }
+
     public string PcName { get; init; } = Environment.MachineName;
     public string Version { get; init; } = "";
 }
@@ -357,7 +367,8 @@ public sealed partial class CompanionService
 
     /// <summary>
     /// Builds the reply in Outlook - recipients, quoted history and
-    /// signature as Outlook makes them - puts the text on top and sends it.
+    /// signature as Outlook makes them - puts the text on top, swaps in the
+    /// signature Settings chose for replies, and sends it.
     /// </summary>
     public async Task ReplyAsync(ReplyRequest request, CancellationToken ct = default)
     {
@@ -373,13 +384,22 @@ public sealed partial class CompanionService
             _ => throw new CompanionException(400, "Reply scope must be \"all\" or \"sender\"."),
         };
 
+        // Before anything is built in Outlook: a signature the PC's Settings
+        // names but Outlook no longer has is the PC's to fix, and the phone
+        // is told so rather than sending under another.
+        var options = _options();
+        MailSignature? signature;
+        try { signature = OutlookSignatures.Resolve(options.SignatureForReplies, options.SignaturesFolder); }
+        catch (InvalidOperationException ex) { throw new CompanionException(409, ex.Message); }
+
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
         var draft = await _store.BuildReplyAsync(request.To.ToRef(), scope, ct).ConfigureAwait(false);
 
         var html = ComposeHtml.Render(ComposeDocument.FromPlainText(request.Text.Trim())).Html;
+        var changes = signature is null ? null : new RecipientOverrides(null, null, null) { Signature = signature };
         try
         {
-            await _store.SendReplyAsync(draft.Ref, html, null, ct).ConfigureAwait(false);
+            await _store.SendReplyAsync(draft.Ref, html, changes, ct).ConfigureAwait(false);
         }
         catch
         {
