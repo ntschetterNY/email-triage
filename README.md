@@ -144,7 +144,8 @@ their own letters.
 | `Ctrl+G` | **AI draft** - Claude writes the reply from the conversation, or expands notes you typed first. Nothing sends itself |
 | `Ctrl+Enter` | Send |
 | `Ctrl+Shift+Enter` | Send & mark done - archives the conversation and finishes its card on the board |
-| `Ctrl+Shift+L` | Send later |
+| `Ctrl+Shift+H` | Send later (it was `Ctrl+Shift+L`, which is now Lavish) |
+| *After hours* pill | On by default: a message sent outside 7 AM-6 PM Eastern, Mon-Fri, is held until the next opening (7 AM, the next workday after 6 PM). Click the pill under the message to send at once instead; the choice is kept for the next email |
 | `Ctrl+Shift+F` | **Follow-up** - who owes what, by when; see below |
 | `Ctrl+Shift+T` | Follow-up: toggle tracking it as a task |
 | `Ctrl+Shift+O` / `C` / `B` / `M` | Jump to To / Cc / Bcc / the message |

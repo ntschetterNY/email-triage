@@ -84,7 +84,7 @@ public sealed class ComposerEditor
         }
 
         // Ctrl+B/I/U are the box's own. The rest follow Gmail and Outlook where
-        // the app's composer keys leave room (Ctrl+Shift+L is "send later").
+        // the app's composer keys leave room (Ctrl+Shift+H is "send later").
         Bind(Key.D8, ModifierKeys.Control | ModifierKeys.Shift, ToggleBullets);
         Bind(Key.D7, ModifierKeys.Control | ModifierKeys.Shift, ToggleNumbering);
         Bind(Key.D9, ModifierKeys.Control | ModifierKeys.Shift, ToggleDashes);

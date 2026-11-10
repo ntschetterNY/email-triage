@@ -557,7 +557,8 @@ public sealed partial class MainViewModel : ObservableObject
         {
             switch (stroke.Key)
             {
-                case System.Windows.Input.Key.L: composer.ToggleSchedule(); return true;
+                // Send later. Not L: Ctrl+Shift+L is Lavish everywhere, and it hears keys first.
+                case System.Windows.Input.Key.H: composer.ToggleSchedule(); return true;
                 case System.Windows.Input.Key.F:
                     composer.ToggleFollowUp();
                     composer.RequestFocus(composer.IsFollowingUp ? RecipientField.FollowUp : RecipientField.Body);
@@ -1295,7 +1296,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Reply",   Keys.Describe(TriageAction.AiDraftReply), "Claude drafts the reply - type notes first to steer it; nothing sends itself"),
         ("Reply",   "Ctrl+Enter", "Send"),
         ("Reply",   "Ctrl+Shift+Enter", "Send & mark done - archives the conversation"),
-        ("Reply",   "Ctrl+Shift+L", "Send later - optionally held for review if they reply first"),
+        ("Reply",   "Ctrl+Shift+H", "Send later - optionally held for review if they reply first"),
         ("Reply",   "Ctrl+Shift+F", "Follow up - pick a day and who it's waiting on (the first To by default); on that day it lands in the board's Follow up column"),
         ("Reply",   "Ctrl+Shift+T", "Follow-up: toggle tracking it as a task"),
         ("Reply",   "Ctrl+K", "Insert a link - on the selected text, or type the text; a copied address is filled in"),
