@@ -2247,7 +2247,7 @@
                                          Text="{Binding Triage.Composer.LinkAddress, UpdateSourceTrigger=PropertyChanged}" />
                             </DockPanel>
 
-                            <!-- send later (Ctrl+Shift+L) -->
+                            <!-- send later (Ctrl+Shift+H) -->
                             <DockPanel Margin="0,0,0,10"
                                        Visibility="{Binding Triage.Composer.IsScheduling, Converter={StaticResource BoolVis}}">
                                 <TextBlock Text="Send at" FontSize="12" VerticalAlignment="Center" Width="52"
@@ -2261,17 +2261,57 @@
                                     If anyone replies first, don't send - hold it for my review
                                 </CheckBox>
                             </DockPanel>
-                        <Grid>
-                            <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+Shift+Enter send &amp; done · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+K link · Esc discard · @ mentions · paste pictures · drop or paste files to attach"
-                                       Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVisInv}}" />
-                            <TextBlock FontSize="11" Foreground="{StaticResource Muted}"
-                                       Text="Ctrl+Enter send · Ctrl+G AI draft · Ctrl+Shift+L later · Ctrl+Shift+F follow-up · Ctrl+Shift+S subject · Ctrl+K link · Esc discard · @ mentions · paste pictures · drop or paste files to attach"
-                                       Visibility="{Binding Triage.Composer.IsNew, Converter={StaticResource BoolVis}}" />
-                            <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11"
-                                       HorizontalAlignment="Right" Foreground="{StaticResource Warn}"
-                                       Background="{StaticResource Raised}" />
-                        </Grid>
+                        <DockPanel LastChildFill="True">
+                            <!-- After hours (#100): held for the next opening unless turned off; kept email to email -->
+                            <ToggleButton DockPanel.Dock="Left" VerticalAlignment="Top" Margin="0,0,10,0"
+                                          Cursor="Hand" Focusable="False"
+                                          IsChecked="{Binding Triage.Composer.DeferAfterHours}"
+                                          ToolTip="{Binding Triage.Composer.AfterHoursHint}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Pill" CornerRadius="10" Padding="9,3" BorderThickness="1"
+                                                BorderBrush="{StaticResource Border}" Background="{StaticResource Raised}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse x:Name="Dot" Width="7" Height="7" Margin="0,0,6,0"
+                                                         VerticalAlignment="Center" Fill="{StaticResource Muted}" />
+                                                <TextBlock x:Name="Label" FontSize="11" Text="After hours: send now"
+                                                           Foreground="{StaticResource Muted}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Pill" Property="BorderBrush" Value="{StaticResource Accent}" />
+                                                <Setter TargetName="Dot" Property="Fill" Value="{StaticResource Accent}" />
+                                                <Setter TargetName="Label" Property="Text" Value="After hours: hold till 7 AM" />
+                                                <Setter TargetName="Label" Property="Foreground" Value="{StaticResource Text}" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <!-- Keys as pills that wrap (#98): the chord, then what it does -->
+                            <ItemsControl ItemsSource="{Binding Triage.Composer.Shortcuts}" Focusable="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,12,4">
+                                            <Border Style="{StaticResource KeyCap}" CornerRadius="9" Padding="8,1">
+                                                <TextBlock Text="{Binding Keys}" Style="{StaticResource KeyCapText}" />
+                                            </Border>
+                                            <TextBlock Text="{Binding Label}" FontSize="11" Margin="5,0,0,0"
+                                                       VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </DockPanel>
+                        <TextBlock Text="{Binding Triage.Composer.Status}" FontSize="11" TextWrapping="Wrap"
+                                   HorizontalAlignment="Right" Foreground="{StaticResource Warn}" Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>
                 </Grid>

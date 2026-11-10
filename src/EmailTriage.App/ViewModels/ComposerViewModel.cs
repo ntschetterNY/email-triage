@@ -22,6 +22,9 @@ public sealed record LinkInsertion(string Label, string Url);
 public sealed record MentionInsertion(MentionText.Query Query, ContactEntry Contact);
 
 /// <summary>Where suggestions are showing: a recipient line, or an @mention in the message.</summary>
+/// <summary>One composer key and what it does, shown as a pill.</summary>
+public sealed record ShortcutHint(string Keys, string Label);
+
 public enum RecipientField { None, To, Cc, Bcc, Body, Subject, FollowUp, LinkLabel, LinkAddress }
 
 /// <summary>
@@ -51,7 +54,8 @@ public sealed partial class ComposerViewModel : ObservableObject
     [ObservableProperty] private bool _isSending;
     [ObservableProperty] private ReplyDraft? _draft;
 
-    // "Send later" row (Ctrl+Shift+L).
+    // "Send later" row (Ctrl+Shift+H, `h` being "later" everywhere else).
+    // It was Ctrl+Shift+L until Lavish took that chord app-wide (#98, #100).
     [ObservableProperty] private bool _isScheduling;
     [ObservableProperty] private string _scheduleText = "";
     [ObservableProperty] private bool _holdIfReplied = true;
@@ -129,6 +133,67 @@ public sealed partial class ComposerViewModel : ObservableObject
         OnPropertyChanged(nameof(ScheduleAt));
         OnPropertyChanged(nameof(SchedulePreview));
     }
+
+    /// <summary>
+    /// Hold mail sent outside working hours until the next opening (#100).
+    /// Kept in settings, so the choice carries to the next email.
+    /// </summary>
+    public bool DeferAfterHours
+    {
+        get => _settings.DeferAfterHoursSends;
+        set
+        {
+            if (_settings.DeferAfterHoursSends == value) return;
+            _settings.DeferAfterHoursSends = value;
+            try { _settings.Save(); } catch (IOException) { /* still applies for this session */ }
+            catch (UnauthorizedAccessException) { }
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(AfterHoursHint));
+        }
+    }
+
+    /// <summary>The toggle's tooltip, naming the hours it holds to.</summary>
+    public string AfterHoursHint
+    {
+        get
+        {
+            var h = _settings.GetWorkingHours();
+            var zone = h.ZoneLabel.Length > 0 ? " " + h.ZoneLabel : "";
+            var hours = $"{DateTime.Today.Add(h.Start):h tt}-{DateTime.Today.Add(h.End):h tt}{zone}, Monday to Friday";
+            return DeferAfterHours
+                ? $"On: mail sent outside {hours} waits for the next opening. Click to send at once instead; the choice is kept for the next email."
+                : $"Off: mail goes when you send it. Click to hold mail sent outside {hours} until the next opening.";
+        }
+    }
+
+    /// <summary>The composer's keys, for the pills under the message.</summary>
+    public IReadOnlyList<ShortcutHint> Shortcuts => IsNew ? NewMessageShortcuts : ReplyShortcuts;
+
+    private static readonly ShortcutHint[] ReplyShortcuts =
+    {
+        new("Ctrl+Enter", "send"),
+        new("Ctrl+Shift+Enter", "send & done"),
+        new("Ctrl+G", "AI draft"),
+        new("Ctrl+Shift+H", "send later"),
+        new("Ctrl+Shift+F", "follow-up"),
+        new("Ctrl+K", "link"),
+        new("Esc", "discard"),
+        new("@", "mention"),
+        new("Ctrl+V", "paste pictures or files"),
+    };
+
+    private static readonly ShortcutHint[] NewMessageShortcuts =
+    {
+        new("Ctrl+Enter", "send"),
+        new("Ctrl+G", "AI draft"),
+        new("Ctrl+Shift+H", "send later"),
+        new("Ctrl+Shift+F", "follow-up"),
+        new("Ctrl+Shift+S", "subject"),
+        new("Ctrl+K", "link"),
+        new("Esc", "discard"),
+        new("@", "mention"),
+        new("Ctrl+V", "paste pictures or files"),
+    };
 
     /// <summary>Shows or hides the "send later" row.</summary>
     public void ToggleSchedule()
@@ -454,6 +519,9 @@ public sealed partial class ComposerViewModel : ObservableObject
         OnPropertyChanged(nameof(IsNew));
         OnPropertyChanged(nameof(StartsWithRecipients));
         OnPropertyChanged(nameof(Subject));
+        OnPropertyChanged(nameof(Shortcuts));
+        OnPropertyChanged(nameof(DeferAfterHours));
+        OnPropertyChanged(nameof(AfterHoursHint));
 
         // Last, so the view sees the right IsForward when it picks what to focus.
         IsOpen = true;
@@ -627,9 +695,18 @@ public sealed partial class ComposerViewModel : ObservableObject
             sendAt = ScheduleAt;
             if (sendAt is null)
             {
-                Status = "When should it go? Type a time like \"tomorrow 9am\", or Ctrl+Shift+L to close this and send now.";
+                Status = "When should it go? Type a time like \"tomorrow 9am\", or Ctrl+Shift+H to close this and send now.";
                 return;
             }
+        }
+
+        // Outside working hours, held for the morning unless the user turned
+        // that off (#100). A time typed in the send-later row always wins.
+        var heldForHours = false;
+        if (sendAt is null && DeferAfterHours && _settings.GetWorkingHours().NextOpening(_clock.Now) is { } opening)
+        {
+            sendAt = opening;
+            heldForHours = true;
         }
 
         FollowUpRequest? followUp = null;
@@ -715,7 +792,8 @@ public sealed partial class ComposerViewModel : ObservableObject
                     HoldIfReplied = HoldIfReplied,
                 }).ConfigureAwait(true);
 
-                done = $"Scheduled for {when.ToLocalTime():ddd d MMM HH:mm}"
+                done = (heldForHours ? "Outside working hours - s" : "S")
+                     + $"cheduled for {when.ToLocalTime():ddd d MMM HH:mm}"
                      + (HoldIfReplied ? " · held for review if they reply first" : "");
             }
             else

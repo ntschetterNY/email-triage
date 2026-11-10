@@ -47,6 +47,30 @@ public sealed class AppSettings
     public string SignatureChoiceFor(ReplyScope scope) =>
         scope == ReplyScope.New ? SignatureForNewMail : SignatureForReplies;
 
+    /// <summary>
+    /// Mail sent from the composer outside working hours is held until the
+    /// next opening (7am Eastern; after 6pm, the next workday) instead of
+    /// going out at once (#100). Toggled from the composer and kept from one
+    /// email to the next.
+    /// </summary>
+    public bool DeferAfterHoursSends { get; set; } = true;
+    public int WorkingHoursStart { get; set; } = 7;
+    public int WorkingHoursEnd { get; set; } = 18;
+    public string WorkingHoursZone { get; set; } = WorkingHours.EasternZoneId;
+
+    /// <summary>A method, not a property, so it stays out of settings.json.</summary>
+    public WorkingHours GetWorkingHours()
+    {
+        var start = Math.Clamp(WorkingHoursStart, 0, 23);
+        return new WorkingHours
+        {
+            Start = TimeSpan.FromHours(start),
+            End = TimeSpan.FromHours(Math.Clamp(WorkingHoursEnd, start + 1, 24)),
+            Zone = WorkingHours.FindZone(string.IsNullOrWhiteSpace(WorkingHoursZone) ? WorkingHours.EasternZoneId : WorkingHoursZone),
+            ZoneLabel = WorkingHoursZone == WorkingHours.EasternZoneId || string.IsNullOrWhiteSpace(WorkingHoursZone) ? "ET" : "",
+        };
+    }
+
     /// <summary>A method, not a property, so it stays out of settings.json.</summary>
     public FolderScheme GetFolderScheme() => new(FolderNamePattern, FolderLayout);
 
