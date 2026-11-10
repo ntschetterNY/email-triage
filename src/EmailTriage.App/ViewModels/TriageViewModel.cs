@@ -1176,11 +1176,11 @@ public sealed partial class TriageViewModel : ObservableObject
             var (bodies, html) = await load.ConfigureAwait(true);
             if (cts.IsCancellationRequested) return;
 
+            // Attachments are the open (newest) email's own, not every file
+            // the conversation ever carried (#96). Picking an older message in
+            // the thread shows that one's instead (LoadMessageAsync).
             OpenBody = bodies[0];
-            ThreadAttachments = bodies
-                .SelectMany(b => b.Attachments)
-                .DistinctBy(a => (a.Name.ToLowerInvariant(), a.Size))
-                .ToList();
+            ThreadAttachments = bodies[0].Attachments;
             BodyHtml = html;
 
             // With this one on screen, get the next few ready while the user reads.
