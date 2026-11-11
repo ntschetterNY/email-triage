@@ -266,6 +266,8 @@ holding a signature's name, `(none)`, or empty for Outlook's choice.
 Outlook has no snooze for received mail, so the app implements it: the message moves
 to a `Snoozed` folder and a return time is recorded locally. A background loop checks
 every 30 seconds and moves it back, marked unread so it reads as new.
+It lands at the top of the triage list with a **SNOOZED** tag, as if it had just
+arrived, and sinks as newer mail comes in; the tag stays for a week or until you file it.
 
 **The app must be running for a snooze to fire.** Anything that came due while it was
 closed is swept back the moment you next open it. That is the honest trade for not

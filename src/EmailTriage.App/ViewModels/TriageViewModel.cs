@@ -248,6 +248,21 @@ public sealed partial class TriageViewModel : ObservableObject
                 .Where(t => !StillLeaving(t.Key, loadNumber))
                 .ToList();
 
+            // Mail just back from a snooze goes to the top with a Snoozed tag,
+            // rather than slipping back in at its original, days-old place.
+            IReadOnlyDictionary<string, DateTimeOffset> backFromSnooze;
+            try
+            {
+                var returned = await _snoozes
+                    .GetReturnedSinceAsync(_clock.UtcNow - SnoozedReturns.TagFor, ct).ConfigureAwait(true);
+                backFromSnooze = SnoozedReturns.ByThread(threads, returned);
+                threads = SnoozedReturns.Order(threads, backFromSnooze).ToList();
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                backFromSnooze = new Dictionary<string, DateTimeOffset>();
+            }
+
             var flagged = (await _actions.GetOpenAsync(ct).ConfigureAwait(true))
                 .Select(a => a.InternetMessageId)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -265,13 +280,15 @@ public sealed partial class TriageViewModel : ObservableObject
             _allRows = threads.Select(t =>
             {
                 var isFlagged = t.InboxMessages.Any(m => flagged.Contains(m.InternetMessageId));
+                var isBack = backFromSnooze.ContainsKey(t.Key);
                 if (existing.Remove(t.Key, out var row))
                 {
                     row.Refresh(t);
                     row.IsActionRequired = isFlagged;
+                    row.IsBackFromSnooze = isBack;
                     return row;
                 }
-                return new MailRowViewModel(t, isFlagged);
+                return new MailRowViewModel(t, isFlagged) { IsBackFromSnooze = isBack };
             }).ToList();
 
             var selected = Selected;

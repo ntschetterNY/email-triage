@@ -29,6 +29,7 @@ public sealed class SnoozeRepository : ISnoozeRepository
                snoozed_utc            AS SnoozedUtc,
                return_utc             AS ReturnUtc,
                restored_utc           AS RestoredUtc,
+               returned_utc           AS ReturnedUtc,
                last_error             AS LastError,
                failure_count          AS FailureCount
         FROM snoozes
@@ -81,11 +82,21 @@ public sealed class SnoozeRepository : ISnoozeRepository
         return rows.ToList();
     }
 
+    public async Task<IReadOnlyList<SnoozeEntry>> GetReturnedSinceAsync(
+        DateTimeOffset sinceUtc, CancellationToken ct = default)
+    {
+        await using var conn = _db.Open();
+        var rows = await conn.QueryAsync<SnoozeEntry>(new CommandDefinition(
+            $"{Select} WHERE returned_utc IS NOT NULL AND returned_utc >= @since ORDER BY returned_utc DESC",
+            new { since = sinceUtc }, cancellationToken: ct)).ConfigureAwait(false);
+        return rows.ToList();
+    }
+
     public async Task MarkRestoredAsync(long id, CancellationToken ct = default)
     {
         await using var conn = _db.Open();
         await conn.ExecuteAsync(new CommandDefinition(
-            "UPDATE snoozes SET restored_utc = @when, last_error = '' WHERE id = @id",
+            "UPDATE snoozes SET restored_utc = @when, returned_utc = @when, last_error = '' WHERE id = @id",
             new { id, when = _clock.UtcNow }, cancellationToken: ct)).ConfigureAwait(false);
     }
 

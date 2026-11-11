@@ -87,6 +87,10 @@ public interface ISnoozeRepository
     Task<IReadOnlyList<SnoozeEntry>> GetPendingAsync(CancellationToken ct = default);
     Task<IReadOnlyList<SnoozeEntry>> GetDueAsync(DateTimeOffset now, CancellationToken ct = default);
     Task MarkRestoredAsync(long id, CancellationToken ct = default);
+
+    /// <summary>Snoozes the scheduler brought back to the Inbox at or after the cutoff, newest first.</summary>
+    Task<IReadOnlyList<SnoozeEntry>> GetReturnedSinceAsync(DateTimeOffset sinceUtc, CancellationToken ct = default);
+
     Task RecordFailureAsync(long id, string error, CancellationToken ct = default);
     Task CancelAsync(long id, CancellationToken ct = default);
 
