@@ -87,6 +87,13 @@
                                        Foreground="{StaticResource Warn}" />
                         </Border>
 
+                        <!-- back from a snooze: pinned to the top of the list for a while -->
+                        <Border Background="#33C678DD" CornerRadius="3" Padding="5,0" Margin="8,0,0,0"
+                                Visibility="{Binding IsBackFromSnooze, Converter={StaticResource BoolVis}}">
+                            <TextBlock x:Name="SnoozedText" Text="SNOOZED" FontSize="9" FontWeight="Bold"
+                                       Foreground="#C678DD" />
+                        </Border>
+
                         <!-- meeting invitation, cancellation or response -->
                         <Border Background="#3398C379" CornerRadius="3" Padding="5,0" Margin="8,0,0,0"
                                 Visibility="{Binding HasKindTag, Converter={StaticResource BoolVis}}">
@@ -164,6 +171,7 @@
                     <Setter TargetName="CountText" Property="Foreground" Value="{StaticResource SelectedMuted}" />
                     <Setter TargetName="SentText" Property="Foreground" Value="#1F4FA8" />
                     <Setter TargetName="KindText" Property="Foreground" Value="#2E6B1F" />
+                    <Setter TargetName="SnoozedText" Property="Foreground" Value="#6B2E8A" />
                     <Setter TargetName="ExpandGlyph" Property="Foreground" Value="{StaticResource SelectedMuted}" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsExpanded}" Value="True">

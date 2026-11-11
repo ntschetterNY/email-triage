@@ -15,6 +15,9 @@ public sealed partial class MailRowViewModel : ObservableObject
     [ObservableProperty] private ConversationThread _thread;
     [ObservableProperty] private bool _isActionRequired;
 
+    /// <summary>Came back from a snooze lately: shown on top with a Snoozed tag.</summary>
+    [ObservableProperty] private bool _isBackFromSnooze;
+
     /// <summary>Part of a Shift+arrow multi-selection that triage actions apply to.</summary>
     [ObservableProperty] private bool _isMarked;
 

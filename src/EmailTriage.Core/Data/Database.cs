@@ -249,5 +249,12 @@ public sealed class Database
                 studied_utc TEXT NOT NULL
             );
             """),
+
+        (9, """
+            -- When a snooze actually came back to the Inbox. restored_utc is
+            -- also set by an undo or a give-up, so it cannot tell the triage
+            -- list which conversations to pin to the top with a Snoozed tag.
+            ALTER TABLE snoozes ADD COLUMN returned_utc TEXT NULL;
+            """),
     };
 }

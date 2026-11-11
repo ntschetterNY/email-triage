@@ -25,6 +25,12 @@ public sealed class SnoozeEntry
     public required DateTimeOffset ReturnUtc { get; set; }
     public DateTimeOffset? RestoredUtc { get; set; }
 
+    /// <summary>
+    /// Set only when the scheduler moved the mail back - not by an undo or a
+    /// give-up - so the triage list can show it on top with a Snoozed tag.
+    /// </summary>
+    public DateTimeOffset? ReturnedUtc { get; set; }
+
     /// <summary>Non-empty once a restore attempt has failed, for surfacing in the UI.</summary>
     public string LastError { get; set; } = "";
     public int FailureCount { get; set; }
