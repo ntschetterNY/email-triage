@@ -12,7 +12,7 @@ fast filing, a real action list, and snooze.
 | | |
 |---|---|
 | **Triage** | Walk the inbox, decide action / no action, file it, move on - without the mouse. |
-| **Move** | `v` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. |
+| **Move** | `v` opens a fuzzy folder search. No match? Create the folder and move in one keystroke. `m` proposes a folder for up to 20 conversations at once, from where mail like each went before; untick, change, and accept them together. |
 | **Signature** | Pick which of your Outlook signatures goes on new messages, and which on replies, in Settings (`Ctrl+,`); or leave both to Outlook. |
 | **Folders** | Name folders your way (`Elara - Field Reports - Rimkus`) and they're kept nested (`Elara › Field Reports › Rimkus`). Settings (`Ctrl+,`) sets the scheme and tidies existing folders to match. `Shift+V` opens any folder in Outlook. |
 | **Snooze** | `h` parks a mail and puts it back in your inbox at a time you pick. |
@@ -125,11 +125,12 @@ their own letters.
 | `a` | **Needs action** - asks what has to happen, who has the ball, when it's due and when to chase, then flags it. Everything is optional: `Enter` saves, `Shift+Enter` just flags, `Esc` cancels |
 | `n` | No action needed |
 | `v` | **Move to folder** - type to search, `Ctrl+Enter` creates and moves |
+| `m` | **Proposed moves** - up to 20 conversations with a confident folder guess, all ticked. `Space` unticks, `v` (or a click on the folder) picks another, `Enter` moves the ticked ones and brings up the next 20. `z` undoes the whole batch |
 | `Shift+V` | **Open a folder in Outlook** - type to search, `Enter` shows it in Outlook's window (any tab) |
 | `h` | **Remind me** (snooze) - presets, or type `tomorrow 9am` / `fri` / `3d` |
 | `e` | Archive |
 | `u` | Toggle read / unread |
-| `Ctrl+O` | Open an attachment |
+| `Ctrl+O` | Open an attachment - PDFs, pictures, text and Word (.docx) files show in the reading pane |
 | `Ctrl+P` | **Print** - the whole conversation, every message open (also the **Print** button in the reading pane) |
 | `Ctrl+scroll`, `Ctrl+Plus` / `Ctrl+Minus` | **Zoom the message** - the percentage shows above it while it is not 100%; click it, or press `Ctrl+0`, to go back |
 | `z` / `Ctrl+Z` | Undo the last move or snooze |

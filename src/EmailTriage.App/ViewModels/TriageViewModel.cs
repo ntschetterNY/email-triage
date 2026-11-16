@@ -83,6 +83,12 @@ public sealed partial class TriageViewModel : ObservableObject
     [ObservableProperty] private string? _previewPath;
     [ObservableProperty] private string _previewName = "";
 
+    /// <summary>
+    /// The attachment file behind the preview. Usually <see cref="PreviewPath"/>
+    /// itself; for a Word file it's the .docx while the pane shows its HTML.
+    /// </summary>
+    private string? _previewSource;
+
     /// <summary>Attachments from every message in the open conversation, newest first.</summary>
     [ObservableProperty] private IReadOnlyList<MailAttachment> _threadAttachments = Array.Empty<MailAttachment>();
     [ObservableProperty] private string _bodyHtml = "";
@@ -977,12 +983,13 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         PreviewPath = null;
         PreviewName = "";
+        _previewSource = null;
     }
 
     /// <summary>Hands the previewed attachment to its usual program.</summary>
     public void OpenPreviewExternally()
     {
-        if (PreviewPath is not { } path) return;
+        if ((_previewSource ?? PreviewPath) is not { } path) return;
 
         try
         {
@@ -1935,6 +1942,7 @@ public sealed partial class TriageViewModel : ObservableObject
         {
             case PaletteMode.Folder: RefreshFolderPalette(); break;
             case PaletteMode.OpenFolder: RefreshFolderPalette(); break;
+            case PaletteMode.Retarget: RefreshFolderPalette(); break;
             case PaletteMode.Attachment: RefreshAttachmentPalette(); break;
             case PaletteMode.Rsvp: RefreshRsvpPalette(); break;
             case PaletteMode.Schedule: RefreshSchedulePalette(); break;
@@ -1946,7 +1954,7 @@ public sealed partial class TriageViewModel : ObservableObject
     {
         var typed = Palette.Query.Trim();
         var within = TypedParent(typed);
-        var guesses = Palette.Mode == PaletteMode.Folder ? FolderGuesses() : Array.Empty<FolderGuess>();
+        var guesses = Palette.Mode is PaletteMode.Folder or PaletteMode.Retarget ? FolderGuesses() : Array.Empty<FolderGuess>();
         List<FolderMatch> matches;
 
         if (within is { } w)
@@ -1998,7 +2006,7 @@ public sealed partial class TriageViewModel : ObservableObject
         var newPart = within is { Partial.Length: > 0 } p
             && !matches.Any(m => m.Folder.Path.Equals($"{p.Parent.Path}\\{p.Partial}", StringComparison.OrdinalIgnoreCase));
 
-        Palette.CreatePrompt = Palette.Mode != PaletteMode.Folder || typed.Length == 0 ? null
+        Palette.CreatePrompt = Palette.Mode is not (PaletteMode.Folder or PaletteMode.Retarget) || typed.Length == 0 ? null
             : matches.Count == 0 ? BuildCreatePrompt(typed)
             : newPart ? $"Ctrl+Enter: {BuildCreatePrompt(typed)}"
             : null;
@@ -2011,7 +2019,10 @@ public sealed partial class TriageViewModel : ObservableObject
     /// </summary>
     private IReadOnlyList<FolderGuess> FolderGuesses()
     {
-        var rows = Targets();
+        // Changing a proposed move: the guesses are for that conversation.
+        var rows = Palette.Mode == PaletteMode.Retarget && _retargeting is { } p
+            ? new List<MailRowViewModel> { p.Row }
+            : Targets();
         if (rows.Count == 0) return Array.Empty<FolderGuess>();
 
         var mail = rows[0].Summary;
@@ -2082,6 +2093,7 @@ public sealed partial class TriageViewModel : ObservableObject
         {
             case PaletteMode.Folder: await ConfirmFolderAsync(forceCreate).ConfigureAwait(true); break;
             case PaletteMode.OpenFolder: await ConfirmOpenFolderAsync().ConfigureAwait(true); break;
+            case PaletteMode.Retarget: await ConfirmRetargetAsync(forceCreate).ConfigureAwait(true); break;
             case PaletteMode.Attachment:
                 var pick = Palette.Selected?.Payload as MailAttachment;
                 Palette.Close();
@@ -2147,7 +2159,19 @@ public sealed partial class TriageViewModel : ObservableObject
 
         try
         {
-            PreviewPath = await _store.SaveAttachmentAsync(source, attachment.Index).ConfigureAwait(true);
+            var saved = await _store.SaveAttachmentAsync(source, attachment.Index).ConfigureAwait(true);
+            var shown = saved;
+
+            // The pane can't draw Word files; it shows them as HTML made here.
+            if (attachment.IsWordDocument)
+            {
+                shown = saved + ".preview.html";
+                var name = attachment.Name;
+                await Task.Run(() => DocxPreview.WriteHtml(saved, shown, name)).ConfigureAwait(true);
+            }
+
+            _previewSource = saved;
+            PreviewPath = shown;
             PreviewName = attachment.Name;
             Status = $"Previewing {attachment.Name} · Esc goes back to the email";
         }
@@ -2209,31 +2233,9 @@ public sealed partial class TriageViewModel : ObservableObject
 
     private async Task ConfirmFolderAsync(bool forceCreate)
     {
-        var typed = Palette.Query.Trim();
-        var shouldCreate = forceCreate || (Palette.Selected is null && typed.Length > 0);
-
         try
         {
-            FolderNode target;
-
-            if (shouldCreate)
-            {
-                if (typed.Length == 0) return;
-
-                var (under, levels) = CreationTarget(typed);
-                if (levels.Count == 0 || levels[0].Length == 0) return;
-                target = await CreateNestedAsync(under, levels).ConfigureAwait(true);
-
-                Status = $"Created {target.Path}";
-            }
-            else if (Palette.Selected?.Payload is FolderNode picked)
-            {
-                target = picked;
-            }
-            else
-            {
-                return;
-            }
+            if (await PaletteFolderAsync(forceCreate).ConfigureAwait(true) is not { } target) return;
 
             Palette.Close();
             await MoveSelectedAsync(target).ConfigureAwait(true);
@@ -2243,6 +2245,31 @@ public sealed partial class TriageViewModel : ObservableObject
             Palette.Close();
             Status = $"Move failed: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// The folder the move palette has picked: the highlighted one, or the
+    /// typed name made into folders (Ctrl+Enter, or when nothing matches).
+    /// Null when there is nothing to pick.
+    /// </summary>
+    private async Task<FolderNode?> PaletteFolderAsync(bool forceCreate)
+    {
+        var typed = Palette.Query.Trim();
+        var shouldCreate = forceCreate || (Palette.Selected is null && typed.Length > 0);
+
+        if (shouldCreate)
+        {
+            if (typed.Length == 0) return null;
+
+            var (under, levels) = CreationTarget(typed);
+            if (levels.Count == 0 || levels[0].Length == 0) return null;
+            var created = await CreateNestedAsync(under, levels).ConfigureAwait(true);
+
+            Status = $"Created {created.Path}";
+            return created;
+        }
+
+        return Palette.Selected?.Payload as FolderNode;
     }
 
     /// <summary>
@@ -2274,14 +2301,38 @@ public sealed partial class TriageViewModel : ObservableObject
         var rows = Targets();
         if (rows.Count == 0) return Task.CompletedTask;
 
+        return MoveInBackground(
+            rows,
+            rows.Count == 1 ? $"Moved to {targetName}" : $"Moved {rows.Count} conversations to {targetName}",
+            $"move to {targetName}",
+            async () =>
+            {
+                var target = await resolve().ConfigureAwait(true);
+                return rows.Select(r => (r, target)).ToList();
+            });
+    }
+
+    /// <summary>
+    /// Moves each row to its own folder: one step in the list, one step to
+    /// undo. <paramref name="route"/> says where each goes, and runs as part
+    /// of the background work.
+    /// </summary>
+    private Task MoveInBackground(
+        IReadOnlyList<MailRowViewModel> rows,
+        string status,
+        string undoDescription,
+        Func<Task<List<(MailRowViewModel Row, FolderNode Target)>>> route)
+    {
+        if (rows.Count == 0) return Task.CompletedTask;
+
         var origin = _inbox;
         var moved = new List<MailRef>();
         TakeOut(rows);
-        Status = rows.Count == 1 ? $"Moved to {targetName}" : $"Moved {rows.Count} conversations to {targetName}";
+        Status = status;
 
         // Recorded now, not when Outlook finishes, so anything done in the
         // meantime cannot slip underneath it in the undo order.
-        PushUndo($"move to {targetName}", async () =>
+        PushUndo(undoDescription, async () =>
         {
             foreach (var m in moved) await _store.MoveAsync(m, origin).ConfigureAwait(true);
             await LoadAsync().ConfigureAwait(true);
@@ -2290,30 +2341,34 @@ public sealed partial class TriageViewModel : ObservableObject
         return RunInBackground(async () =>
         {
             string? error = null;
-            FolderNode? target = null;
-            var filed = new List<MailSummary>();
 
             try
             {
-                target = await resolve().ConfigureAwait(true);
+                var routes = await route().ConfigureAwait(true);
 
-                // The whole conversation goes, so the thread leaves the list in
-                // one keystroke. Your sent copies stay in Sent Items.
-                foreach (var m in rows.SelectMany(r => r.InboxMessages))
+                foreach (var group in routes.GroupBy(r => (r.Target.Ref.StoreId, r.Target.Ref.EntryId)))
                 {
-                    try
-                    {
-                        var to = await _store.MoveAsync(m.Ref, target.Ref).ConfigureAwait(true);
-                        moved.Add(to);
-                        filed.Add(m);
-                        await _actions.UpdateLocationAsync(m.InternetMessageId, to.EntryId, to.StoreId).ConfigureAwait(true);
-                    }
-                    catch (Exception ex) { error ??= ex.Message; }
-                }
+                    var target = group.First().Target;
+                    var filed = new List<MailSummary>();
 
-                // Remembered with what the mail looked like, so the palette
-                // can suggest this folder for the next mail like it.
-                if (moved.Count > 0) await _folders.RecordFilingAsync(target, filed).ConfigureAwait(true);
+                    // The whole conversation goes, so the thread leaves the list in
+                    // one keystroke. Your sent copies stay in Sent Items.
+                    foreach (var m in group.SelectMany(r => r.Row.InboxMessages))
+                    {
+                        try
+                        {
+                            var to = await _store.MoveAsync(m.Ref, target.Ref).ConfigureAwait(true);
+                            moved.Add(to);
+                            filed.Add(m);
+                            await _actions.UpdateLocationAsync(m.InternetMessageId, to.EntryId, to.StoreId).ConfigureAwait(true);
+                        }
+                        catch (Exception ex) { error ??= ex.Message; }
+                    }
+
+                    // Remembered with what the mail looked like, so the palette
+                    // can suggest this folder for the next mail like it.
+                    if (filed.Count > 0) await _folders.RecordFilingAsync(target, filed).ConfigureAwait(true);
+                }
             }
             catch (Exception ex) { error ??= ex.Message; }
             finally { Settle(rows); }
@@ -2737,6 +2792,7 @@ public sealed partial class TriageViewModel : ObservableObject
         if (Composer.IsOpen) { _ = Composer.DiscardAsync(); return; }
         if (Capture.IsOpen) { Capture.Close(); return; }
         if (Palette.IsOpen) { Palette.Close(); return; }
+        if (IsProposing) { CloseProposals(); return; }
         if (IsPreviewing) { ClosePreview(); Status = ""; return; }
         if (HasMarks) { ClearMarks(); Status = ""; return; }
         if (IsSearching || HasSearchFilter) { CloseSearch(); Status = ""; }

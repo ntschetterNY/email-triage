@@ -486,6 +486,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         if (Actions.Editor != EditorMode.None) return await HandleEditorKeyAsync(action, ctrlEnter).ConfigureAwait(true);
         if (Actions.IsReviewing) return await HandleReviewKeyAsync(action).ConfigureAwait(true);
+        if (Triage.IsProposing) return await HandleProposalKeyAsync(stroke, action, ctrlEnter).ConfigureAwait(true);
 
         if (IsHelpVisible)
         {
@@ -763,6 +764,67 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// The proposed moves panel (m): it has the keyboard until it closes.
+    /// Space or x ticks, v changes the folder, Enter moves what is ticked.
+    /// </summary>
+    private async Task<bool> HandleProposalKeyAsync(KeyStroke stroke, TriageAction action, bool ctrlEnter)
+    {
+        const System.Windows.Input.ModifierKeys Plain = System.Windows.Input.ModifierKeys.None;
+
+        if (stroke.Key == System.Windows.Input.Key.Space && stroke.Modifiers == Plain)
+        {
+            Triage.ToggleProposal();
+            return true;
+        }
+
+        if (stroke.Key == System.Windows.Input.Key.A && stroke.Modifiers == System.Windows.Input.ModifierKeys.Control)
+        {
+            Triage.ToggleAllProposals();
+            return true;
+        }
+
+        if (ctrlEnter)
+        {
+            await Triage.AcceptProposalsAsync().ConfigureAwait(true);
+            return true;
+        }
+
+        switch (action)
+        {
+            case TriageAction.NextMail: Triage.MoveProposal(1); return true;
+            case TriageAction.PrevMail: Triage.MoveProposal(-1); return true;
+            case TriageAction.PageDown: Triage.MoveProposal(10); return true;
+            case TriageAction.PageUp: Triage.MoveProposal(-10); return true;
+            case TriageAction.FirstMail: Triage.MoveProposal(-1000); return true;
+            case TriageAction.LastMail: Triage.MoveProposal(1000); return true;
+
+            case TriageAction.ToggleComplete: Triage.ToggleProposal(); return true;
+            case TriageAction.MoveToFolder: await Triage.ChangeProposalFolderAsync().ConfigureAwait(true); return true;
+            case TriageAction.Confirm: await Triage.AcceptProposalsAsync().ConfigureAwait(true); return true;
+
+            case TriageAction.Cancel:
+            case TriageAction.ProposeMoves:
+                Triage.CloseProposals();
+                return true;
+
+            // Undo puts the last batch back; the panel closes so the list can be seen refilling.
+            case TriageAction.Undo:
+                Triage.CloseProposals();
+                await Triage.UndoAsync().ConfigureAwait(true);
+                return true;
+
+            case TriageAction.SwitchSection:
+            case TriageAction.PrevSection:
+            case TriageAction.ShowHelp:
+                Triage.CloseProposals();
+                return await HandleGlobalKeyAsync(action).ConfigureAwait(true);
+
+            default:
+                return true; // the panel has the keyboard
+        }
+    }
+
     private async Task<bool> HandleEditorKeyAsync(TriageAction action, bool ctrlEnter)
     {
         if (ctrlEnter) { await Actions.CommitEditorAsync().ConfigureAwait(true); return true; }
@@ -837,6 +899,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (Triage.Capture.IsOpen || Triage.Composer.IsOpen || Triage.Palette.IsOpen
             || Actions.Editor != EditorMode.None) return;
+        Triage.CloseProposals();
         Actions.EndReview();
         IsHelpVisible = false;
         Section = section;
@@ -875,6 +938,10 @@ public sealed partial class MainViewModel : ObservableObject
 
             case TriageAction.MoveToFolder:
                 await Triage.OpenFolderPaletteAsync().ConfigureAwait(true);
+                return true;
+
+            case TriageAction.ProposeMoves:
+                await Triage.OpenProposalsAsync().ConfigureAwait(true);
                 return true;
 
             case TriageAction.Snooze:
@@ -1281,6 +1348,7 @@ public sealed partial class MainViewModel : ObservableObject
         ("Triage",  Keys.Describe(TriageAction.MarkActionRequired), "Needs action - asks what has to happen, who has the ball and when; Enter saves, Shift+Enter just flags"),
         ("Triage",  Keys.Describe(TriageAction.MarkNoAction), "No action needed"),
         ("Triage",  Keys.Describe(TriageAction.MoveToFolder), "Move to folder (type to search, Ctrl+Enter creates)"),
+        ("Triage",  Keys.Describe(TriageAction.ProposeMoves), "Proposed moves: 20 at a time, Space untick, v change folder, Enter move them"),
         ("Triage",  Keys.Describe(TriageAction.OpenFolderInOutlook), "Open a folder in Outlook, from any tab"),
         ("Triage",  Keys.Describe(TriageAction.Snooze), "Come back to this later"),
         ("Triage",  Keys.Describe(TriageAction.Archive), "Archive"),

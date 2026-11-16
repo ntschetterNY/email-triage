@@ -17,7 +17,7 @@ public sealed record PaletteEntry(
     public System.Windows.Thickness Padding => new(10 + Indent * 20, 7, 10, 7);
 }
 
-public enum PaletteMode { Folder, Snooze, Attachment, Rsvp, Schedule, OpenFolder }
+public enum PaletteMode { Folder, Snooze, Attachment, Rsvp, Schedule, OpenFolder, Retarget }
 
 /// <summary>
 /// The type-and-pick overlay shared by the move (`k`) and snooze (`g`)

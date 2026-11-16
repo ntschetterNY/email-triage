@@ -27,14 +27,18 @@ public sealed record MailAttachment(int Index, string Name, long Size)
 
     /// <summary>
     /// Types the reading pane can show itself: PDFs through the browser's own
-    /// viewer, plus images and plain text. SVG and HTML are left out on
-    /// purpose - they can carry script.
+    /// viewer, Word documents converted to HTML, plus images and plain
+    /// text. SVG and HTML are left out on purpose - they can carry script.
     /// </summary>
     public bool CanPreview => PreviewExtensions.Contains(Path.GetExtension(Name));
+
+    /// <summary>A .docx the pane shows through <see cref="Services.DocxPreview"/>.</summary>
+    public bool IsWordDocument => Path.GetExtension(Name).Equals(".docx", StringComparison.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> PreviewExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".txt", ".csv", ".log",
+        ".docx",
     };
 
     private static readonly HashSet<string> BlockedExtensions = new(StringComparer.OrdinalIgnoreCase)

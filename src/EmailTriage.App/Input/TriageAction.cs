@@ -136,6 +136,12 @@ public enum TriageAction
     /// <summary>Pick a folder and show it in Outlook's window. Bound to Shift+V.</summary>
     OpenFolderInOutlook,
 
+    /// <summary>
+    /// Proposed moves: up to 20 inbox conversations with a confident folder
+    /// guess, to check, change and accept together. Bound to m.
+    /// </summary>
+    ProposeMoves,
+
     /// <summary>The Settings page: folder naming, nesting and organizing. Bound to Ctrl+,.</summary>
     OpenSettings,
 

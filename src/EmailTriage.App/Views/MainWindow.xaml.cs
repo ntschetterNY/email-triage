@@ -152,6 +152,7 @@ public partial class MainWindow : Window
                 Hint("action", TriageAction.MarkActionRequired),
                 Hint("no action", TriageAction.MarkNoAction),
                 Hint("move", TriageAction.MoveToFolder),
+                Hint("proposed moves", TriageAction.ProposeMoves),
                 Hint("archive", TriageAction.Archive),
                 Hint("later", TriageAction.Snooze),
                 Hint("schedule", TriageAction.ScheduleTime),
@@ -914,6 +915,7 @@ public partial class MainWindow : Window
         || ViewModel.Triage.Capture.IsOpen
         || ViewModel.Actions.Editor != EditorMode.None
         || ViewModel.Actions.IsReviewing
+        || ViewModel.Triage.IsProposing
         || ViewModel.IsHelpVisible
         || ViewModel.Lavish.IsAnnotating;
 
@@ -995,6 +997,19 @@ public partial class MainWindow : Window
 
             case nameof(TriageViewModel.PreviewPath):
                 ShowPreviewOrBody();
+                break;
+
+            case nameof(TriageViewModel.IsProposing):
+                _ = UpdateAirspaceAsync();
+                Dispatcher.BeginInvoke(Focus);
+                break;
+
+            case nameof(TriageViewModel.ProposalIndex):
+                Dispatcher.BeginInvoke(() =>
+                {
+                    var i = ViewModel.Triage.ProposalIndex;
+                    if (i >= 0 && i < ViewModel.Triage.Proposals.Count) ProposalList.ScrollIntoView(ViewModel.Triage.Proposals[i]);
+                });
                 break;
 
             case nameof(TriageViewModel.Selected):
@@ -1229,6 +1244,26 @@ public partial class MainWindow : Window
     private const string AttachmentHost = "attachments.example";
 
     private void OnOpenPreviewExternally(object sender, RoutedEventArgs e) => ViewModel.Triage.OpenPreviewExternally();
+
+    // ---- proposed moves (m) -----------------------------------------------
+
+    private async void OnAcceptProposals(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.Triage.AcceptProposalsAsync();
+        Focus();
+    }
+
+    private void OnToggleAllProposals(object sender, RoutedEventArgs e)
+    {
+        ViewModel.Triage.ToggleAllProposals();
+        Focus();
+    }
+
+    private async void OnChangeProposalFolder(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MoveProposalViewModel proposal)
+            await ViewModel.Triage.ChangeProposalFolderAsync(proposal);
+    }
 
     private void ShowPreviewOrBody()
     {
