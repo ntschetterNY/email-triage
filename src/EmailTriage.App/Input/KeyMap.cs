@@ -55,6 +55,7 @@ public sealed class KeyMap
         ("n",           TriageAction.MarkNoAction),
         ("v",           TriageAction.MoveToFolder),
         ("shift+v",     TriageAction.OpenFolderInOutlook),
+        ("m",           TriageAction.ProposeMoves),
         ("h",           TriageAction.Snooze),
         ("e",           TriageAction.Archive),
         ("u",           TriageAction.ToggleRead),
